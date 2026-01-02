@@ -1,0 +1,132 @@
+mod config;
+mod db;
+mod handlers;
+mod models;
+mod services;
+
+use axum::{
+    routing::{get, post, put},
+    Router,
+};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::config::Config;
+use crate::services::{AuthService, BackupService, MountService, SchedulerService};
+
+pub struct AppState {
+    pub db: sqlx::SqlitePool,
+    pub config: Config,
+    pub auth_service: AuthService,
+    pub backup_service: Arc<BackupService>,
+    pub mount_service: MountService,
+    pub log_tx: broadcast::Sender<models::LogMessage>,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,dynamight=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let config = Config::from_env();
+
+    // Ensure data directory exists
+    std::fs::create_dir_all("data").ok();
+
+    // Connect to database with create_if_missing
+    let db_options = SqliteConnectOptions::from_str(&config.database_url)?
+        .create_if_missing(true);
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(db_options)
+        .await?;
+
+    // Run migrations
+    tracing::info!("Running database migrations...");
+    db::run_migrations(&db).await?;
+
+    // Create admin user if needed
+    if let Some(password) = &config.admin_password {
+        db::ensure_admin_user(&db, password).await?;
+    }
+
+    // Create broadcast channel for log streaming
+    let (log_tx, _) = broadcast::channel::<models::LogMessage>(1000);
+
+    // Initialize services
+    let auth_service = AuthService::new(config.jwt_secret.clone());
+    let mount_service = MountService::new();
+    let backup_service = Arc::new(BackupService::new(db.clone(), log_tx.clone()));
+
+    let state = Arc::new(AppState {
+        db: db.clone(),
+        config: config.clone(),
+        auth_service,
+        backup_service: backup_service.clone(),
+        mount_service,
+        log_tx,
+    });
+
+    // Start scheduler
+    let scheduler = SchedulerService::new(db.clone(), backup_service);
+    tokio::spawn(async move {
+        scheduler.start().await;
+    });
+
+    // Build router
+    let api_routes = Router::new()
+        // Auth routes
+        .route("/auth/login", post(handlers::auth::login))
+        .route("/auth/logout", post(handlers::auth::logout))
+        .route("/auth/me", get(handlers::auth::me))
+        .route("/auth/change-password", post(handlers::auth::change_password))
+        // Job routes
+        .route("/jobs", get(handlers::jobs::list_jobs).post(handlers::jobs::create_job))
+        .route("/jobs/:id", get(handlers::jobs::get_job).put(handlers::jobs::update_job).delete(handlers::jobs::delete_job))
+        .route("/jobs/:id/run", post(handlers::jobs::run_job))
+        .route("/jobs/:id/cancel", post(handlers::jobs::cancel_job))
+        // Schedule routes
+        .route("/jobs/:id/schedules", get(handlers::schedules::list_schedules).post(handlers::schedules::create_schedule))
+        .route("/schedules/:id", put(handlers::schedules::update_schedule).delete(handlers::schedules::delete_schedule))
+        // History and logs
+        .route("/jobs/:id/runs", get(handlers::logs::list_runs))
+        .route("/runs/:id", get(handlers::logs::get_run))
+        .route("/runs/:id/logs", get(handlers::logs::get_logs))
+        // System routes
+        .route("/system/drives", get(handlers::system::list_drives))
+        .route("/system/mounts", get(handlers::system::list_mounts))
+        .route("/system/mount", post(handlers::system::mount_drive))
+        .route("/system/unmount", post(handlers::system::unmount_drive))
+        .route("/system/browse", get(handlers::system::browse_path))
+        .route("/system/mkdir", post(handlers::system::create_directory))
+        .route("/system/health", get(handlers::system::health))
+        // WebSocket
+        .route("/ws/logs/:run_id", get(handlers::websocket::ws_logs_handler))
+        .route("/ws/status", get(handlers::websocket::ws_status_handler));
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .fallback_service(ServeDir::new(&config.static_files_dir))
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
+        .with_state(state);
+
+    let addr = format!("{}:{}", config.host, config.port);
+    tracing::info!("Starting server on {}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}

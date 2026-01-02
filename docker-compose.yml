@@ -1,0 +1,57 @@
+services:
+  dynamight:
+    build: .
+    container_name: dynamight
+    restart: unless-stopped
+
+    # Required for mount operations
+    cap_add:
+      - SYS_ADMIN
+
+    # Required for /dev access (USB devices)
+    privileged: false
+    devices:
+      - /dev:/dev
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # Persistent data (database, config)
+      - dynamight-data:/app/data
+
+      # Logs
+      - dynamight-logs:/app/logs
+
+      # Mount points (required for actual backups)
+      # The :rshared flag allows mount propagation from container to host
+      - /mnt:/mnt:rshared
+
+      # Source directories to back up
+      # Add your source directories here - these will be read-only accessible in the container
+      # Examples:
+      # - /home:/source/home:ro
+      # - /etc:/source/etc:ro
+      # - /var/www:/source/www:ro
+
+    environment:
+      - TZ=${TZ:-UTC}
+      - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}  # Only used on first run
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+volumes:
+  dynamight-data:
+  dynamight-logs:

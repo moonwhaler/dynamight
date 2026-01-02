@@ -1,0 +1,2 @@
+-- This is a symlink placeholder. The actual migration is in /migrations/001_initial.sql
+-- This file exists for IDE support. The actual SQL is loaded from the parent migrations folder.
