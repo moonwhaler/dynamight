@@ -13,19 +13,57 @@
 
   let showAdd = $state(false);
   let saving = $state(false);
-  let scheduleType = $state<'daily' | 'weekly' | 'monthly' | 'custom'>('daily');
+  let scheduleType = $state<'daily' | 'weekly' | 'monthly' | 'interval' | 'custom'>('daily');
   let timeOfDay = $state('02:00');
-  let dayOfWeek = $state(0);
+  let selectedDays = $state<number[]>([1]); // Default to Monday
   let dayOfMonth = $state(1);
   let cronExpression = $state('0 2 * * *');
+
+  // Interval settings
+  let intervalValue = $state(1);
+  let intervalUnit = $state<'minutes' | 'hours'>('hours');
+
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayNamesFull = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  function toggleDay(day: number) {
+    if (selectedDays.includes(day)) {
+      if (selectedDays.length > 1) {
+        selectedDays = selectedDays.filter(d => d !== day);
+      }
+    } else {
+      selectedDays = [...selectedDays, day].sort((a, b) => a - b);
+    }
+  }
+
+  function buildCronExpression(): string {
+    const [hours, minutes] = timeOfDay.split(':').map(Number);
+
+    switch (scheduleType) {
+      case 'daily':
+        return `${minutes} ${hours} * * *`;
+      case 'weekly':
+        return `${minutes} ${hours} * * ${selectedDays.join(',')}`;
+      case 'monthly':
+        return `${minutes} ${hours} ${dayOfMonth} * *`;
+      case 'interval':
+        if (intervalUnit === 'minutes') {
+          return `*/${intervalValue} * * * *`;
+        } else {
+          return `0 */${intervalValue} * * *`;
+        }
+      case 'custom':
+        return cronExpression;
+      default:
+        return '0 2 * * *';
+    }
+  }
 
   async function addSchedule() {
     saving = true;
     try {
-      const request: CreateScheduleRequest =
-        scheduleType === 'custom'
-          ? { cron_expression: cronExpression }
-          : { schedule_type: scheduleType, time_of_day: timeOfDay, day_of_week: dayOfWeek, day_of_month: dayOfMonth };
+      const cron = buildCronExpression();
+      const request: CreateScheduleRequest = { cron_expression: cron };
 
       const schedule = await api.schedules.create(jobId, request);
       schedules = [...schedules, schedule];
@@ -59,29 +97,65 @@
   function resetForm() {
     scheduleType = 'daily';
     timeOfDay = '02:00';
-    dayOfWeek = 0;
+    selectedDays = [1];
     dayOfMonth = 1;
     cronExpression = '0 2 * * *';
+    intervalValue = 1;
+    intervalUnit = 'hours';
   }
 
   function formatSchedule(schedule: Schedule): string {
-    if (schedule.schedule_type === 'daily') {
-      return `Daily at ${schedule.time_of_day || '00:00'}`;
+    // Try to parse the cron expression for a human-readable format
+    const cron = schedule.cron_expression;
+    const parts = cron.split(' ');
+
+    if (parts.length !== 5) return cron;
+
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+
+    // Interval: */N minutes
+    if (minute.startsWith('*/') && hour === '*') {
+      const mins = minute.slice(2);
+      return `Every ${mins} minute${mins === '1' ? '' : 's'}`;
     }
-    if (schedule.schedule_type === 'weekly') {
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      return `Weekly on ${days[schedule.day_of_week || 0]} at ${schedule.time_of_day || '00:00'}`;
+
+    // Interval: */N hours
+    if (minute === '0' && hour.startsWith('*/')) {
+      const hrs = hour.slice(2);
+      return `Every ${hrs} hour${hrs === '1' ? '' : 's'}`;
     }
-    if (schedule.schedule_type === 'monthly') {
-      return `Monthly on day ${schedule.day_of_month || 1} at ${schedule.time_of_day || '00:00'}`;
+
+    const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+
+    // Daily
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+      return `Daily at ${time}`;
     }
-    return schedule.cron_expression;
+
+    // Weekly (specific days)
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek !== '*') {
+      const days = dayOfWeek.split(',').map(d => dayNames[parseInt(d)] || d);
+      if (days.length === 7) {
+        return `Daily at ${time}`;
+      }
+      return `${days.join(', ')} at ${time}`;
+    }
+
+    // Monthly
+    if (dayOfMonth !== '*' && month === '*' && dayOfWeek === '*') {
+      return `Monthly on day ${dayOfMonth} at ${time}`;
+    }
+
+    return cron;
   }
 
   function formatNextRun(date: string | null): string {
     if (!date) return 'Not scheduled';
     return new Date(date).toLocaleString();
   }
+
+  // Preview the cron expression
+  let cronPreview = $derived(buildCronExpression());
 </script>
 
 <div class="space-y-4">
@@ -132,46 +206,88 @@
         <label class="label">Schedule Type</label>
         <select bind:value={scheduleType} class="input">
           <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
+          <option value="weekly">Weekly (select days)</option>
           <option value="monthly">Monthly</option>
+          <option value="interval">Interval (every N minutes/hours)</option>
           <option value="custom">Custom (Cron)</option>
         </select>
       </div>
 
-      {#if scheduleType !== 'custom'}
+      {#if scheduleType === 'daily'}
         <div>
           <label class="label">Time</label>
           <input type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
+      {/if}
 
-        {#if scheduleType === 'weekly'}
-          <div>
-            <label class="label">Day of Week</label>
-            <select bind:value={dayOfWeek} class="input">
-              <option value={0}>Sunday</option>
-              <option value={1}>Monday</option>
-              <option value={2}>Tuesday</option>
-              <option value={3}>Wednesday</option>
-              <option value={4}>Thursday</option>
-              <option value={5}>Friday</option>
-              <option value={6}>Saturday</option>
-            </select>
+      {#if scheduleType === 'weekly'}
+        <div>
+          <label class="label">Time</label>
+          <input type="time" bind:value={timeOfDay} class="input w-32" />
+        </div>
+        <div>
+          <label class="label">
+            Days of Week
+            <HelpTooltip text="Select one or more days. The backup will run at the specified time on each selected day." />
+          </label>
+          <div class="flex flex-wrap gap-2 mt-2">
+            {#each dayNamesFull as day, index}
+              <button
+                type="button"
+                onclick={() => toggleDay(index)}
+                class="px-3 py-1.5 text-sm rounded-lg border transition-colors {selectedDays.includes(index)
+                  ? 'bg-primary-600 text-white border-primary-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-primary-400'}"
+              >
+                {day.slice(0, 3)}
+              </button>
+            {/each}
           </div>
-        {/if}
+        </div>
+      {/if}
 
-        {#if scheduleType === 'monthly'}
+      {#if scheduleType === 'monthly'}
+        <div>
+          <label class="label">Time</label>
+          <input type="time" bind:value={timeOfDay} class="input w-32" />
+        </div>
+        <div>
+          <label class="label">Day of Month</label>
+          <input
+            type="number"
+            bind:value={dayOfMonth}
+            min="1"
+            max="31"
+            class="input w-20"
+          />
+        </div>
+      {/if}
+
+      {#if scheduleType === 'interval'}
+        <div class="flex items-end gap-3">
           <div>
-            <label class="label">Day of Month</label>
+            <label class="label">
+              Run every
+              <HelpTooltip text="Set how often the backup should run. For example, 'every 30 minutes' or 'every 6 hours'. Note: Very frequent backups may impact system performance." />
+            </label>
             <input
               type="number"
-              bind:value={dayOfMonth}
+              bind:value={intervalValue}
               min="1"
-              max="31"
+              max={intervalUnit === 'minutes' ? 59 : 23}
               class="input w-20"
             />
           </div>
-        {/if}
-      {:else}
+          <div>
+            <select bind:value={intervalUnit} class="input">
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+            </select>
+          </div>
+        </div>
+      {/if}
+
+      {#if scheduleType === 'custom'}
         <div>
           <label class="label">
             Cron Expression
@@ -186,6 +302,14 @@
           <p class="text-sm text-gray-500 mt-1">
             Format: minute hour day-of-month month day-of-week
           </p>
+        </div>
+      {/if}
+
+      <!-- Cron Preview -->
+      {#if scheduleType !== 'custom'}
+        <div class="bg-gray-50 rounded-lg p-3">
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cron Expression</div>
+          <code class="text-sm text-gray-800 font-mono">{cronPreview}</code>
         </div>
       {/if}
 
