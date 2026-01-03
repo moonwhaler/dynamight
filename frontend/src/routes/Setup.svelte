@@ -33,8 +33,13 @@
     if (!validate()) return;
 
     loading = true;
-    await authStore.setup(username.trim(), password);
+    const success = await authStore.setup(username.trim(), password);
     loading = false;
+
+    if (success) {
+      // Navigate to dashboard after successful setup
+      window.location.hash = '#/';
+    }
   }
 </script>
 
