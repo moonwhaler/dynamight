@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authStore } from '../lib/stores/auth';
+  import PasswordStrength from '../components/PasswordStrength.svelte';
 
   let username = $state('');
   let password = $state('');
@@ -97,7 +98,10 @@
             placeholder="Choose a password"
             autocomplete="new-password"
           />
-          <p class="mt-1 text-xs text-gray-500">At least 8 characters</p>
+          <PasswordStrength {password} />
+          {#if !password}
+            <p class="mt-1 text-xs text-gray-500">At least 8 characters</p>
+          {/if}
         </div>
 
         <div>

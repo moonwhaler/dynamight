@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import PasswordStrength from './PasswordStrength.svelte';
 
   let { open = $bindable(false) } = $props();
 
@@ -137,7 +138,10 @@
                 placeholder="Enter new password"
                 autocomplete="new-password"
               />
-              <p class="text-xs text-gray-500 mt-1">Must be at least 8 characters</p>
+              <PasswordStrength password={newPassword} />
+              {#if !newPassword}
+                <p class="text-xs text-gray-500 mt-1">Must be at least 8 characters</p>
+              {/if}
             </div>
 
             <div>
