@@ -56,11 +56,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Running database migrations...");
     db::run_migrations(&db).await?;
 
-    // Create admin user if needed
-    if let Some(password) = &config.admin_password {
-        db::ensure_admin_user(&db, password).await?;
-    }
-
     // Create broadcast channel for log streaming
     let (log_tx, _) = broadcast::channel::<models::LogMessage>(1000);
 
@@ -87,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
     // Build router
     let api_routes = Router::new()
         // Auth routes
+        .route("/auth/setup-required", get(handlers::auth::setup_required))
+        .route("/auth/setup", post(handlers::auth::setup))
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/me", get(handlers::auth::me))

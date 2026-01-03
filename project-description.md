@@ -206,11 +206,12 @@ The application bootstraps in this order:
 2. Load configuration from environment
 3. Connect to SQLite database
 4. Run migrations
-5. Create admin user if `ADMIN_PASSWORD` is set and no user exists
-6. Initialize services (AuthService, BackupService, MountService)
-7. Start SchedulerService in background tokio task
-8. Build Axum router with all routes
-9. Start HTTP server
+5. Initialize services (AuthService, BackupService, MountService)
+6. Start SchedulerService in background tokio task
+7. Build Axum router with all routes
+8. Start HTTP server
+
+On first launch, the frontend will detect that no users exist and present a setup wizard to create the administrator account.
 
 ### Service Layer
 
@@ -357,6 +358,30 @@ Frontend connects to WS /api/ws/logs/:runId
         │
         ▼
 LogViewer displays streaming logs
+```
+
+### First-Time Setup Flow
+
+```
+App loads
+    │
+    ▼
+GET /api/auth/setup-required
+    │
+    ▼
+Returns { setup_required: true } if no users exist
+    │
+    ▼
+Frontend shows Setup wizard
+    │
+    ▼
+User enters username + password
+    │
+    ▼
+POST /api/auth/setup { username, password }
+    │
+    ▼
+Creates admin user, auto-logs in
 ```
 
 ### Authentication Flow
@@ -523,7 +548,7 @@ The systemd service includes:
 | `models/job.rs` | Job struct with JSON array helpers, CreateJobRequest |
 | `models/schedule.rs` | Schedule struct, cron expression builder |
 | `models/log_entry.rs` | LogEntry, LogMessage (WebSocket), JobRun, JobRunStatus |
-| `handlers/auth.rs` | Login/logout/me/change-password endpoints |
+| `handlers/auth.rs` | Login/logout/me/change-password/setup endpoints |
 | `handlers/jobs.rs` | Job CRUD + run/cancel endpoints |
 | `handlers/schedules.rs` | Schedule CRUD for jobs |
 | `handlers/logs.rs` | Job run history and log retrieval |
@@ -556,6 +581,7 @@ The systemd service includes:
 | `components/jobs/SinglePathSelector.svelte` | Single path picker for mount point |
 | `components/logs/LogViewer.svelte` | Scrollable log display |
 | `routes/Login.svelte` | Login page |
+| `routes/Setup.svelte` | First-time setup wizard |
 | `routes/Dashboard.svelte` | Overview with stats |
 | `routes/Jobs.svelte` | Job list page |
 | `routes/JobDetail.svelte` | Job create/edit form |

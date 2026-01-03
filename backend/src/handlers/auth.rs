@@ -4,12 +4,19 @@ use axum::{
     response::{AppendHeaders, IntoResponse},
     Json,
 };
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
 use crate::services::AuthService;
 use crate::AppState;
+
+#[derive(Deserialize)]
+pub struct SetupRequest {
+    pub username: String,
+    pub password: String,
+}
 
 pub async fn login(
     State(state): State<Arc<AppState>>,
@@ -216,5 +223,86 @@ pub async fn change_password(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "Failed to update password"})),
         ),
+    }
+}
+
+pub async fn setup_required(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or((0,));
+
+    Json(json!({
+        "setup_required": user_count.0 == 0
+    }))
+}
+
+pub async fn setup(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SetupRequest>,
+) -> impl IntoResponse {
+    // Check if any users already exist
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or((0,));
+
+    if user_count.0 > 0 {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Setup has already been completed"})),
+        )
+            .into_response();
+    }
+
+    // Validate input
+    let username = req.username.trim();
+    if username.is_empty() || username.len() < 3 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Username must be at least 3 characters"})),
+        )
+            .into_response();
+    }
+
+    if req.password.len() < 8 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Password must be at least 8 characters"})),
+        )
+            .into_response();
+    }
+
+    // Hash password and create user
+    let password_hash = match AuthService::hash_password(&req.password) {
+        Ok(h) => h,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to hash password"})),
+            )
+                .into_response()
+        }
+    };
+
+    let result = sqlx::query("INSERT INTO users (username, password_hash) VALUES (?, ?)")
+        .bind(username)
+        .bind(&password_hash)
+        .execute(&state.db)
+        .await;
+
+    match result {
+        Ok(_) => {
+            tracing::info!("Initial admin user '{}' created via setup", username);
+            Json(json!({"success": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to create admin user: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to create user"})),
+            )
+                .into_response()
+        }
     }
 }

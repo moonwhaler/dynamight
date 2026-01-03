@@ -2,6 +2,7 @@
   import Router from 'svelte-spa-router';
   import { authStore } from './lib/stores/auth';
   import Login from './routes/Login.svelte';
+  import Setup from './routes/Setup.svelte';
   import Dashboard from './routes/Dashboard.svelte';
   import Jobs from './routes/Jobs.svelte';
   import JobDetail from './routes/JobDetail.svelte';
@@ -28,6 +29,8 @@
   <div class="min-h-screen flex items-center justify-center">
     <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
   </div>
+{:else if $authStore.setupRequired}
+  <Setup />
 {:else}
   <Login />
 {/if}
