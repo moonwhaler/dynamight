@@ -37,7 +37,7 @@
   });
 </script>
 
-<nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-3">
+<nav class="sticky top-0 z-40 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-3">
   <div class="flex items-center justify-between">
     <div class="flex items-center gap-3">
       <!-- Mobile hamburger menu -->

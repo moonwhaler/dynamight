@@ -1,6 +1,7 @@
 <script lang="ts">
   import Router from 'svelte-spa-router';
   import { authStore } from './lib/stores/auth';
+  import './lib/stores/theme'; // Initialize theme store early to apply persisted theme
   import Login from './routes/Login.svelte';
   import Setup from './routes/Setup.svelte';
   import Dashboard from './routes/Dashboard.svelte';
