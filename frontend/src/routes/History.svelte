@@ -206,13 +206,15 @@
         </button>
       </div>
 
-      <div class="flex-1 overflow-hidden">
+      <div class="flex-1 min-h-[300px] overflow-hidden relative">
         {#if loadingLogs}
           <div class="flex justify-center py-12">
             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           </div>
         {:else}
-          <LogViewer {logs} />
+          <div class="absolute inset-0">
+            <LogViewer {logs} />
+          </div>
         {/if}
       </div>
     </div>
