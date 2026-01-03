@@ -1,19 +1,43 @@
 <script lang="ts">
   import type { Job } from '../../lib/types';
   import { api } from '../../lib/api';
+  import { jobsStore } from '../../lib/stores/jobs';
+  import RunLogModal from '../logs/RunLogModal.svelte';
 
   let { job }: { job: Job } = $props();
   let running = $state(false);
+  let toggling = $state(false);
+  let activeRunId = $state<number | null>(null);
 
   async function handleRun() {
     if (running) return;
     running = true;
     try {
-      await api.jobs.run(job.id);
+      const result = await api.jobs.run(job.id);
+      activeRunId = result.runId;
     } catch {
       // Ignore
     } finally {
       running = false;
+    }
+  }
+
+  function closeRunModal() {
+    activeRunId = null;
+  }
+
+  async function handleToggleEnabled(event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (toggling) return;
+    toggling = true;
+    try {
+      const updatedJob = await api.jobs.update(job.id, { enabled: !job.enabled });
+      jobsStore.updateJob(updatedJob);
+    } catch {
+      // Ignore
+    } finally {
+      toggling = false;
     }
   }
 </script>
@@ -30,11 +54,14 @@
         <p class="text-sm text-gray-500 truncate mt-1">{job.description}</p>
       {/if}
     </div>
-    <span
-      class="badge {job.enabled ? 'badge-success' : 'badge-gray'} ml-2 shrink-0"
+    <button
+      onclick={handleToggleEnabled}
+      disabled={toggling}
+      class="badge {job.enabled ? 'badge-success' : 'badge-gray'} ml-2 shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+      title={job.enabled ? 'Click to disable' : 'Click to enable'}
     >
-      {job.enabled ? 'Active' : 'Disabled'}
-    </span>
+      {toggling ? '...' : job.enabled ? 'Active' : 'Disabled'}
+    </button>
   </div>
 
   <div class="mt-4 space-y-2 text-sm text-gray-600">
@@ -78,8 +105,18 @@
       onclick={handleRun}
       disabled={running || !job.enabled}
       class="btn btn-secondary text-sm py-1 px-3"
+      title={!job.enabled ? 'Enable job to run' : 'Start backup job'}
     >
-      {running ? 'Running...' : 'Run'}
+      {running ? 'Starting...' : 'Run'}
     </button>
   </div>
 </div>
+
+<!-- Run Log Modal -->
+{#if activeRunId !== null}
+  <RunLogModal
+    runId={activeRunId}
+    jobId={job.id}
+    onClose={closeRunModal}
+  />
+{/if}

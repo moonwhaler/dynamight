@@ -101,8 +101,11 @@ export const api = {
       request<{ success: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
     run: (id: number) =>
       request<{ runId: number }>(`/jobs/${id}/run`, { method: 'POST' }),
-    cancel: (id: number) =>
-      request<{ success: boolean }>(`/jobs/${id}/cancel`, { method: 'POST' }),
+    cancel: (id: number, force = false) =>
+      request<{ success: boolean; processKilled: boolean; force: boolean }>(
+        `/jobs/${id}/cancel${force ? '?force=true' : ''}`,
+        { method: 'POST' }
+      ),
   },
 
   schedules: {

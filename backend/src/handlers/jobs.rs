@@ -322,13 +322,20 @@ pub async fn run_job(
     (StatusCode::OK, Json(json!({"runId": run_id}))).into_response()
 }
 
+#[derive(serde::Deserialize, Default)]
+pub struct CancelJobQuery {
+    #[serde(default)]
+    force: bool,
+}
+
 pub async fn cancel_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
+    query: axum::extract::Query<CancelJobQuery>,
 ) -> impl IntoResponse {
-    // Find running job run
+    // Find running job run (check for both 'running' and 'cancelled' status - may still have process running)
     let run: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM job_runs WHERE job_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM job_runs WHERE job_id = ? AND status IN ('running', 'cancelled') ORDER BY id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -337,8 +344,16 @@ pub async fn cancel_job(
 
     match run {
         Some((run_id,)) => {
-            let _ = state.backup_service.cancel_job(run_id).await;
-            (StatusCode::OK, Json(json!({"success": true})))
+            match state.backup_service.cancel_job(run_id, query.force).await {
+                Ok(killed) => (StatusCode::OK, Json(json!({
+                    "success": true,
+                    "processKilled": killed,
+                    "force": query.force
+                }))),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
+                    "error": format!("Failed to cancel: {}", e)
+                }))),
+            }
         }
         None => (
             StatusCode::NOT_FOUND,

@@ -9,6 +9,7 @@
   import PathSelector from '../components/jobs/PathSelector.svelte';
   import SinglePathSelector from '../components/jobs/SinglePathSelector.svelte';
   import HelpTooltip from '../components/ui/HelpTooltip.svelte';
+  import RunLogModal from '../components/logs/RunLogModal.svelte';
 
   let { params = {} }: { params?: { id?: string } } = $props();
 
@@ -19,6 +20,8 @@
   let drives = $state<UsbDrive[]>([]);
   let schedules = $state<Schedule[]>([]);
   let loadedJobId = $state<string | null>(null);
+  let activeRunId = $state<number | null>(null);
+  let running = $state(false);
 
   // Form state
   let name = $state('');
@@ -160,12 +163,21 @@
   }
 
   async function handleRun() {
+    if (running) return;
+    running = true;
+    error = null;
     try {
       const result = await api.jobs.run(parseInt(params.id!));
-      alert(`Job started! Run ID: ${result.runId}`);
+      activeRunId = result.runId;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to start job';
+    } finally {
+      running = false;
     }
+  }
+
+  function closeRunModal() {
+    activeRunId = null;
   }
 </script>
 
@@ -176,7 +188,9 @@
     </h1>
     {#if !isNew}
       <div class="flex gap-2">
-        <button onclick={handleRun} class="btn btn-secondary">Run Now</button>
+        <button onclick={handleRun} disabled={running} class="btn btn-secondary">
+          {running ? 'Starting...' : 'Run Now'}
+        </button>
         <button onclick={handleDelete} class="btn btn-danger">Delete</button>
       </div>
     {/if}
@@ -309,3 +323,12 @@
     </form>
   {/if}
 </div>
+
+<!-- Run Log Modal -->
+{#if activeRunId !== null}
+  <RunLogModal
+    runId={activeRunId}
+    jobId={parseInt(params.id!)}
+    onClose={closeRunModal}
+  />
+{/if}

@@ -1,12 +1,13 @@
 use crate::models::{Job, JobRunStatus, LogLevel, LogMessage};
 use chrono::Utc;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
-use tokio::sync::{broadcast, RwLock};
+use tokio::process::{Child, Command};
+use tokio::sync::{broadcast, RwLock, Mutex};
 
 #[derive(Debug, Default)]
 pub struct JobResult {
@@ -16,10 +17,18 @@ pub struct JobResult {
     pub error_count: i32,
 }
 
+/// Holds information about a running process for cancellation
+struct RunningProcess {
+    child: Child,
+    cancelled: bool,
+}
+
 pub struct BackupService {
     db: SqlitePool,
     log_tx: broadcast::Sender<LogMessage>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
+    /// Maps run_id to the currently running child process
+    running_processes: Arc<Mutex<HashMap<i64, RunningProcess>>>,
     max_runs_per_job: Option<u32>,
 }
 
@@ -29,6 +38,7 @@ impl BackupService {
             db,
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            running_processes: Arc::new(Mutex::new(HashMap::new())),
             max_runs_per_job,
         }
     }
@@ -77,8 +87,10 @@ impl BackupService {
         self.running_jobs.read().await.contains(&job_id)
     }
 
-    pub async fn cancel_job(&self, run_id: i64) -> anyhow::Result<()> {
-        // Update status to cancelled
+    /// Cancel a running job. If force is false, sends SIGTERM and waits up to 5 seconds.
+    /// If force is true (or after grace period), sends SIGKILL.
+    pub async fn cancel_job(&self, run_id: i64, force: bool) -> anyhow::Result<bool> {
+        // Mark as cancelled in database first
         sqlx::query("UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'")
             .bind(JobRunStatus::Cancelled.as_str())
             .bind(Utc::now())
@@ -86,7 +98,87 @@ impl BackupService {
             .execute(&self.db)
             .await?;
 
-        Ok(())
+        // Log cancellation request
+        self.log(run_id, LogLevel::Warning,
+            if force { "Force kill requested" } else { "Cancellation requested, sending SIGTERM..." },
+            "system"
+        ).await;
+
+        // Try to kill the running process
+        let mut processes = self.running_processes.lock().await;
+        if let Some(running) = processes.get_mut(&run_id) {
+            running.cancelled = true;
+
+            #[cfg(unix)]
+            {
+                use nix::sys::signal::{kill, Signal};
+                use nix::unistd::Pid;
+
+                if let Some(pid) = running.child.id() {
+                    let pid = Pid::from_raw(pid as i32);
+
+                    if force {
+                        // Force kill - SIGKILL immediately
+                        let _ = kill(pid, Signal::SIGKILL);
+                        self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process", "system").await;
+                        return Ok(true);
+                    }
+
+                    // Graceful - send SIGTERM first
+                    if kill(pid, Signal::SIGTERM).is_ok() {
+                        self.log(run_id, LogLevel::Info, "Sent SIGTERM, waiting for process to exit...", "system").await;
+
+                        // Wait up to 5 seconds for graceful shutdown
+                        drop(processes); // Release lock during wait
+
+                        for _ in 0..10 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                            // Check if process exited
+                            let mut processes = self.running_processes.lock().await;
+                            if !processes.contains_key(&run_id) {
+                                self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
+                                return Ok(true);
+                            }
+
+                            // Check if still running
+                            if let Some(running) = processes.get_mut(&run_id) {
+                                if running.child.try_wait().ok().flatten().is_some() {
+                                    processes.remove(&run_id);
+                                    self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
+                                    return Ok(true);
+                                }
+                            }
+                        }
+
+                        // Grace period expired, send SIGKILL
+                        let mut processes = self.running_processes.lock().await;
+                        if let Some(running) = processes.get_mut(&run_id) {
+                            if let Some(pid) = running.child.id() {
+                                let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+                                self.log(run_id, LogLevel::Warning, "Grace period expired, sent SIGKILL", "system").await;
+                            }
+                        }
+                        return Ok(true);
+                    }
+                }
+            }
+
+            #[cfg(not(unix))]
+            {
+                // On non-Unix, just try to kill
+                let _ = running.child.kill().await;
+                return Ok(true);
+            }
+        }
+
+        Ok(false) // No process found to kill
+    }
+
+    /// Check if a job run has been cancelled
+    pub async fn is_cancelled(&self, run_id: i64) -> bool {
+        let processes = self.running_processes.lock().await;
+        processes.get(&run_id).map(|p| p.cancelled).unwrap_or(false)
     }
 
     pub async fn execute_job(
@@ -240,6 +332,12 @@ impl BackupService {
                 .await;
             }
 
+            // Check for cancellation before starting
+            if self.is_cancelled(run_id).await {
+                self.log(run_id, LogLevel::Warning, "Job cancelled, skipping remaining sources", "system").await;
+                break;
+            }
+
             // Run rsync
             let mut cmd = Command::new("rsync");
             cmd.args(&rsync_args)
@@ -263,12 +361,30 @@ impl BackupService {
                 }
             };
 
+            // Take stdout/stderr before registering
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
+
+            // Register the child process for cancellation tracking
+            {
+                let mut processes = self.running_processes.lock().await;
+                processes.insert(run_id, RunningProcess {
+                    child,
+                    cancelled: false,
+                });
+            }
+
             // Stream stdout
-            if let Some(stdout) = child.stdout.take() {
+            if let Some(stdout) = stdout {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
 
                 while let Ok(Some(line)) = lines.next_line().await {
+                    // Check for cancellation periodically
+                    if self.is_cancelled(run_id).await {
+                        break;
+                    }
+
                     // Parse rsync output for stats
                     if line.contains("Number of files transferred") {
                         if let Some(num) = line.split(':').nth(1) {
@@ -290,27 +406,51 @@ impl BackupService {
                 }
             }
 
-            // Stream stderr
-            if let Some(stderr) = child.stderr.take() {
-                let reader = BufReader::new(stderr);
-                let mut lines = reader.lines();
+            // Stream stderr (only if not cancelled)
+            if !self.is_cancelled(run_id).await {
+                if let Some(stderr) = stderr {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
 
-                while let Ok(Some(line)) = lines.next_line().await {
-                    self.log(run_id, LogLevel::Warning, &line, "rsync").await;
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        self.log(run_id, LogLevel::Warning, &line, "rsync").await;
+                    }
                 }
             }
 
-            let status = child.wait().await?;
-            if !status.success() {
-                self.log(
-                    run_id,
-                    LogLevel::Error,
-                    &format!("rsync failed with exit code: {:?}", status.code()),
-                    "rsync",
-                )
-                .await;
-                result.exit_code = status.code().unwrap_or(1);
-                result.error_count += 1;
+            // Wait for process to finish and remove from tracking
+            let status = {
+                let mut processes = self.running_processes.lock().await;
+                if let Some(mut running) = processes.remove(&run_id) {
+                    running.child.wait().await.ok()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(status) = status {
+                if !status.success() {
+                    // Check if it was killed by signal (cancelled)
+                    let was_cancelled = self.is_cancelled(run_id).await;
+                    if was_cancelled {
+                        self.log(run_id, LogLevel::Info, "rsync terminated by cancellation", "rsync").await;
+                    } else {
+                        self.log(
+                            run_id,
+                            LogLevel::Error,
+                            &format!("rsync failed with exit code: {:?}", status.code()),
+                            "rsync",
+                        )
+                        .await;
+                        result.exit_code = status.code().unwrap_or(1);
+                        result.error_count += 1;
+                    }
+                }
+            }
+
+            // Break out of loop if cancelled
+            if self.is_cancelled(run_id).await {
+                break;
             }
         }
 
