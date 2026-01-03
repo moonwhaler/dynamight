@@ -15,11 +15,86 @@
   let loadingLogs = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Filter state
+  let searchQuery = $state('');
+  let statusFilters = $state<Set<string>>(new Set());
+  let dateFrom = $state<string>('');
+  let dateTo = $state<string>('');
+  let showFilters = $state(false);
+
+  const allStatuses = ['completed', 'running', 'failed', 'cancelled', 'pending'] as const;
+
   const LOG_PAGE_SIZE = 500;
   const POLL_INTERVAL_MS = 3000;
 
   const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
   const hasRunningJobs = $derived(runs.some((r) => r.status === 'running'));
+
+  // Filtered runs based on all filter criteria
+  const filteredRuns = $derived.by(() => {
+    let result = runs;
+
+    // Filter by search query (job name)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter((run) => {
+        const jobName = getJobName(run.job_id).toLowerCase();
+        return jobName.includes(query);
+      });
+    }
+
+    // Filter by status
+    if (statusFilters.size > 0) {
+      result = result.filter((run) => statusFilters.has(run.status));
+    }
+
+    // Filter by date range
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      fromDate.setHours(0, 0, 0, 0);
+      result = result.filter((run) => {
+        if (!run.started_at) return false;
+        return new Date(run.started_at) >= fromDate;
+      });
+    }
+
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      result = result.filter((run) => {
+        if (!run.started_at) return false;
+        return new Date(run.started_at) <= toDate;
+      });
+    }
+
+    return result;
+  });
+
+  const activeFilterCount = $derived(
+    (searchQuery.trim() ? 1 : 0) +
+    (statusFilters.size > 0 ? 1 : 0) +
+    (dateFrom ? 1 : 0) +
+    (dateTo ? 1 : 0) +
+    (selectedJobId ? 1 : 0)
+  );
+
+  function toggleStatus(status: string) {
+    const newFilters = new Set(statusFilters);
+    if (newFilters.has(status)) {
+      newFilters.delete(status);
+    } else {
+      newFilters.add(status);
+    }
+    statusFilters = newFilters;
+  }
+
+  function clearAllFilters() {
+    searchQuery = '';
+    statusFilters = new Set();
+    dateFrom = '';
+    dateTo = '';
+    selectedJobId = null;
+  }
 
   onMount(async () => {
     await jobsStore.load();
@@ -215,39 +290,215 @@
 </script>
 
 <div class="space-y-6">
+  <!-- Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup History</h1>
 
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+    <div class="flex items-center gap-2">
       {#if runs.length > 0}
-        <div class="flex gap-2">
-          {#if selectedJobId}
+        {#if selectedJobId}
+          <button
+            onclick={confirmPurgeJob}
+            class="btn btn-secondary text-sm"
+          >
+            Clear Job
+          </button>
+        {/if}
+        <button
+          onclick={confirmPurgeAll}
+          class="btn btn-secondary text-sm"
+        >
+          Clear All
+        </button>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="card">
+    <div class="p-4">
+      <!-- Main filter row -->
+      <div class="flex flex-col lg:flex-row gap-4">
+        <!-- Search input -->
+        <div class="relative flex-1 min-w-0">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            bind:value={searchQuery}
+            placeholder="Search by job name..."
+            class="input pl-10"
+          />
+        </div>
+
+        <!-- Job selector -->
+        <select
+          bind:value={selectedJobId}
+          onchange={() => loadRuns()}
+          class="input lg:w-48"
+        >
+          <option value={null}>All Jobs</option>
+          {#each $jobsStore.jobs as job}
+            <option value={job.id}>{job.name}</option>
+          {/each}
+        </select>
+
+        <!-- Filter toggle button (mobile/tablet) -->
+        <button
+          onclick={() => showFilters = !showFilters}
+          class="btn btn-secondary flex items-center justify-center gap-2 lg:hidden"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+          </svg>
+          Filters
+          {#if activeFilterCount > 0}
+            <span class="bg-primary-600 text-white text-xs font-medium px-2 py-0.5 rounded-full">{activeFilterCount}</span>
+          {/if}
+        </button>
+
+        <!-- Desktop: Date range inputs -->
+        <div class="hidden lg:flex items-center gap-2">
+          <div class="relative">
+            <input
+              type="date"
+              bind:value={dateFrom}
+              class="input w-40 text-sm"
+              aria-label="From date"
+            />
+            {#if !dateFrom}
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">From</span>
+            {/if}
+          </div>
+          <span class="text-gray-400">-</span>
+          <div class="relative">
+            <input
+              type="date"
+              bind:value={dateTo}
+              class="input w-40 text-sm"
+              aria-label="To date"
+            />
+            {#if !dateTo}
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">To</span>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop: Status filter chips -->
+      <div class="hidden lg:flex items-center gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <span class="text-sm text-gray-500 dark:text-gray-400">Status:</span>
+        <div class="flex flex-wrap gap-2">
+          {#each allStatuses as status}
             <button
-              onclick={confirmPurgeJob}
-              class="btn btn-secondary text-sm flex-1 sm:flex-none"
+              onclick={() => toggleStatus(status)}
+              class="px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200
+                {statusFilters.has(status)
+                  ? status === 'completed' ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2 dark:ring-offset-gray-800'
+                  : status === 'running' ? 'bg-blue-600 text-white ring-2 ring-blue-600 ring-offset-2 dark:ring-offset-gray-800'
+                  : status === 'failed' ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2 dark:ring-offset-gray-800'
+                  : status === 'cancelled' ? 'bg-yellow-600 text-white ring-2 ring-yellow-600 ring-offset-2 dark:ring-offset-gray-800'
+                  : 'bg-gray-600 text-white ring-2 ring-gray-600 ring-offset-2 dark:ring-offset-gray-800'
+                  : status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'
+                  : status === 'running' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
+                  : status === 'failed' ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
+                  : status === 'cancelled' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                }"
             >
-              Clear Job
+              {status}
+            </button>
+          {/each}
+        </div>
+
+        {#if activeFilterCount > 0}
+          <button
+            onclick={clearAllFilters}
+            class="ml-auto text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Clear filters
+          </button>
+        {/if}
+      </div>
+
+      <!-- Mobile/Tablet: Expanded filters -->
+      {#if showFilters}
+        <div class="lg:hidden mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
+          <!-- Date range -->
+          <div class="space-y-2">
+            <span class="label">Date Range</span>
+            <div class="flex items-center gap-2">
+              <input
+                type="date"
+                bind:value={dateFrom}
+                class="input flex-1 text-sm"
+                aria-label="From date"
+              />
+              <span class="text-gray-400">-</span>
+              <input
+                type="date"
+                bind:value={dateTo}
+                class="input flex-1 text-sm"
+                aria-label="To date"
+              />
+            </div>
+          </div>
+
+          <!-- Status filters -->
+          <div class="space-y-2">
+            <span class="label">Status</span>
+            <div class="flex flex-wrap gap-2">
+              {#each allStatuses as status}
+                <button
+                  onclick={() => toggleStatus(status)}
+                  class="px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200
+                    {statusFilters.has(status)
+                      ? status === 'completed' ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2 dark:ring-offset-gray-800'
+                      : status === 'running' ? 'bg-blue-600 text-white ring-2 ring-blue-600 ring-offset-2 dark:ring-offset-gray-800'
+                      : status === 'failed' ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2 dark:ring-offset-gray-800'
+                      : status === 'cancelled' ? 'bg-yellow-600 text-white ring-2 ring-yellow-600 ring-offset-2 dark:ring-offset-gray-800'
+                      : 'bg-gray-600 text-white ring-2 ring-gray-600 ring-offset-2 dark:ring-offset-gray-800'
+                      : status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'
+                      : status === 'running' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
+                      : status === 'failed' ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
+                      : status === 'cancelled' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                    }"
+                >
+                  {status}
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          {#if activeFilterCount > 0}
+            <button
+              onclick={clearAllFilters}
+              class="btn btn-secondary w-full text-sm"
+            >
+              Clear all filters
             </button>
           {/if}
-          <button
-            onclick={confirmPurgeAll}
-            class="btn btn-secondary text-sm flex-1 sm:flex-none"
-          >
-            Clear All
-          </button>
         </div>
       {/if}
-      <select
-        bind:value={selectedJobId}
-        onchange={() => loadRuns()}
-        class="input w-full sm:w-48"
-      >
-        <option value={null}>All Jobs</option>
-        {#each $jobsStore.jobs as job}
-          <option value={job.id}>{job.name}</option>
-        {/each}
-      </select>
     </div>
+
+    <!-- Results summary -->
+    {#if !loading && runs.length > 0}
+      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 rounded-b-xl">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          Showing <span class="font-medium text-gray-700 dark:text-gray-200">{filteredRuns.length}</span>
+          {#if filteredRuns.length !== runs.length}
+            of <span class="font-medium text-gray-700 dark:text-gray-200">{runs.length}</span>
+          {/if}
+          {filteredRuns.length === 1 ? 'run' : 'runs'}
+        </p>
+      </div>
+    {/if}
   </div>
 
   {#if loading}
@@ -272,6 +523,27 @@
       <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No backup history</h3>
       <p class="text-gray-500 dark:text-gray-400">Run a backup job to see history here.</p>
     </div>
+  {:else if filteredRuns.length === 0}
+    <div class="card p-12 text-center">
+      <svg
+        class="mx-auto h-16 w-16 text-gray-400 mb-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+        />
+      </svg>
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No matching runs</h3>
+      <p class="text-gray-500 dark:text-gray-400 mb-4">Try adjusting your filters to find what you're looking for.</p>
+      <button onclick={clearAllFilters} class="btn btn-secondary">
+        Clear all filters
+      </button>
+    </div>
   {:else}
     <div class="card overflow-hidden">
       <div class="overflow-x-auto">
@@ -290,7 +562,7 @@
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {#each runs as run (run.id)}
+            {#each filteredRuns as run (run.id)}
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
                 <td class="px-4 py-3">
