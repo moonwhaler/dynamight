@@ -9,6 +9,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Track child PIDs for cleanup
+BACKEND_PID=""
+FRONTEND_PID=""
+CLEANUP_DONE=false
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,16 +26,68 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Recursively kill a process and all its children
+kill_tree() {
+    local pid=$1
+    local signal=${2:-TERM}
+
+    # Get all child PIDs
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null || true)
+
+    # Kill children first (depth-first)
+    for child in $children; do
+        kill_tree "$child" "$signal"
+    done
+
+    # Kill the process itself
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -"$signal" "$pid" 2>/dev/null || true
+    fi
+}
+
 cleanup() {
+    # Prevent running cleanup multiple times
+    if [[ "$CLEANUP_DONE" == "true" ]]; then
+        return
+    fi
+    CLEANUP_DONE=true
+
+    echo ""
     log_info "Shutting down..."
-    # Kill all background jobs
-    jobs -p | xargs -r kill 2>/dev/null || true
+
+    # Kill backend process tree
+    if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
+        log_info "Stopping backend (PID: $BACKEND_PID)..."
+        kill_tree "$BACKEND_PID" TERM
+    fi
+
+    # Kill frontend process tree
+    if [[ -n "$FRONTEND_PID" ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        log_info "Stopping frontend (PID: $FRONTEND_PID)..."
+        kill_tree "$FRONTEND_PID" TERM
+    fi
+
+    # Wait briefly for graceful shutdown
+    sleep 1
+
+    # Force kill if still running
+    if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
+        log_warn "Force killing backend..."
+        kill_tree "$BACKEND_PID" KILL
+    fi
+
+    if [[ -n "$FRONTEND_PID" ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        log_warn "Force killing frontend..."
+        kill_tree "$FRONTEND_PID" KILL
+    fi
+
     wait 2>/dev/null || true
     log_success "Cleanup complete"
-    exit 0
 }
 
 trap cleanup SIGINT SIGTERM
+trap 'cleanup; exit 0' EXIT
 
 check_dependencies() {
     local missing=()
@@ -55,9 +112,8 @@ setup_env() {
             cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
         else
             log_warn "Creating default .env file"
-            cat > "$PROJECT_DIR/.env" << 'EOF'
-JWT_SECRET=dev-secret-change-in-production-$(openssl rand -hex 32)
-ADMIN_PASSWORD=admin
+            cat > "$PROJECT_DIR/.env" << EOF
+JWT_SECRET=dev-secret-$(openssl rand -hex 32)
 DATABASE_URL=sqlite:data/dynamight.db
 STATIC_FILES_DIR=frontend/dist
 HOST=127.0.0.1
@@ -84,20 +140,20 @@ run_backend() {
     log_info "Starting backend on http://${HOST:-127.0.0.1}:${PORT:-3000}"
     (
         cd "$PROJECT_DIR/backend"
-        cargo run 2>&1 | while IFS= read -r line; do
-            echo -e "${BLUE}[backend]${NC} $line"
-        done
+        exec cargo run 2>&1 | sed -u "s/^/$(printf "${BLUE}[backend]${NC} ")/"
     ) &
+    BACKEND_PID=$!
+    log_info "Backend started with PID: $BACKEND_PID"
 }
 
 run_frontend() {
     log_info "Starting frontend dev server..."
     (
         cd "$PROJECT_DIR/frontend"
-        npm run dev 2>&1 | while IFS= read -r line; do
-            echo -e "${GREEN}[frontend]${NC} $line"
-        done
+        exec npm run dev 2>&1 | sed -u "s/^/$(printf "${GREEN}[frontend]${NC} ")/"
     ) &
+    FRONTEND_PID=$!
+    log_info "Frontend started with PID: $FRONTEND_PID"
 }
 
 main() {
