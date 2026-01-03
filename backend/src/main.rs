@@ -20,6 +20,7 @@ use crate::services::{AuthService, BackupService, MountService, SchedulerService
 
 pub struct AppState {
     pub db: sqlx::SqlitePool,
+    pub logs_db: sqlx::SqlitePool,
     pub config: Config,
     pub auth_service: AuthService,
     pub backup_service: Arc<BackupService>,
@@ -43,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     // Ensure data directory exists
     std::fs::create_dir_all("data").ok();
 
-    // Connect to database with create_if_missing and WAL mode for better concurrency
+    // Connect to main database with create_if_missing and WAL mode for better concurrency
     let db_options = SqliteConnectOptions::from_str(&config.database_url)?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
@@ -55,9 +56,23 @@ async fn main() -> anyhow::Result<()> {
         .connect_with(db_options)
         .await?;
 
+    // Connect to logs database (separate for performance)
+    let logs_db_url = config.database_url.replace("dynamight.db", "logs.db");
+    let logs_db_options = SqliteConnectOptions::from_str(&logs_db_url)?
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(30));
+
+    let logs_db = SqlitePoolOptions::new()
+        .max_connections(10)
+        .connect_with(logs_db_options)
+        .await?;
+
     // Run migrations
     tracing::info!("Running database migrations...");
     db::run_migrations(&db).await?;
+    db::run_logs_migrations(&logs_db).await?;
 
     // Create broadcast channel for log streaming
     let (log_tx, _) = broadcast::channel::<models::LogMessage>(1000);
@@ -65,10 +80,11 @@ async fn main() -> anyhow::Result<()> {
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
-    let backup_service = Arc::new(BackupService::new(db.clone(), log_tx.clone(), config.max_runs_per_job));
+    let backup_service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx.clone(), config.max_runs_per_job));
 
     let state = Arc::new(AppState {
         db: db.clone(),
+        logs_db: logs_db.clone(),
         config: config.clone(),
         auth_service,
         backup_service: backup_service.clone(),

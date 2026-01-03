@@ -16,47 +16,33 @@
   } = $props();
 
   let logs = $state<LogEntry[]>([]);
+  let logsTotal = $state(0);
+  let logsCurrentPage = $state(1);
+  let loadingLogs = $state(false);
   let run = $state<JobRun | null>(null);
   let ws: WebSocket | null = null;
   let killing = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
-  let currentTime = $state(Date.now());
+
+  const LOG_PAGE_SIZE = 500;
+
+  const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
 
   const jobName = $derived($jobsStore.jobs.find((j) => j.id === jobId)?.name || `Job #${jobId}`);
 
   const isRunning = $derived(run?.status === 'running' || run?.status === 'pending');
-
-  // Reactive duration that updates with currentTime
-  const runningDuration = $derived.by(() => {
-    if (!run?.started_at) return '-';
-    const startDate = new Date(run.started_at);
-    const endDate = run.completed_at ? new Date(run.completed_at) : new Date(currentTime);
-    const diff = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
-    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
-  });
-
-  let timeInterval: ReturnType<typeof setInterval> | null = null;
 
   onMount(() => {
     connectWebSocket();
     loadRunStatus();
     // Poll for run status updates
     pollInterval = setInterval(loadRunStatus, 2000);
-    // Update current time for duration display
-    timeInterval = setInterval(() => {
-      currentTime = Date.now();
-    }, 500);
   });
 
   onDestroy(() => {
     disconnectWebSocket();
     if (pollInterval) {
       clearInterval(pollInterval);
-    }
-    if (timeInterval) {
-      clearInterval(timeInterval);
     }
   });
 
@@ -114,15 +100,31 @@
           pollInterval = null;
         }
         killing = false;
-        // Load final logs from API to ensure we have everything
-        const finalLogs = await api.runs.logs(runId);
-        if (finalLogs.length > logs.length) {
-          logs = finalLogs;
-        }
+        // Load final logs from API (first page)
+        await loadLogsPage(1);
       }
     } catch {
       // Ignore
     }
+  }
+
+  async function loadLogsPage(page: number) {
+    loadingLogs = true;
+    try {
+      const offset = (page - 1) * LOG_PAGE_SIZE;
+      const response = await api.runs.logs(runId, LOG_PAGE_SIZE, offset);
+      logs = response.entries;
+      logsTotal = response.total;
+      logsCurrentPage = page;
+    } catch {
+      // Ignore
+    } finally {
+      loadingLogs = false;
+    }
+  }
+
+  function handlePageChange(page: number) {
+    loadLogsPage(page);
   }
 
   async function handleKill() {
@@ -134,21 +136,6 @@
     } catch {
       // Ignore
     }
-  }
-
-  function formatDate(date: string | null): string {
-    if (!date) return '';
-    return new Date(date).toLocaleString();
-  }
-
-  function formatDuration(start: string | null, end: string | null): string {
-    if (!start) return '-';
-    const startDate = new Date(start);
-    const endDate = end ? new Date(end) : new Date();
-    const diff = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
-    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
   }
 
   function getStatusBadge(status: string): string {
@@ -183,9 +170,6 @@
             <span>Run #{runId}</span>
             {#if run}
               <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
-              {#if run.started_at}
-                <span>• {runningDuration}</span>
-              {/if}
             {/if}
           </div>
         </div>
@@ -250,7 +234,16 @@
     <!-- Log viewer -->
     <div class="flex-1 min-h-[300px] overflow-hidden relative">
       <div class="absolute inset-0">
-        <LogViewer {logs} />
+        <LogViewer
+          {logs}
+          total={logsTotal}
+          currentPage={logsCurrentPage}
+          totalPages={logsTotalPages}
+          loading={loadingLogs}
+          pageSize={LOG_PAGE_SIZE}
+          onPageChange={handlePageChange}
+          isStreaming={isRunning}
+        />
       </div>
     </div>
 

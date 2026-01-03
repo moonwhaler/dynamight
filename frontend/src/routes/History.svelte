@@ -10,7 +10,13 @@
   let selectedJobId = $state<number | null>(null);
   let selectedRun = $state<JobRun | null>(null);
   let logs = $state<LogEntry[]>([]);
+  let logsTotal = $state(0);
+  let logsCurrentPage = $state(1);
   let loadingLogs = $state(false);
+
+  const LOG_PAGE_SIZE = 500;
+
+  const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
 
   onMount(async () => {
     await jobsStore.load();
@@ -42,9 +48,20 @@
 
   async function selectRun(run: JobRun) {
     selectedRun = run;
+    logsCurrentPage = 1;
+    await loadLogsPage(1);
+  }
+
+  async function loadLogsPage(page: number) {
+    if (!selectedRun) return;
+
     loadingLogs = true;
     try {
-      logs = await api.runs.logs(run.id);
+      const offset = (page - 1) * LOG_PAGE_SIZE;
+      const response = await api.runs.logs(selectedRun.id, LOG_PAGE_SIZE, offset);
+      logs = response.entries;
+      logsTotal = response.total;
+      logsCurrentPage = page;
     } catch {
       logs = [];
     } finally {
@@ -52,9 +69,15 @@
     }
   }
 
+  function handlePageChange(page: number) {
+    loadLogsPage(page);
+  }
+
   function closeDetails() {
     selectedRun = null;
     logs = [];
+    logsTotal = 0;
+    logsCurrentPage = 1;
   }
 
   function formatDate(date: string | null): string {
@@ -298,15 +321,17 @@
       </div>
 
       <div class="flex-1 min-h-[300px] overflow-hidden relative">
-        {#if loadingLogs}
-          <div class="flex justify-center py-12">
-            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-          </div>
-        {:else}
-          <div class="absolute inset-0">
-            <LogViewer {logs} />
-          </div>
-        {/if}
+        <div class="absolute inset-0">
+          <LogViewer
+            {logs}
+            total={logsTotal}
+            currentPage={logsCurrentPage}
+            totalPages={logsTotalPages}
+            loading={loadingLogs}
+            pageSize={LOG_PAGE_SIZE}
+            onPageChange={handlePageChange}
+          />
+        </div>
       </div>
     </div>
   </div>

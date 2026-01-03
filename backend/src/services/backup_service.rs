@@ -25,6 +25,7 @@ struct RunningProcess {
 
 pub struct BackupService {
     db: SqlitePool,
+    logs_db: SqlitePool,
     log_tx: broadcast::Sender<LogMessage>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
     /// Maps run_id to the currently running child process
@@ -35,9 +36,10 @@ pub struct BackupService {
 }
 
 impl BackupService {
-    pub fn new(db: SqlitePool, log_tx: broadcast::Sender<LogMessage>, max_runs_per_job: Option<u32>) -> Self {
+    pub fn new(db: SqlitePool, logs_db: SqlitePool, log_tx: broadcast::Sender<LogMessage>, max_runs_per_job: Option<u32>) -> Self {
         Self {
             db,
+            logs_db,
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             running_processes: Arc::new(Mutex::new(HashMap::new())),
@@ -47,13 +49,45 @@ impl BackupService {
     }
 
     /// Cleanup old job runs, keeping only the most recent `max_runs_per_job` runs.
-    /// Log entries are deleted automatically via CASCADE.
     pub async fn cleanup_old_runs(&self, job_id: i64) {
         let Some(max_runs) = self.max_runs_per_job else {
             return;
         };
 
-        // Delete old runs beyond the limit, keeping the most recent ones
+        // First, get the run IDs that will be deleted
+        let runs_to_delete: Vec<(i64,)> = sqlx::query_as(
+            r#"
+            SELECT id FROM job_runs
+            WHERE job_id = ? AND id NOT IN (
+                SELECT id FROM job_runs
+                WHERE job_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            "#,
+        )
+        .bind(job_id)
+        .bind(job_id)
+        .bind(max_runs)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
+
+        if runs_to_delete.is_empty() {
+            return;
+        }
+
+        let run_ids: Vec<i64> = runs_to_delete.into_iter().map(|(id,)| id).collect();
+
+        // Delete log entries from the separate logs database
+        for run_id in &run_ids {
+            let _ = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
+                .bind(run_id)
+                .execute(&self.logs_db)
+                .await;
+        }
+
+        // Delete the job runs from main database
         let result = sqlx::query(
             r#"
             DELETE FROM job_runs
@@ -650,7 +684,7 @@ impl BackupService {
         // Broadcast to WebSocket clients
         let _ = self.log_tx.send(log_msg);
 
-        // Store in database
+        // Store in logs database (separate from main database for performance)
         let _ = sqlx::query(
             "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
         )
@@ -659,7 +693,43 @@ impl BackupService {
         .bind(message)
         .bind(source)
         .bind(timestamp)
-        .execute(&self.db)
+        .execute(&self.logs_db)
         .await;
+    }
+
+    /// Delete log entries for a specific run (used when deleting runs manually)
+    pub async fn delete_logs_for_run(&self, run_id: i64) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
+            .bind(run_id)
+            .execute(&self.logs_db)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete log entries for all runs of a job
+    pub async fn delete_logs_for_job(&self, job_id: i64, db: &SqlitePool) -> anyhow::Result<u64> {
+        // Get all run IDs for this job
+        let run_ids: Vec<(i64,)> = sqlx::query_as("SELECT id FROM job_runs WHERE job_id = ?")
+            .bind(job_id)
+            .fetch_all(db)
+            .await?;
+
+        let mut total_deleted = 0u64;
+        for (run_id,) in run_ids {
+            let result = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
+                .bind(run_id)
+                .execute(&self.logs_db)
+                .await?;
+            total_deleted += result.rows_affected();
+        }
+        Ok(total_deleted)
+    }
+
+    /// Delete all log entries (used for purge all)
+    pub async fn delete_all_logs(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM log_entries")
+            .execute(&self.logs_db)
+            .await?;
+        Ok(result.rows_affected())
     }
 }

@@ -87,17 +87,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
 );
 
--- Log entries (streaming logs during execution)
-CREATE TABLE IF NOT EXISTS log_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_run_id INTEGER NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    level TEXT NOT NULL,
-    message TEXT NOT NULL,
-    source TEXT,
-
-    FOREIGN KEY (job_run_id) REFERENCES job_runs(id) ON DELETE CASCADE
-);
+-- Note: log_entries table is now in a separate database (logs.db) for performance
 
 -- Sessions table for JWT token management
 CREATE TABLE IF NOT EXISTS sessions (
@@ -116,6 +106,5 @@ CREATE INDEX IF NOT EXISTS idx_schedules_job_id ON schedules(job_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at);
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs(status);
-CREATE INDEX IF NOT EXISTS idx_log_entries_job_run_id ON log_entries(job_run_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

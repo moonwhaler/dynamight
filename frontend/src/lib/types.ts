@@ -64,6 +64,14 @@ export interface LogEntry {
   source: string | null;
 }
 
+export interface PaginatedLogsResponse {
+  entries: LogEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}
+
 export interface UsbDrive {
   uuid: string;
   name: string;

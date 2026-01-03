@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -63,14 +63,44 @@ pub struct GetLogsQuery {
     pub level: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct PaginatedLogsResponse {
+    pub entries: Vec<LogEntry>,
+    pub total: i64,
+    pub offset: i32,
+    pub limit: i32,
+    pub has_more: bool,
+}
+
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<i64>,
     Query(query): Query<GetLogsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(1000);
+    let limit = query.limit.unwrap_or(500);
     let offset = query.offset.unwrap_or(0);
 
+    // Get total count first
+    let total: i64 = if let Some(level) = &query.level {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM log_entries WHERE job_run_id = ? AND level = ?",
+        )
+        .bind(run_id)
+        .bind(level)
+        .fetch_one(&state.logs_db)
+        .await
+        .unwrap_or(0)
+    } else {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM log_entries WHERE job_run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_one(&state.logs_db)
+        .await
+        .unwrap_or(0)
+    };
+
+    // Get log entries from the separate logs database
     let logs: Vec<LogEntryRow> = if let Some(level) = &query.level {
         sqlx::query_as(
             "SELECT * FROM log_entries WHERE job_run_id = ? AND level = ? ORDER BY id LIMIT ? OFFSET ?",
@@ -79,7 +109,7 @@ pub async fn get_logs(
         .bind(level)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&state.db)
+        .fetch_all(&state.logs_db)
         .await
         .unwrap_or_default()
     } else {
@@ -89,14 +119,22 @@ pub async fn get_logs(
         .bind(run_id)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&state.db)
+        .fetch_all(&state.logs_db)
         .await
         .unwrap_or_default()
     };
 
-    let response: Vec<LogEntry> = logs.into_iter().map(LogEntry::from).collect();
+    let entries: Vec<LogEntry> = logs.into_iter().map(LogEntry::from).collect();
+    let fetched = entries.len() as i32;
+    let has_more = (offset + fetched) < total as i32;
 
-    Json(response)
+    Json(PaginatedLogsResponse {
+        entries,
+        total,
+        offset,
+        limit,
+        has_more,
+    })
 }
 
 /// Delete a single run and its logs
@@ -104,7 +142,12 @@ pub async fn delete_run(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<i64>,
 ) -> impl IntoResponse {
-    // Log entries are deleted via CASCADE
+    // Delete log entries from the separate logs database first
+    if let Err(e) = state.backup_service.delete_logs_for_run(run_id).await {
+        tracing::error!("Failed to delete logs for run {}: {}", run_id, e);
+    }
+
+    // Then delete the run from main database
     let result = sqlx::query("DELETE FROM job_runs WHERE id = ?")
         .bind(run_id)
         .execute(&state.db)
@@ -129,7 +172,12 @@ pub async fn delete_job_runs(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<i64>,
 ) -> impl IntoResponse {
-    // Log entries are deleted via CASCADE
+    // Delete log entries from the separate logs database first
+    if let Err(e) = state.backup_service.delete_logs_for_job(job_id, &state.db).await {
+        tracing::error!("Failed to delete logs for job {}: {}", job_id, e);
+    }
+
+    // Then delete the runs from main database
     let result = sqlx::query("DELETE FROM job_runs WHERE job_id = ?")
         .bind(job_id)
         .execute(&state.db)
@@ -150,7 +198,12 @@ pub async fn delete_job_runs(
 pub async fn purge_all_runs(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // Log entries are deleted via CASCADE
+    // Delete all log entries from the separate logs database first
+    if let Err(e) = state.backup_service.delete_all_logs().await {
+        tracing::error!("Failed to purge all logs: {}", e);
+    }
+
+    // Then delete all runs from main database
     let result = sqlx::query("DELETE FROM job_runs")
         .execute(&state.db)
         .await;

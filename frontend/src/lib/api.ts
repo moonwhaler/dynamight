@@ -4,6 +4,7 @@ import type {
   Schedule,
   JobRun,
   LogEntry,
+  PaginatedLogsResponse,
   UsbDrive,
   DirectoryEntry,
   CreateJobRequest,
@@ -128,8 +129,8 @@ export const api = {
     list: (jobId: number, limit = 50, offset = 0) =>
       request<JobRun[]>(`/jobs/${jobId}/runs?limit=${limit}&offset=${offset}`),
     get: (id: number) => request<JobRun>(`/runs/${id}`),
-    logs: (id: number, limit = 1000, offset = 0) =>
-      request<LogEntry[]>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),
+    logs: (id: number, limit = 500, offset = 0) =>
+      request<PaginatedLogsResponse>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),
     delete: (id: number) =>
       request<{ success: boolean }>(`/runs/${id}`, { method: 'DELETE' }),
     deleteForJob: (jobId: number) =>
