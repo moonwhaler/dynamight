@@ -115,6 +115,11 @@
           clearInterval(pollInterval);
           pollInterval = null;
         }
+        // Only reset cancelling state when job is truly complete (not just 'cancelled')
+        if (cancelling && ['completed', 'failed'].includes(run.status)) {
+          cancelling = false;
+          cancelRequestedAt = null;
+        }
         // Load final logs from API to ensure we have everything
         const finalLogs = await api.runs.logs(runId);
         if (finalLogs.length > logs.length) {
@@ -131,13 +136,10 @@
     cancelling = true;
     cancelRequestedAt = Date.now();
     try {
-      const result = await api.jobs.cancel(jobId, false);
+      await api.jobs.cancel(jobId, false);
       await loadRunStatus();
-      // If process was killed or status changed, reset cancelling state
-      if (result.processKilled || !isRunning) {
-        cancelling = false;
-        cancelRequestedAt = null;
-      }
+      // Don't reset cancelling state here - let Force Kill button appear after 3 seconds
+      // The state will be reset when job reaches 'completed' or 'failed' status
     } catch {
       // Ignore
     }

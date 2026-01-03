@@ -109,58 +109,111 @@ impl BackupService {
         if let Some(running) = processes.get_mut(&run_id) {
             running.cancelled = true;
 
-            #[cfg(unix)]
-            {
-                use nix::sys::signal::{kill, Signal};
-                use nix::unistd::Pid;
+            let pid = running.child.id();
 
-                if let Some(pid) = running.child.id() {
-                    let pid = Pid::from_raw(pid as i32);
+            if force {
+                // Force kill - use multiple methods to ensure process dies
+                self.log(run_id, LogLevel::Warning, &format!("Force killing process (pid: {:?})", pid), "system").await;
 
-                    if force {
-                        // Force kill - SIGKILL immediately
-                        let _ = kill(pid, Signal::SIGKILL);
-                        self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process", "system").await;
-                        return Ok(true);
+                // Method 1: Use tokio's start_kill (sends SIGKILL)
+                if let Err(e) = running.child.start_kill() {
+                    self.log(run_id, LogLevel::Warning, &format!("start_kill failed: {}", e), "system").await;
+                }
+
+                #[cfg(unix)]
+                let pid_for_pkill = if let Some(pid) = pid {
+                    use nix::sys::signal::{killpg, kill, Signal};
+                    use nix::unistd::Pid;
+                    let pid_raw = pid as i32;
+
+                    // Method 2: Kill the process group (for any children)
+                    if let Err(e) = killpg(Pid::from_raw(pid_raw), Signal::SIGKILL) {
+                        self.log(run_id, LogLevel::Debug, &format!("killpg failed: {}", e), "system").await;
                     }
 
-                    // Graceful - send SIGTERM first
-                    if kill(pid, Signal::SIGTERM).is_ok() {
-                        self.log(run_id, LogLevel::Info, "Sent SIGTERM, waiting for process to exit...", "system").await;
+                    // Method 3: Direct kill as fallback
+                    let _ = kill(Pid::from_raw(pid_raw), Signal::SIGKILL);
 
-                        // Wait up to 5 seconds for graceful shutdown
-                        drop(processes); // Release lock during wait
+                    Some(pid)
+                } else {
+                    None
+                };
 
-                        for _ in 0..10 {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                // Remove from tracking - this signals do_execute to stop processing
+                processes.remove(&run_id);
+                drop(processes); // Release lock before spawning pkill
 
-                            // Check if process exited
-                            let mut processes = self.running_processes.lock().await;
-                            if !processes.contains_key(&run_id) {
+                #[cfg(unix)]
+                if let Some(pid) = pid_for_pkill {
+                    // Method 4: Use pkill to kill any child processes
+                    let _ = Command::new("pkill")
+                        .args(["-9", "-P", &pid.to_string()])
+                        .output()
+                        .await;
+                }
+
+                self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process", "system").await;
+                return Ok(true);
+            }
+
+            // Graceful shutdown - send SIGTERM first
+            #[cfg(unix)]
+            if let Some(pid) = pid {
+                use nix::sys::signal::{killpg, kill, Signal};
+                use nix::unistd::Pid;
+                let pid_raw = pid as i32;
+
+                // Send SIGTERM to process group
+                let term_sent = killpg(Pid::from_raw(pid_raw), Signal::SIGTERM).is_ok()
+                    || kill(Pid::from_raw(pid_raw), Signal::SIGTERM).is_ok();
+
+                if term_sent {
+                    self.log(run_id, LogLevel::Info, "Sent SIGTERM, waiting for process to exit...", "system").await;
+
+                    // Wait up to 5 seconds for graceful shutdown
+                    drop(processes); // Release lock during wait
+
+                    for _ in 0..10 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                        // Check if process exited
+                        let mut processes = self.running_processes.lock().await;
+                        if !processes.contains_key(&run_id) {
+                            self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
+                            return Ok(true);
+                        }
+
+                        // Check if still running
+                        if let Some(running) = processes.get_mut(&run_id) {
+                            if running.child.try_wait().ok().flatten().is_some() {
+                                processes.remove(&run_id);
                                 self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
                                 return Ok(true);
                             }
-
-                            // Check if still running
-                            if let Some(running) = processes.get_mut(&run_id) {
-                                if running.child.try_wait().ok().flatten().is_some() {
-                                    processes.remove(&run_id);
-                                    self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
-                                    return Ok(true);
-                                }
-                            }
                         }
-
-                        // Grace period expired, send SIGKILL
-                        let mut processes = self.running_processes.lock().await;
-                        if let Some(running) = processes.get_mut(&run_id) {
-                            if let Some(pid) = running.child.id() {
-                                let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
-                                self.log(run_id, LogLevel::Warning, "Grace period expired, sent SIGKILL", "system").await;
-                            }
-                        }
-                        return Ok(true);
                     }
+
+                    // Grace period expired - force kill
+                    self.log(run_id, LogLevel::Warning, "Grace period expired, force killing...", "system").await;
+                    let mut processes = self.running_processes.lock().await;
+                    if let Some(running) = processes.get_mut(&run_id) {
+                        let _ = running.child.start_kill();
+                        if let Some(pid) = running.child.id() {
+                            let pid_raw = pid as i32;
+                            let _ = killpg(Pid::from_raw(pid_raw), Signal::SIGKILL);
+                            let _ = kill(Pid::from_raw(pid_raw), Signal::SIGKILL);
+                        }
+                    }
+                    drop(processes);
+
+                    // Also kill any remaining children via pkill
+                    let _ = Command::new("pkill")
+                        .args(["-9", "-P", &pid.to_string()])
+                        .output()
+                        .await;
+
+                    self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process group", "system").await;
+                    return Ok(true);
                 }
             }
 
@@ -344,7 +397,8 @@ impl BackupService {
                 .arg(format!("{}/", source_dir))
                 .arg(format!("{}/", dest))
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+                .stderr(Stdio::piped())
+                .process_group(0); // Make rsync a process group leader for proper cleanup
 
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
@@ -374,13 +428,31 @@ impl BackupService {
                 });
             }
 
-            // Stream stdout
+            // Stream stdout with proper cancellation support
             if let Some(stdout) = stdout {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
 
-                while let Ok(Some(line)) = lines.next_line().await {
-                    // Check for cancellation periodically
+                loop {
+                    // Use select! to race between reading a line and checking cancellation
+                    let line = tokio::select! {
+                        result = lines.next_line() => {
+                            match result {
+                                Ok(Some(line)) => line,
+                                Ok(None) => break, // EOF
+                                Err(_) => break,   // Error
+                            }
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                            // Check for cancellation every 100ms even if no output
+                            if self.is_cancelled(run_id).await {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Check for cancellation after receiving a line
                     if self.is_cancelled(run_id).await {
                         break;
                     }
@@ -406,13 +478,33 @@ impl BackupService {
                 }
             }
 
-            // Stream stderr (only if not cancelled)
+            // Stream stderr with cancellation support
             if !self.is_cancelled(run_id).await {
                 if let Some(stderr) = stderr {
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
 
-                    while let Ok(Some(line)) = lines.next_line().await {
+                    loop {
+                        let line = tokio::select! {
+                            result = lines.next_line() => {
+                                match result {
+                                    Ok(Some(line)) => line,
+                                    Ok(None) => break, // EOF
+                                    Err(_) => break,   // Error
+                                }
+                            }
+                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                                if self.is_cancelled(run_id).await {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+
+                        if self.is_cancelled(run_id).await {
+                            break;
+                        }
+
                         self.log(run_id, LogLevel::Warning, &line, "rsync").await;
                     }
                 }

@@ -155,42 +155,67 @@ impl SchedulerService {
                     .execute_job(&job, run_id, Some(schedule.schedule_id))
                     .await;
 
-                // Update completion status
-                let (status, exit_code, files, bytes, errors) = match result {
-                    Ok(r) => (
-                        if r.error_count > 0 {
-                            JobRunStatus::Failed
-                        } else {
-                            JobRunStatus::Completed
-                        },
-                        r.exit_code,
-                        r.files_transferred,
-                        r.bytes_transferred,
-                        r.error_count,
-                    ),
+                // Update completion status (but don't overwrite 'cancelled' status)
+                let (exit_code, files, bytes, errors) = match &result {
+                    Ok(r) => (r.exit_code, r.files_transferred, r.bytes_transferred, r.error_count),
                     Err(e) => {
                         tracing::error!("Job execution failed: {}", e);
-                        (JobRunStatus::Failed, 1, 0, 0, 1)
+                        (1, 0, 0, 1)
                     }
                 };
 
-                let _ = sqlx::query(
-                    r#"
-                    UPDATE job_runs
-                    SET status = ?, completed_at = ?, exit_code = ?,
-                        files_transferred = ?, bytes_transferred = ?, error_count = ?
-                    WHERE id = ?
-                    "#,
+                // Check database for current status - if cancelled, preserve it
+                let current_status: Option<(String,)> = sqlx::query_as(
+                    "SELECT status FROM job_runs WHERE id = ?"
                 )
-                .bind(status.as_str())
-                .bind(Utc::now())
-                .bind(exit_code)
-                .bind(files)
-                .bind(bytes)
-                .bind(errors)
                 .bind(run_id)
-                .execute(&db)
-                .await;
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten();
+
+                let was_cancelled = current_status.as_ref().map(|s| s.0.as_str()) == Some("cancelled");
+
+                if was_cancelled {
+                    // Only update stats, preserve 'cancelled' status
+                    let _ = sqlx::query(
+                        r#"
+                        UPDATE job_runs
+                        SET exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ?
+                        WHERE id = ? AND status = 'cancelled'
+                        "#,
+                    )
+                    .bind(exit_code)
+                    .bind(files)
+                    .bind(bytes)
+                    .bind(errors)
+                    .bind(run_id)
+                    .execute(&db)
+                    .await;
+                } else {
+                    let status = match &result {
+                        Ok(r) => if r.error_count > 0 { JobRunStatus::Failed } else { JobRunStatus::Completed },
+                        Err(_) => JobRunStatus::Failed,
+                    };
+
+                    let _ = sqlx::query(
+                        r#"
+                        UPDATE job_runs
+                        SET status = ?, completed_at = ?, exit_code = ?,
+                            files_transferred = ?, bytes_transferred = ?, error_count = ?
+                        WHERE id = ?
+                        "#,
+                    )
+                    .bind(status.as_str())
+                    .bind(Utc::now())
+                    .bind(exit_code)
+                    .bind(files)
+                    .bind(bytes)
+                    .bind(errors)
+                    .bind(run_id)
+                    .execute(&db)
+                    .await;
+                }
 
                 // Cleanup old runs
                 backup_service.cleanup_old_runs(schedule.job_id).await;
