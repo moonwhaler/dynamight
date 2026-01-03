@@ -8,6 +8,7 @@
     dryRun = $bindable(false),
     bandwidthLimit = $bindable<number | null>(null),
     excludes = $bindable<string[]>([]),
+    verbosity = $bindable<'quiet' | 'normal' | 'verbose'>('normal'),
   }: {
     syncDeletes: boolean;
     checksumMode: boolean;
@@ -15,6 +16,7 @@
     dryRun: boolean;
     bandwidthLimit: number | null;
     excludes: string[];
+    verbosity: 'quiet' | 'normal' | 'verbose';
   } = $props();
 
   let newExclude = $state('');
@@ -117,6 +119,28 @@
         Show what would be transferred without actually doing it. Good for testing.
       </p>
     </div>
+  </div>
+
+  <!-- Verbosity -->
+  <div>
+    <label for="verbosity" class="block font-medium text-gray-700">
+      Output Verbosity
+      <HelpTooltip text="Controls how much information rsync outputs during backup. Quiet mode only shows errors. Normal shows files transferred and summary statistics. Verbose adds per-file progress bars and transfer speeds." />
+    </label>
+    <select id="verbosity" bind:value={verbosity} class="input mt-1 w-48">
+      <option value="quiet">Quiet (errors only)</option>
+      <option value="normal">Normal (files + stats)</option>
+      <option value="verbose">Verbose (full progress)</option>
+    </select>
+    <p class="text-sm text-gray-500 mt-1">
+      {#if verbosity === 'quiet'}
+        Only errors will be shown in the logs.
+      {:else if verbosity === 'normal'}
+        Shows which files are transferred and summary statistics.
+      {:else}
+        Shows per-file progress bars, speeds, and detailed statistics.
+      {/if}
+    </p>
   </div>
 
   <!-- Bandwidth Limit -->

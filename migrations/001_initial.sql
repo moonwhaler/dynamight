@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     compress INTEGER DEFAULT 0,
     dry_run INTEGER DEFAULT 0,
     bandwidth_limit INTEGER,
+    verbosity TEXT DEFAULT 'normal',
 
     -- Metadata
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

@@ -18,20 +18,13 @@
   let logs = $state<LogEntry[]>([]);
   let run = $state<JobRun | null>(null);
   let ws: WebSocket | null = null;
-  let cancelling = $state(false);
-  let cancelRequestedAt = $state<number | null>(null);
-  let forceKilling = $state(false);
+  let killing = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let currentTime = $state(Date.now());
 
   const jobName = $derived($jobsStore.jobs.find((j) => j.id === jobId)?.name || `Job #${jobId}`);
 
   const isRunning = $derived(run?.status === 'running' || run?.status === 'pending');
-
-  // Show force kill option after 3 seconds of being in "Stopping..." state
-  const showForceKill = $derived(
-    cancelling && cancelRequestedAt && currentTime - cancelRequestedAt > 3000
-  );
 
   // Reactive duration that updates with currentTime
   const runningDuration = $derived.by(() => {
@@ -51,7 +44,7 @@
     loadRunStatus();
     // Poll for run status updates
     pollInterval = setInterval(loadRunStatus, 2000);
-    // Update current time for force kill timer
+    // Update current time for duration display
     timeInterval = setInterval(() => {
       currentTime = Date.now();
     }, 500);
@@ -83,7 +76,12 @@
           message: msg.message,
           source: msg.source,
         };
-        logs = [...logs, entry];
+        // Limit logs to last 2000 entries, removing oldest from top
+        if (logs.length >= 2000) {
+          logs = [...logs.slice(1), entry];
+        } else {
+          logs = [...logs, entry];
+        }
       } catch {
         // Ignore parse errors
       }
@@ -115,11 +113,7 @@
           clearInterval(pollInterval);
           pollInterval = null;
         }
-        // Only reset cancelling state when job is truly complete (not just 'cancelled')
-        if (cancelling && ['completed', 'failed'].includes(run.status)) {
-          cancelling = false;
-          cancelRequestedAt = null;
-        }
+        killing = false;
         // Load final logs from API to ensure we have everything
         const finalLogs = await api.runs.logs(runId);
         if (finalLogs.length > logs.length) {
@@ -131,33 +125,14 @@
     }
   }
 
-  async function handleCancel() {
-    if (cancelling) return;
-    cancelling = true;
-    cancelRequestedAt = Date.now();
+  async function handleKill() {
+    if (killing) return;
+    killing = true;
     try {
-      await api.jobs.cancel(jobId, false);
+      await api.jobs.cancel(jobId);
       await loadRunStatus();
-      // Don't reset cancelling state here - let Force Kill button appear after 3 seconds
-      // The state will be reset when job reaches 'completed' or 'failed' status
     } catch {
       // Ignore
-    }
-  }
-
-  async function handleForceKill() {
-    if (forceKilling) return;
-    forceKilling = true;
-    try {
-      await api.jobs.cancel(jobId, true);
-      await loadRunStatus();
-      // Reset all cancellation state after force kill
-      cancelling = false;
-      cancelRequestedAt = null;
-    } catch {
-      // Ignore errors
-    } finally {
-      forceKilling = false;
     }
   }
 
@@ -222,25 +197,14 @@
       </div>
 
       <div class="flex items-center gap-2">
-        {#if isRunning || cancelling}
-          {#if showForceKill}
-            <button
-              onclick={() => handleForceKill()}
-              disabled={forceKilling}
-              class="btn btn-danger text-sm py-1.5 px-3 animate-pulse"
-              title="Force kill the process immediately"
-            >
-              {forceKilling ? 'Killing...' : 'Force Kill'}
-            </button>
-          {:else}
-            <button
-              onclick={() => handleCancel()}
-              disabled={cancelling}
-              class="btn btn-danger text-sm py-1.5 px-3"
-            >
-              {cancelling ? 'Stopping...' : 'Stop'}
-            </button>
-          {/if}
+        {#if isRunning || killing}
+          <button
+            onclick={() => handleKill()}
+            disabled={killing}
+            class="btn btn-danger text-sm py-1.5 px-3"
+          >
+            {killing ? 'Killing...' : 'Kill'}
+          </button>
         {/if}
         <button
           onclick={onClose}

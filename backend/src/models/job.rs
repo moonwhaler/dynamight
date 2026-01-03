@@ -26,6 +26,7 @@ pub struct Job {
     pub compress: bool,
     pub dry_run: bool,
     pub bandwidth_limit: Option<i32>,
+    pub verbosity: String, // "quiet", "normal", "verbose"
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -64,6 +65,7 @@ pub struct CreateJobRequest {
     pub compress: Option<bool>,
     pub dry_run: Option<bool>,
     pub bandwidth_limit: Option<i32>,
+    pub verbosity: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +88,7 @@ pub struct UpdateJobRequest {
     pub compress: Option<bool>,
     pub dry_run: Option<bool>,
     pub bandwidth_limit: Option<i32>,
+    pub verbosity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +112,7 @@ pub struct JobResponse {
     pub compress: bool,
     pub dry_run: bool,
     pub bandwidth_limit: Option<i32>,
+    pub verbosity: String,
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -137,6 +141,7 @@ impl From<Job> for JobResponse {
             compress: job.compress,
             dry_run: job.dry_run,
             bandwidth_limit: job.bandwidth_limit,
+            verbosity: job.verbosity,
             created_at: job.created_at,
             updated_at: job.updated_at,
         }

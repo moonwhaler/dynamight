@@ -39,6 +39,7 @@
   let compress = $state(false);
   let dryRun = $state(false);
   let bandwidthLimit = $state<number | null>(null);
+  let verbosity = $state<'quiet' | 'normal' | 'verbose'>('normal');
 
   async function loadData() {
     console.log('[JobDetail] loadData, params:', params, 'isNew:', isNew);
@@ -101,6 +102,7 @@
     compress = job.compress;
     dryRun = job.dry_run;
     bandwidthLimit = job.bandwidth_limit;
+    verbosity = job.verbosity;
   }
 
   async function handleSubmit(e: Event) {
@@ -124,6 +126,7 @@
       compress,
       dry_run: dryRun,
       bandwidth_limit: bandwidthLimit || undefined,
+      verbosity,
     };
 
     console.log('[JobDetail] Submitting job:', jobData);
@@ -303,6 +306,7 @@
           bind:dryRun
           bind:bandwidthLimit
           bind:excludes={rsyncExcludes}
+          bind:verbosity
         />
       </div>
 

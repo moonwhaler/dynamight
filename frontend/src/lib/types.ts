@@ -20,6 +20,7 @@ export interface Job {
   compress: boolean;
   dry_run: boolean;
   bandwidth_limit: number | null;
+  verbosity: 'quiet' | 'normal' | 'verbose';
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +96,7 @@ export interface CreateJobRequest {
   compress?: boolean;
   dry_run?: boolean;
   bandwidth_limit?: number;
+  verbosity?: 'quiet' | 'normal' | 'verbose';
 }
 
 export interface CreateScheduleRequest {

@@ -20,7 +20,7 @@ pub struct JobResult {
 /// Holds information about a running process for cancellation
 struct RunningProcess {
     child: Child,
-    cancelled: bool,
+    pid: u32,
 }
 
 pub struct BackupService {
@@ -29,6 +29,8 @@ pub struct BackupService {
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
     /// Maps run_id to the currently running child process
     running_processes: Arc<Mutex<HashMap<i64, RunningProcess>>>,
+    /// Tracks cancelled run_ids (separate from running_processes so it persists after process removal)
+    cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
     max_runs_per_job: Option<u32>,
 }
 
@@ -39,6 +41,7 @@ impl BackupService {
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             running_processes: Arc::new(Mutex::new(HashMap::new())),
+            cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
             max_runs_per_job,
         }
     }
@@ -87,10 +90,35 @@ impl BackupService {
         self.running_jobs.read().await.contains(&job_id)
     }
 
-    /// Cancel a running job. If force is false, sends SIGTERM and waits up to 5 seconds.
-    /// If force is true (or after grace period), sends SIGKILL.
-    pub async fn cancel_job(&self, run_id: i64, force: bool) -> anyhow::Result<bool> {
-        // Mark as cancelled in database first
+    /// Cancel a running job by immediately killing the process with SIGKILL.
+    pub async fn cancel_job(&self, run_id: i64) -> anyhow::Result<bool> {
+        tracing::info!("cancel_job called for run_id: {}", run_id);
+
+        // Extract PID and kill FIRST, before marking as cancelled
+        // (otherwise is_cancelled() triggers cleanup which removes the process from the map)
+        let pid = {
+            let mut processes = self.running_processes.lock().await;
+            tracing::info!("running_processes map has {} entries", processes.len());
+            tracing::info!("looking for run_id {} in map keys: {:?}", run_id, processes.keys().collect::<Vec<_>>());
+
+            if let Some(running) = processes.get_mut(&run_id) {
+                let pid = running.pid;
+                tracing::info!("Found process with PID {} for run_id {}", pid, run_id);
+                // Try tokio's kill while we have the child
+                let kill_result = running.child.start_kill();
+                tracing::info!("start_kill result: {:?}", kill_result);
+                Some(pid)
+            } else {
+                tracing::warn!("No process found in map for run_id {}", run_id);
+                None
+            }
+        };
+        // Lock is released here
+
+        // Now mark as cancelled (after we've extracted the PID and started killing)
+        self.cancelled_runs.lock().await.insert(run_id);
+
+        // Mark as cancelled in database
         sqlx::query("UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'")
             .bind(JobRunStatus::Cancelled.as_str())
             .bind(Utc::now())
@@ -98,140 +126,54 @@ impl BackupService {
             .execute(&self.db)
             .await?;
 
-        // Log cancellation request
-        self.log(run_id, LogLevel::Warning,
-            if force { "Force kill requested" } else { "Cancellation requested, sending SIGTERM..." },
-            "system"
-        ).await;
+        let Some(pid) = pid else {
+            self.log(run_id, LogLevel::Warning, "No process found in tracking map", "system").await;
+            return Ok(false);
+        };
 
-        // Try to kill the running process
-        let mut processes = self.running_processes.lock().await;
-        if let Some(running) = processes.get_mut(&run_id) {
-            running.cancelled = true;
+        self.log(run_id, LogLevel::Warning, &format!("Killing process (pid: {})", pid), "system").await;
 
-            let pid = running.child.id();
+        #[cfg(unix)]
+        {
+            let pid_str = pid.to_string();
 
-            if force {
-                // Force kill - use multiple methods to ensure process dies
-                self.log(run_id, LogLevel::Warning, &format!("Force killing process (pid: {:?})", pid), "system").await;
+            // Use kill command directly - most reliable method
+            let result = Command::new("kill")
+                .args(["-9", &pid_str])
+                .output()
+                .await;
+            tracing::info!("kill -9 {} result: {:?}", pid_str, result);
 
-                // Method 1: Use tokio's start_kill (sends SIGKILL)
-                if let Err(e) = running.child.start_kill() {
-                    self.log(run_id, LogLevel::Warning, &format!("start_kill failed: {}", e), "system").await;
-                }
+            // Kill the entire process group (negative PID)
+            let result = Command::new("kill")
+                .args(["-9", &format!("-{}", pid_str)])
+                .output()
+                .await;
+            tracing::info!("kill -9 -{} result: {:?}", pid_str, result);
 
-                #[cfg(unix)]
-                let pid_for_pkill = if let Some(pid) = pid {
-                    use nix::sys::signal::{killpg, kill, Signal};
-                    use nix::unistd::Pid;
-                    let pid_raw = pid as i32;
+            // Kill any child processes
+            let result = Command::new("pkill")
+                .args(["-9", "-P", &pid_str])
+                .output()
+                .await;
+            tracing::info!("pkill -9 -P {} result: {:?}", pid_str, result);
 
-                    // Method 2: Kill the process group (for any children)
-                    if let Err(e) = killpg(Pid::from_raw(pid_raw), Signal::SIGKILL) {
-                        self.log(run_id, LogLevel::Debug, &format!("killpg failed: {}", e), "system").await;
-                    }
-
-                    // Method 3: Direct kill as fallback
-                    let _ = kill(Pid::from_raw(pid_raw), Signal::SIGKILL);
-
-                    Some(pid)
-                } else {
-                    None
-                };
-
-                // Remove from tracking - this signals do_execute to stop processing
-                processes.remove(&run_id);
-                drop(processes); // Release lock before spawning pkill
-
-                #[cfg(unix)]
-                if let Some(pid) = pid_for_pkill {
-                    // Method 4: Use pkill to kill any child processes
-                    let _ = Command::new("pkill")
-                        .args(["-9", "-P", &pid.to_string()])
-                        .output()
-                        .await;
-                }
-
-                self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process", "system").await;
-                return Ok(true);
-            }
-
-            // Graceful shutdown - send SIGTERM first
-            #[cfg(unix)]
-            if let Some(pid) = pid {
-                use nix::sys::signal::{killpg, kill, Signal};
-                use nix::unistd::Pid;
-                let pid_raw = pid as i32;
-
-                // Send SIGTERM to process group
-                let term_sent = killpg(Pid::from_raw(pid_raw), Signal::SIGTERM).is_ok()
-                    || kill(Pid::from_raw(pid_raw), Signal::SIGTERM).is_ok();
-
-                if term_sent {
-                    self.log(run_id, LogLevel::Info, "Sent SIGTERM, waiting for process to exit...", "system").await;
-
-                    // Wait up to 5 seconds for graceful shutdown
-                    drop(processes); // Release lock during wait
-
-                    for _ in 0..10 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                        // Check if process exited
-                        let mut processes = self.running_processes.lock().await;
-                        if !processes.contains_key(&run_id) {
-                            self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
-                            return Ok(true);
-                        }
-
-                        // Check if still running
-                        if let Some(running) = processes.get_mut(&run_id) {
-                            if running.child.try_wait().ok().flatten().is_some() {
-                                processes.remove(&run_id);
-                                self.log(run_id, LogLevel::Info, "Process terminated gracefully", "system").await;
-                                return Ok(true);
-                            }
-                        }
-                    }
-
-                    // Grace period expired - force kill
-                    self.log(run_id, LogLevel::Warning, "Grace period expired, force killing...", "system").await;
-                    let mut processes = self.running_processes.lock().await;
-                    if let Some(running) = processes.get_mut(&run_id) {
-                        let _ = running.child.start_kill();
-                        if let Some(pid) = running.child.id() {
-                            let pid_raw = pid as i32;
-                            let _ = killpg(Pid::from_raw(pid_raw), Signal::SIGKILL);
-                            let _ = kill(Pid::from_raw(pid_raw), Signal::SIGKILL);
-                        }
-                    }
-                    drop(processes);
-
-                    // Also kill any remaining children via pkill
-                    let _ = Command::new("pkill")
-                        .args(["-9", "-P", &pid.to_string()])
-                        .output()
-                        .await;
-
-                    self.log(run_id, LogLevel::Warning, "Sent SIGKILL to process group", "system").await;
-                    return Ok(true);
-                }
-            }
-
-            #[cfg(not(unix))]
-            {
-                // On non-Unix, just try to kill
-                let _ = running.child.kill().await;
-                return Ok(true);
-            }
+            // Also use nix as backup
+            use nix::sys::signal::{killpg, kill, Signal};
+            use nix::unistd::Pid;
+            let result = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+            tracing::info!("nix kill result: {:?}", result);
+            let result = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+            tracing::info!("nix killpg result: {:?}", result);
         }
 
-        Ok(false) // No process found to kill
+        self.log(run_id, LogLevel::Warning, "Kill signals sent", "system").await;
+        Ok(true)
     }
 
     /// Check if a job run has been cancelled
     pub async fn is_cancelled(&self, run_id: i64) -> bool {
-        let processes = self.running_processes.lock().await;
-        processes.get(&run_id).map(|p| p.cancelled).unwrap_or(false)
+        self.cancelled_runs.lock().await.contains(&run_id)
     }
 
     pub async fn execute_job(
@@ -247,6 +189,9 @@ impl BackupService {
 
         // Remove from running jobs
         self.running_jobs.write().await.remove(&job.id);
+
+        // Clean up cancelled tracking
+        self.cancelled_runs.lock().await.remove(&run_id);
 
         result
     }
@@ -415,6 +360,9 @@ impl BackupService {
                 }
             };
 
+            // Get PID immediately after spawn - this is reliable
+            let pid = child.id().expect("newly spawned process must have a PID");
+
             // Take stdout/stderr before registering
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
@@ -422,11 +370,15 @@ impl BackupService {
             // Register the child process for cancellation tracking
             {
                 let mut processes = self.running_processes.lock().await;
+                tracing::info!("ADDING process to map: run_id={}, pid={}", run_id, pid);
                 processes.insert(run_id, RunningProcess {
                     child,
-                    cancelled: false,
+                    pid,
                 });
+                tracing::info!("Map now has {} entries: {:?}", processes.len(), processes.keys().collect::<Vec<_>>());
             }
+
+            self.log(run_id, LogLevel::Info, &format!("Spawned rsync with PID {}", pid), "rsync").await;
 
             // Stream stdout with proper cancellation support
             if let Some(stdout) = stdout {
@@ -513,9 +465,13 @@ impl BackupService {
             // Wait for process to finish and remove from tracking
             let status = {
                 let mut processes = self.running_processes.lock().await;
+                tracing::info!("REMOVING process from map: run_id={}", run_id);
                 if let Some(mut running) = processes.remove(&run_id) {
+                    tracing::info!("Map now has {} entries after removal", processes.len());
+                    drop(processes); // Release lock before waiting
                     running.child.wait().await.ok()
                 } else {
+                    tracing::info!("Process already removed from map for run_id={}", run_id);
                     None
                 }
             };
@@ -607,11 +563,23 @@ impl BackupService {
     }
 
     fn build_rsync_args(&self, job: &Job, fstype: &str) -> Vec<String> {
-        let mut args = vec![
-            "-vh".to_string(),
-            "--stats".to_string(),
-            "--progress".to_string(),
-        ];
+        let mut args = vec![];
+
+        // Verbosity options: "quiet", "normal", "verbose"
+        match job.verbosity.as_str() {
+            "quiet" => {
+                // Only show errors
+                args.push("-q".to_string());
+            }
+            "verbose" => {
+                // Full progress with per-file bars
+                args.extend(["-vh".to_string(), "--stats".to_string(), "--progress".to_string()]);
+            }
+            _ => {
+                // "normal" (default) - files transferred + summary stats
+                args.extend(["-v".to_string(), "--stats".to_string()]);
+            }
+        }
 
         // Filesystem-aware options
         match fstype {
