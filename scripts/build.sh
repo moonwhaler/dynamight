@@ -88,27 +88,8 @@ create_package() {
     # Create default directories
     mkdir -p "$pkg_dir/data"
 
-    # Create example .env
-    cat > "$pkg_dir/.env.example" << 'EOF'
-# Dynamight Configuration
-# Copy this file to .env and customize
-
-# JWT secret for authentication (CHANGE THIS!)
-JWT_SECRET=change-this-to-a-random-string
-
-# Default admin password (CHANGE THIS!)
-ADMIN_PASSWORD=change-this-password
-
-# Database location
-DATABASE_URL=sqlite:data/dynamight.db
-
-# Static files directory (frontend)
-STATIC_FILES_DIR=static
-
-# Server binding
-HOST=0.0.0.0
-PORT=3000
-EOF
+    # Copy example .env from project root
+    cp "$PROJECT_DIR/.env.example" "$pkg_dir/.env.example"
 
     # Copy scripts
     mkdir -p "$pkg_dir/scripts"
@@ -138,7 +119,10 @@ fi
 export DATABASE_URL="${DATABASE_URL:-sqlite:data/dynamight.db}"
 export STATIC_FILES_DIR="${STATIC_FILES_DIR:-static}"
 export HOST="${HOST:-0.0.0.0}"
-export PORT="${PORT:-3000}"
+export PORT="${PORT:-8080}"
+export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
+export TZ="${TZ:-UTC}"
+# MAX_RUNS_PER_JOB is optional, no default needed
 
 echo "Starting Dynamight on http://${HOST}:${PORT}"
 exec ./dynamight
