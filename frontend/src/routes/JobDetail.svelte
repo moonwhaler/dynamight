@@ -130,14 +130,14 @@
         const job = await api.jobs.create(jobData);
         console.log('[JobDetail] Job created:', job);
         jobsStore.addJob(job);
-        console.log('[JobDetail] Navigating to job:', job.id);
-        push(`/jobs/${job.id}`);
       } else {
         console.log('[JobDetail] Updating job:', params.id);
         const job = await api.jobs.update(parseInt(params.id!), jobData);
         console.log('[JobDetail] Job updated:', job);
         jobsStore.updateJob(job);
       }
+      console.log('[JobDetail] Navigating to jobs list');
+      push('/jobs');
     } catch (e) {
       console.error('[JobDetail] Submit error:', e);
       error = e instanceof Error ? e.message : 'Failed to save job';
@@ -287,7 +287,7 @@
       <div class="flex justify-end gap-3">
         <a href="#/jobs" class="btn btn-secondary">Cancel</a>
         <button type="submit" disabled={saving} class="btn btn-primary">
-          {saving ? 'Saving...' : isNew ? 'Create Job' : 'Save Changes'}
+          {saving ? (isNew ? 'Adding...' : 'Saving...') : isNew ? 'Add Job' : 'Save Changes'}
         </button>
       </div>
     </form>
