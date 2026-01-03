@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let db_options = SqliteConnectOptions::from_str(&config.database_url)?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
         .busy_timeout(std::time::Duration::from_secs(30));
 
     let db = SqlitePoolOptions::new()
