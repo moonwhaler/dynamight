@@ -17,7 +17,34 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         .await
         .unwrap_or_default();
 
-    let response: Vec<JobResponse> = jobs.into_iter().map(JobResponse::from).collect();
+    // Get last run status for each job
+    let last_runs: Vec<(i64, String, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
+        r#"
+        SELECT job_id, status, COALESCE(completed_at, started_at) as run_at
+        FROM job_runs jr1
+        WHERE id = (
+            SELECT id FROM job_runs jr2
+            WHERE jr2.job_id = jr1.job_id
+            ORDER BY COALESCE(completed_at, started_at) DESC
+            LIMIT 1
+        )
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let response: Vec<JobResponse> = jobs
+        .into_iter()
+        .map(|job| {
+            let job_id = job.id;
+            let run_info = last_runs.iter().find(|(id, _, _)| *id == job_id);
+            let (status, run_at) = run_info
+                .map(|(_, s, t)| (Some(s.clone()), *t))
+                .unwrap_or((None, None));
+            JobResponse::from(job).with_run_status(status, run_at)
+        })
+        .collect();
 
     Json(response)
 }

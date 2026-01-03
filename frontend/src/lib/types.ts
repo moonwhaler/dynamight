@@ -23,6 +23,8 @@ export interface Job {
   verbosity: 'quiet' | 'normal' | 'verbose';
   created_at: string;
   updated_at: string;
+  last_run_status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | null;
+  last_run_at?: string | null;
 }
 
 export interface Schedule {

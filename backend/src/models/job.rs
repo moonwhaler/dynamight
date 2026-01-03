@@ -116,6 +116,11 @@ pub struct JobResponse {
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<DateTime<Utc>>,
 }
 
 impl From<Job> for JobResponse {
@@ -144,6 +149,16 @@ impl From<Job> for JobResponse {
             verbosity: job.verbosity,
             created_at: job.created_at,
             updated_at: job.updated_at,
+            last_run_status: None,
+            last_run_at: None,
         }
+    }
+}
+
+impl JobResponse {
+    pub fn with_run_status(mut self, status: Option<String>, run_at: Option<DateTime<Utc>>) -> Self {
+        self.last_run_status = status;
+        self.last_run_at = run_at;
+        self
     }
 }

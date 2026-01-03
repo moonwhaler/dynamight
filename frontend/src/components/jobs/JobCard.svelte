@@ -9,6 +9,42 @@
   let toggling = $state(false);
   let activeRunId = $state<number | null>(null);
 
+  function getStatusIndicator(status: string | null | undefined): { color: string; label: string } {
+    switch (status) {
+      case 'completed':
+        return { color: 'bg-green-500', label: 'Last run succeeded' };
+      case 'failed':
+        return { color: 'bg-red-500', label: 'Last run failed' };
+      case 'running':
+        return { color: 'bg-blue-500', label: 'Currently running' };
+      case 'cancelled':
+        return { color: 'bg-orange-500', label: 'Last run was cancelled' };
+      case 'pending':
+        return { color: 'bg-yellow-500', label: 'Run pending' };
+      default:
+        return { color: '', label: '' };
+    }
+  }
+
+  function formatRelativeTime(dateStr: string | null | undefined): string {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  }
+
+  const statusInfo = $derived(getStatusIndicator(job.last_run_status));
+  const timeAgo = $derived(formatRelativeTime(job.last_run_at));
+
   async function handleRun() {
     if (running) return;
     running = true;
@@ -46,8 +82,14 @@
   <div class="flex items-start justify-between">
     <div class="flex-1 min-w-0">
       <a href="#/jobs/{job.id}" class="block">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white truncate hover:text-primary-600 dark:hover:text-primary-400">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white truncate hover:text-primary-600 dark:hover:text-primary-400 flex items-center gap-2">
           {job.name}
+          {#if statusInfo.color}
+            <span
+              class="inline-block w-2.5 h-2.5 rounded-full {statusInfo.color} shrink-0"
+              title="{statusInfo.label}{timeAgo ? ` (${timeAgo})` : ''}"
+            ></span>
+          {/if}
         </h3>
       </a>
       {#if job.description}
