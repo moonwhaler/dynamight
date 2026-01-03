@@ -32,7 +32,7 @@ pub struct BackupService {
     running_processes: Arc<Mutex<HashMap<i64, RunningProcess>>>,
     /// Tracks cancelled run_ids (separate from running_processes so it persists after process removal)
     cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
-    max_runs_per_job: Option<u32>,
+    max_runs_per_job: Arc<RwLock<Option<u32>>>,
 }
 
 impl BackupService {
@@ -44,13 +44,24 @@ impl BackupService {
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             running_processes: Arc::new(Mutex::new(HashMap::new())),
             cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
-            max_runs_per_job,
+            max_runs_per_job: Arc::new(RwLock::new(max_runs_per_job)),
         }
+    }
+
+    /// Update the max_runs_per_job setting dynamically
+    pub async fn set_max_runs_per_job(&self, value: Option<u32>) {
+        *self.max_runs_per_job.write().await = value;
+        tracing::info!("Updated max_runs_per_job to {:?}", value);
+    }
+
+    /// Get the current max_runs_per_job setting
+    pub async fn get_max_runs_per_job(&self) -> Option<u32> {
+        *self.max_runs_per_job.read().await
     }
 
     /// Cleanup old job runs, keeping only the most recent `max_runs_per_job` runs.
     pub async fn cleanup_old_runs(&self, job_id: i64) {
-        let Some(max_runs) = self.max_runs_per_job else {
+        let Some(max_runs) = *self.max_runs_per_job.read().await else {
             return;
         };
 

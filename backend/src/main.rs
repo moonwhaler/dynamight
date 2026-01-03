@@ -77,10 +77,23 @@ async fn main() -> anyhow::Result<()> {
     // Create broadcast channel for log streaming
     let (log_tx, _) = broadcast::channel::<models::LogMessage>(1000);
 
+    // Check for max_runs_per_job in database, fall back to config, then default to 5
+    let db_max_runs: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = 'max_runs_per_job'"
+    )
+    .fetch_optional(&db)
+    .await
+    .unwrap_or(None);
+
+    let max_runs_per_job = match db_max_runs {
+        Some((value,)) => value.parse::<u32>().ok(),
+        None => config.max_runs_per_job.or(Some(5)), // Default to 5 if not configured
+    };
+
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
-    let backup_service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx.clone(), config.max_runs_per_job));
+    let backup_service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx.clone(), max_runs_per_job));
 
     let state = Arc::new(AppState {
         db: db.clone(),
@@ -128,6 +141,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/browse", get(handlers::system::browse_path))
         .route("/system/mkdir", post(handlers::system::create_directory))
         .route("/system/health", get(handlers::system::health))
+        // Settings
+        .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
         // WebSocket
         .route("/ws/logs/:run_id", get(handlers::websocket::ws_logs_handler))
         .route("/ws/status", get(handlers::websocket::ws_status_handler));

@@ -139,6 +139,15 @@ export const api = {
       request<{ success: boolean; deleted: number }>('/runs', { method: 'DELETE' }),
   },
 
+  settings: {
+    get: () => request<{ max_runs_per_job: number | null }>('/settings'),
+    update: (settings: { max_runs_per_job: number | null }) =>
+      request<{ success: boolean }>('/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      }),
+  },
+
   system: {
     drives: () => request<UsbDrive[]>('/system/drives'),
     mounts: () => request<{ path: string; device: string; fstype: string }[]>('/system/mounts'),
