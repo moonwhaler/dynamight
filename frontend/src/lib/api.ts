@@ -130,6 +130,12 @@ export const api = {
     get: (id: number) => request<JobRun>(`/runs/${id}`),
     logs: (id: number, limit = 1000, offset = 0) =>
       request<LogEntry[]>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),
+    delete: (id: number) =>
+      request<{ success: boolean }>(`/runs/${id}`, { method: 'DELETE' }),
+    deleteForJob: (jobId: number) =>
+      request<{ success: boolean; deleted: number }>(`/jobs/${jobId}/runs`, { method: 'DELETE' }),
+    purgeAll: () =>
+      request<{ success: boolean; deleted: number }>('/runs', { method: 'DELETE' }),
   },
 
   system: {

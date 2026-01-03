@@ -98,3 +98,70 @@ pub async fn get_logs(
 
     Json(response)
 }
+
+/// Delete a single run and its logs
+pub async fn delete_run(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<i64>,
+) -> impl IntoResponse {
+    // Log entries are deleted via CASCADE
+    let result = sqlx::query("DELETE FROM job_runs WHERE id = ?")
+        .bind(run_id)
+        .execute(&state.db)
+        .await;
+
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            Json(json!({"success": true})).into_response()
+        }
+        Ok(_) => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "Run not found"}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to delete run {}: {}", run_id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to delete run"}))).into_response()
+        }
+    }
+}
+
+/// Delete all runs for a specific job
+pub async fn delete_job_runs(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<i64>,
+) -> impl IntoResponse {
+    // Log entries are deleted via CASCADE
+    let result = sqlx::query("DELETE FROM job_runs WHERE job_id = ?")
+        .bind(job_id)
+        .execute(&state.db)
+        .await;
+
+    match result {
+        Ok(r) => {
+            Json(json!({"success": true, "deleted": r.rows_affected()})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to delete runs for job {}: {}", job_id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to delete runs"}))).into_response()
+        }
+    }
+}
+
+/// Delete all runs (purge all history)
+pub async fn purge_all_runs(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Log entries are deleted via CASCADE
+    let result = sqlx::query("DELETE FROM job_runs")
+        .execute(&state.db)
+        .await;
+
+    match result {
+        Ok(r) => {
+            Json(json!({"success": true, "deleted": r.rows_affected()})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to purge all runs: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to purge runs"}))).into_response()
+        }
+    }
+}

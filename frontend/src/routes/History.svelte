@@ -98,22 +98,102 @@
   function getJobName(jobId: number): string {
     return $jobsStore.jobs.find((j) => j.id === jobId)?.name || `Job #${jobId}`;
   }
+
+  let showPurgeConfirm = $state(false);
+  let purgeType = $state<'all' | 'job' | 'single'>('all');
+  let purgeTargetId = $state<number | null>(null);
+  let purging = $state(false);
+
+  function confirmPurgeAll() {
+    purgeType = 'all';
+    purgeTargetId = null;
+    showPurgeConfirm = true;
+  }
+
+  function confirmPurgeJob() {
+    if (selectedJobId) {
+      purgeType = 'job';
+      purgeTargetId = selectedJobId;
+      showPurgeConfirm = true;
+    }
+  }
+
+  function confirmDeleteRun(runId: number) {
+    purgeType = 'single';
+    purgeTargetId = runId;
+    showPurgeConfirm = true;
+  }
+
+  function cancelPurge() {
+    showPurgeConfirm = false;
+    purgeTargetId = null;
+  }
+
+  async function executePurge() {
+    purging = true;
+    try {
+      if (purgeType === 'all') {
+        await api.runs.purgeAll();
+      } else if (purgeType === 'job' && purgeTargetId) {
+        await api.runs.deleteForJob(purgeTargetId);
+      } else if (purgeType === 'single' && purgeTargetId) {
+        await api.runs.delete(purgeTargetId);
+      }
+      await loadRuns();
+    } catch {
+      // Ignore
+    } finally {
+      purging = false;
+      showPurgeConfirm = false;
+      purgeTargetId = null;
+    }
+  }
+
+  function getPurgeMessage(): string {
+    if (purgeType === 'all') {
+      return 'Are you sure you want to delete all backup history? This action cannot be undone.';
+    } else if (purgeType === 'job' && purgeTargetId) {
+      const jobName = getJobName(purgeTargetId);
+      return `Are you sure you want to delete all history for "${jobName}"? This action cannot be undone.`;
+    } else if (purgeType === 'single' && purgeTargetId) {
+      return 'Are you sure you want to delete this run? This action cannot be undone.';
+    }
+    return '';
+  }
 </script>
 
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold text-gray-900">Backup History</h1>
 
-    <select
-      bind:value={selectedJobId}
-      onchange={() => loadRuns()}
-      class="input w-48"
-    >
-      <option value={null}>All Jobs</option>
-      {#each $jobsStore.jobs as job}
-        <option value={job.id}>{job.name}</option>
-      {/each}
-    </select>
+    <div class="flex items-center gap-3">
+      {#if runs.length > 0}
+        {#if selectedJobId}
+          <button
+            onclick={confirmPurgeJob}
+            class="btn btn-secondary text-sm"
+          >
+            Clear Job Logs
+          </button>
+        {/if}
+        <button
+          onclick={confirmPurgeAll}
+          class="btn btn-secondary text-sm"
+        >
+          Clear All
+        </button>
+      {/if}
+      <select
+        bind:value={selectedJobId}
+        onchange={() => loadRuns()}
+        class="input w-48"
+      >
+        <option value={null}>All Jobs</option>
+        {#each $jobsStore.jobs as job}
+          <option value={job.id}>{job.name}</option>
+        {/each}
+      </select>
+    </div>
   </div>
 
   {#if loading}
@@ -168,12 +248,23 @@
               <td class="px-4 py-3 text-sm text-gray-500">{run.files_transferred ?? '-'}</td>
               <td class="px-4 py-3 text-sm text-gray-500">{formatBytes(run.bytes_transferred)}</td>
               <td class="px-4 py-3">
-                <button
-                  onclick={() => selectRun(run)}
-                  class="text-primary-600 hover:text-primary-700 text-sm font-medium"
-                >
-                  View Logs
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    onclick={() => selectRun(run)}
+                    class="text-primary-600 hover:text-primary-700 text-sm font-medium"
+                  >
+                    View Logs
+                  </button>
+                  <button
+                    onclick={() => confirmDeleteRun(run.id)}
+                    class="text-red-500 hover:text-red-700 text-sm"
+                    title="Delete this run"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           {/each}
@@ -216,6 +307,42 @@
             <LogViewer {logs} />
           </div>
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Purge Confirmation Modal -->
+{#if showPurgeConfirm}
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-gray-900">Confirm Delete</h3>
+      </div>
+      <p class="text-gray-600 mb-6">{getPurgeMessage()}</p>
+      <div class="flex justify-end gap-3">
+        <button
+          onclick={cancelPurge}
+          class="btn btn-secondary"
+          disabled={purging}
+        >
+          Cancel
+        </button>
+        <button
+          onclick={executePurge}
+          class="btn bg-red-600 text-white hover:bg-red-700"
+          disabled={purging}
+        >
+          {#if purging}
+            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+          {/if}
+          Delete
+        </button>
       </div>
     </div>
   </div>

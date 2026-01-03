@@ -5,7 +5,7 @@ mod models;
 mod services;
 
 use axum::{
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -100,8 +100,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/:id/schedules", get(handlers::schedules::list_schedules).post(handlers::schedules::create_schedule))
         .route("/schedules/:id", put(handlers::schedules::update_schedule).delete(handlers::schedules::delete_schedule))
         // History and logs
-        .route("/jobs/:id/runs", get(handlers::logs::list_runs))
-        .route("/runs/:id", get(handlers::logs::get_run))
+        .route("/jobs/:id/runs", get(handlers::logs::list_runs).delete(handlers::logs::delete_job_runs))
+        .route("/runs", delete(handlers::logs::purge_all_runs))
+        .route("/runs/:id", get(handlers::logs::get_run).delete(handlers::logs::delete_run))
         .route("/runs/:id/logs", get(handlers::logs::get_logs))
         // System routes
         .route("/system/drives", get(handlers::system::list_drives))
