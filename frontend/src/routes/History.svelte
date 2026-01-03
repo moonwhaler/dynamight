@@ -194,7 +194,7 @@
           </h3>
           <p class="text-sm text-gray-500">{formatDate(selectedRun.started_at)}</p>
         </div>
-        <button onclick={closeDetails} class="text-gray-400 hover:text-gray-600">
+        <button onclick={closeDetails} class="text-gray-400 hover:text-gray-600" aria-label="Close details">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"

@@ -203,8 +203,8 @@
   {#if showAdd}
     <div class="border rounded-lg p-4 space-y-4">
       <div>
-        <label class="label">Schedule Type</label>
-        <select bind:value={scheduleType} class="input">
+        <label for="scheduleType" class="label">Schedule Type</label>
+        <select id="scheduleType" bind:value={scheduleType} class="input">
           <option value="daily">Daily</option>
           <option value="weekly">Weekly (select days)</option>
           <option value="monthly">Monthly</option>
@@ -215,15 +215,15 @@
 
       {#if scheduleType === 'daily'}
         <div>
-          <label class="label">Time</label>
-          <input type="time" bind:value={timeOfDay} class="input w-32" />
+          <label for="dailyTime" class="label">Time</label>
+          <input id="dailyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
       {/if}
 
       {#if scheduleType === 'weekly'}
         <div>
-          <label class="label">Time</label>
-          <input type="time" bind:value={timeOfDay} class="input w-32" />
+          <label for="weeklyTime" class="label">Time</label>
+          <input id="weeklyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
         <div>
           <label class="label">
@@ -248,12 +248,13 @@
 
       {#if scheduleType === 'monthly'}
         <div>
-          <label class="label">Time</label>
-          <input type="time" bind:value={timeOfDay} class="input w-32" />
+          <label for="monthlyTime" class="label">Time</label>
+          <input id="monthlyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
         <div>
-          <label class="label">Day of Month</label>
+          <label for="dayOfMonth" class="label">Day of Month</label>
           <input
+            id="dayOfMonth"
             type="number"
             bind:value={dayOfMonth}
             min="1"

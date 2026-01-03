@@ -71,7 +71,7 @@
       {#each paths as path}
         <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
           <code class="text-sm text-gray-800">{path}</code>
-          <button onclick={() => removePath(path)} class="text-red-500 hover:text-red-700">
+          <button onclick={() => removePath(path)} class="text-red-500 hover:text-red-700" aria-label="Remove path">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 stroke-linecap="round"
@@ -102,14 +102,22 @@
 
 <!-- File Browser Modal -->
 {#if showBrowser}
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+    onclick={(e) => e.target === e.currentTarget && closeBrowser()}
+    onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
     <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
       <div class="p-4 border-b flex items-center justify-between">
         <div>
           <h3 class="text-lg font-semibold text-gray-900">Browse Filesystem</h3>
           <p class="text-sm text-gray-500 font-mono">{currentPath}</p>
         </div>
-        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600">
+        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600" aria-label="Close browser">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"

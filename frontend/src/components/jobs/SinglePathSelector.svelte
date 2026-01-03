@@ -149,11 +149,14 @@
 
 <!-- File Browser Modal -->
 {#if showBrowser}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
     onclick={handleBackdropClick}
+    onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
   >
     <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
       <div class="p-4 border-b flex items-center justify-between">
@@ -161,7 +164,7 @@
           <h3 class="text-lg font-semibold text-gray-900">Browse Filesystem</h3>
           <p class="text-sm text-gray-500 font-mono">{currentPath}</p>
         </div>
-        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600">
+        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600" aria-label="Close browser">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
