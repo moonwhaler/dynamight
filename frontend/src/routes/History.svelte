@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
   import type { Job, JobRun, LogEntry } from '../lib/types';
@@ -13,18 +13,47 @@
   let logsTotal = $state(0);
   let logsCurrentPage = $state(1);
   let loadingLogs = $state(false);
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   const LOG_PAGE_SIZE = 500;
+  const POLL_INTERVAL_MS = 3000;
 
   const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
+  const hasRunningJobs = $derived(runs.some((r) => r.status === 'running'));
 
   onMount(async () => {
     await jobsStore.load();
     await loadRuns();
   });
 
-  async function loadRuns() {
-    loading = true;
+  onDestroy(() => {
+    stopPolling();
+  });
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(async () => {
+      await loadRuns(true);
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
+
+  $effect(() => {
+    if (hasRunningJobs) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
+
+  async function loadRuns(silent = false) {
+    if (!silent) loading = true;
     try {
       const allRuns: JobRun[] = [];
       const jobs = selectedJobId
@@ -42,7 +71,7 @@
     } catch {
       // Ignore
     } finally {
-      loading = false;
+      if (!silent) loading = false;
     }
   }
 
