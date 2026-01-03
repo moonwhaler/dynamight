@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{broadcast, RwLock};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct JobResult {
     pub exit_code: i32,
     pub files_transferred: i64,
@@ -16,29 +16,60 @@ pub struct JobResult {
     pub error_count: i32,
 }
 
-impl Default for JobResult {
-    fn default() -> Self {
-        Self {
-            exit_code: 0,
-            files_transferred: 0,
-            bytes_transferred: 0,
-            error_count: 0,
-        }
-    }
-}
-
 pub struct BackupService {
     db: SqlitePool,
     log_tx: broadcast::Sender<LogMessage>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
+    max_runs_per_job: Option<u32>,
 }
 
 impl BackupService {
-    pub fn new(db: SqlitePool, log_tx: broadcast::Sender<LogMessage>) -> Self {
+    pub fn new(db: SqlitePool, log_tx: broadcast::Sender<LogMessage>, max_runs_per_job: Option<u32>) -> Self {
         Self {
             db,
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            max_runs_per_job,
+        }
+    }
+
+    /// Cleanup old job runs, keeping only the most recent `max_runs_per_job` runs.
+    /// Log entries are deleted automatically via CASCADE.
+    pub async fn cleanup_old_runs(&self, job_id: i64) {
+        let Some(max_runs) = self.max_runs_per_job else {
+            return;
+        };
+
+        // Delete old runs beyond the limit, keeping the most recent ones
+        let result = sqlx::query(
+            r#"
+            DELETE FROM job_runs
+            WHERE job_id = ? AND id NOT IN (
+                SELECT id FROM job_runs
+                WHERE job_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            "#,
+        )
+        .bind(job_id)
+        .bind(job_id)
+        .bind(max_runs)
+        .execute(&self.db)
+        .await;
+
+        match result {
+            Ok(r) if r.rows_affected() > 0 => {
+                tracing::info!(
+                    "Cleaned up {} old job runs for job {}",
+                    r.rows_affected(),
+                    job_id
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to cleanup old job runs: {}", e);
+            }
+            _ => {}
         }
     }
 

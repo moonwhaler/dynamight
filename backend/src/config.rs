@@ -8,6 +8,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub static_files_dir: String,
+    pub max_runs_per_job: Option<u32>,
 }
 
 impl Config {
@@ -27,6 +28,9 @@ impl Config {
                 .expect("PORT must be a valid number"),
             static_files_dir: env::var("STATIC_FILES_DIR")
                 .unwrap_or_else(|_| "static".to_string()),
+            max_runs_per_job: env::var("MAX_RUNS_PER_JOB")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         }
     }
 }

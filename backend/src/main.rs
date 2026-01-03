@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
-    let backup_service = Arc::new(BackupService::new(db.clone(), log_tx.clone()));
+    let backup_service = Arc::new(BackupService::new(db.clone(), log_tx.clone(), config.max_runs_per_job));
 
     let state = Arc::new(AppState {
         db: db.clone(),

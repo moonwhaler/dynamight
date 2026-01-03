@@ -2,6 +2,9 @@
 target/
 Cargo.lock
 
+# Compile
+dist
+
 # Node
 node_modules/
 frontend/dist/

@@ -29,7 +29,7 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
         while let Ok(msg) = log_rx.recv().await {
             if msg.run_id == run_id {
                 if let Ok(json) = serde_json::to_string(&msg) {
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                    if sender.send(Message::Text(json)).await.is_err() {
                         break;
                     }
                 }
@@ -97,7 +97,7 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
 
             if let Some(update) = status_update {
                 if let Ok(json) = serde_json::to_string(&update) {
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                    if sender.send(Message::Text(json)).await.is_err() {
                         break;
                     }
                 }

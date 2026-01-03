@@ -191,6 +191,9 @@ impl SchedulerService {
                 .bind(run_id)
                 .execute(&db)
                 .await;
+
+                // Cleanup old runs
+                backup_service.cleanup_old_runs(schedule.job_id).await;
             });
         }
     }

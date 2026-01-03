@@ -314,6 +314,9 @@ pub async fn run_job(
         .bind(run_id)
         .execute(&db)
         .await;
+
+        // Cleanup old runs
+        backup_service.cleanup_old_runs(id).await;
     });
 
     (StatusCode::OK, Json(json!({"runId": run_id}))).into_response()
