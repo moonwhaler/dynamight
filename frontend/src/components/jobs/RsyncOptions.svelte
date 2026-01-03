@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HelpTooltip from '../ui/HelpTooltip.svelte';
+
   let {
     syncDeletes = $bindable(false),
     checksumMode = $bindable(false),
@@ -49,7 +51,10 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="syncDeletes" class="font-medium text-gray-700">Mirror Mode (--delete)</label>
+      <label for="syncDeletes" class="font-medium text-gray-700">
+        Mirror Mode (--delete)
+        <HelpTooltip text="Creates an exact mirror of the source. If you delete a file from your source, it will also be deleted from the backup on the next run. This keeps your backup clean but means accidentally deleted files won't be recoverable from the backup." />
+      </label>
       <p class="text-sm text-gray-500">
         Delete files from destination that no longer exist in source.
         <span class="text-amber-600 font-medium">Use with caution!</span>
@@ -66,7 +71,10 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="checksumMode" class="font-medium text-gray-700">Checksum Mode (--checksum)</label>
+      <label for="checksumMode" class="font-medium text-gray-700">
+        Checksum Mode (--checksum)
+        <HelpTooltip text="Normally rsync checks if files changed by comparing size and modification time (fast). Checksum mode reads the entire file content to calculate a hash (slower but catches every change). Useful if file timestamps are unreliable or you need 100% verification." />
+      </label>
       <p class="text-sm text-gray-500">
         Compare files by checksum instead of modification time and size. Slower but more accurate.
       </p>
@@ -82,7 +90,10 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="compress" class="font-medium text-gray-700">Compression (-z)</label>
+      <label for="compress" class="font-medium text-gray-700">
+        Compression (-z)
+        <HelpTooltip text="Compresses data before sending it over the wire. Great for network backups over slow connections, but not needed for local USB drives. Already-compressed files (videos, images, archives) won't benefit much." />
+      </label>
       <p class="text-sm text-gray-500">
         Compress data during transfer. Useful for slow connections, but adds CPU overhead.
       </p>
@@ -98,7 +109,10 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="dryRun" class="font-medium text-gray-700">Dry Run (--dry-run)</label>
+      <label for="dryRun" class="font-medium text-gray-700">
+        Dry Run (--dry-run)
+        <HelpTooltip text="Simulates the backup without actually copying any files. The logs will show exactly what would happen. Perfect for testing a new job configuration or checking what would be deleted with Mirror Mode enabled." />
+      </label>
       <p class="text-sm text-gray-500">
         Show what would be transferred without actually doing it. Good for testing.
       </p>
@@ -107,7 +121,10 @@
 
   <!-- Bandwidth Limit -->
   <div>
-    <label for="bandwidth" class="block font-medium text-gray-700">Bandwidth Limit (KB/s)</label>
+    <label for="bandwidth" class="block font-medium text-gray-700">
+      Bandwidth Limit (KB/s)
+      <HelpTooltip text="Limits how fast rsync transfers data. Useful if you're backing up over a network and don't want to saturate your connection. Value is in kilobytes per second (1000 KB/s = ~1 MB/s). Leave empty for maximum speed." />
+    </label>
     <input
       type="number"
       id="bandwidth"
@@ -121,7 +138,10 @@
 
   <!-- Excludes -->
   <div>
-    <label class="block font-medium text-gray-700">Exclude Patterns</label>
+    <label class="block font-medium text-gray-700">
+      Exclude Patterns
+      <HelpTooltip text="Files and folders matching these patterns will be skipped. Use wildcards like *.tmp (all .tmp files), node_modules (specific folder), or .* (all hidden files). Patterns are matched against the relative path from the source directory." />
+    </label>
     <div class="mt-2 flex gap-2">
       <input
         type="text"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../../lib/api';
   import type { Schedule, CreateScheduleRequest } from '../../lib/types';
+  import HelpTooltip from '../ui/HelpTooltip.svelte';
 
   let {
     jobId,
@@ -85,7 +86,10 @@
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
-    <h2 class="text-lg font-semibold text-gray-900">Schedule</h2>
+    <h2 class="text-lg font-semibold text-gray-900">
+      Schedule
+      <HelpTooltip text="Set up automatic backup times. You can add multiple schedules (e.g., daily at 2 AM and weekly full backup on Sundays). Each schedule can be individually enabled or disabled. Without a schedule, backups only run when you click 'Run Now'." />
+    </h2>
     {#if !showAdd}
       <button onclick={() => (showAdd = true)} class="btn btn-secondary text-sm">
         Add Schedule
@@ -169,7 +173,10 @@
         {/if}
       {:else}
         <div>
-          <label class="label">Cron Expression</label>
+          <label class="label">
+            Cron Expression
+            <HelpTooltip text="Advanced scheduling using cron syntax. Five fields: minute (0-59), hour (0-23), day of month (1-31), month (1-12), day of week (0-6, Sun=0). Use * for 'any'. Examples: '0 2 * * *' = 2:00 AM daily, '0 3 * * 0' = 3:00 AM every Sunday, '0 */6 * * *' = every 6 hours." />
+          </label>
           <input
             type="text"
             bind:value={cronExpression}

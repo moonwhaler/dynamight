@@ -8,6 +8,7 @@
   import SchedulePicker from '../components/jobs/SchedulePicker.svelte';
   import PathSelector from '../components/jobs/PathSelector.svelte';
   import SinglePathSelector from '../components/jobs/SinglePathSelector.svelte';
+  import HelpTooltip from '../components/ui/HelpTooltip.svelte';
 
   let { params = {} }: { params?: { id?: string } } = $props();
 
@@ -210,6 +211,7 @@
         <label class="flex items-center gap-2">
           <input type="checkbox" bind:checked={enabled} class="rounded text-primary-600" />
           <span class="text-sm text-gray-700">Job enabled</span>
+          <HelpTooltip text="When disabled, scheduled runs won't execute and the job won't appear in the run options. Useful for temporarily pausing backups without deleting the configuration." />
         </label>
       </div>
 
@@ -218,7 +220,10 @@
         <h2 class="text-lg font-semibold text-gray-900">Mount Configuration</h2>
 
         <div>
-          <label for="usb" class="label">USB Drive (Optional)</label>
+          <label for="usb" class="label">
+            USB Drive (Optional)
+            <HelpTooltip text="Select a USB drive to automatically mount before backup. The drive is identified by its unique UUID, so it will work regardless of which USB port you use. Leave as 'No USB mount' if backing up to a local folder or network drive." />
+          </label>
           <select id="usb" bind:value={usbUuid} class="input">
             <option value={null}>No USB mount</option>
             {#each drives as drive}
@@ -230,7 +235,10 @@
         </div>
 
         <div>
-          <label for="mount" class="label">Mount Point</label>
+          <label for="mount" class="label">
+            Mount Point
+            <HelpTooltip text="The directory path where your backup destination will be accessible. For USB drives, this is where the drive gets mounted (e.g., /mnt/backup). For local backups, this is simply the target folder path." />
+          </label>
           <SinglePathSelector bind:path={mountPoint} placeholder="/mnt/backup" />
         </div>
 
@@ -238,17 +246,22 @@
           <label class="flex items-center gap-2">
             <input type="checkbox" bind:checked={autoMount} class="rounded text-primary-600" />
             <span class="text-sm text-gray-700">Auto-mount before backup</span>
+            <HelpTooltip text="Automatically mount the selected USB drive before the backup starts. The system will create the mount point directory if it doesn't exist. Only applies when a USB drive is selected above." />
           </label>
           <label class="flex items-center gap-2">
             <input type="checkbox" bind:checked={autoUnmount} class="rounded text-primary-600" />
             <span class="text-sm text-gray-700">Auto-unmount after backup</span>
+            <HelpTooltip text="Safely unmount the USB drive after backup completes. This ensures all data is written to disk before the drive is disconnected, preventing data corruption." />
           </label>
         </div>
       </div>
 
       <!-- Source Directories -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">Source Directories</h2>
+        <h2 class="text-lg font-semibold text-gray-900">
+          Source Directories
+          <HelpTooltip text="The folders on your system that you want to back up. You can add multiple directories, and each will be synced to a matching subfolder in the destination. Use the browser to navigate and select folders." />
+        </h2>
         <PathSelector bind:paths={sourceDirs} />
       </div>
 
@@ -256,7 +269,10 @@
       <div class="card p-6 space-y-4">
         <h2 class="text-lg font-semibold text-gray-900">Destination</h2>
         <div>
-          <label for="subdir" class="label">Backup Subdirectory</label>
+          <label for="subdir" class="label">
+            Backup Subdirectory
+            <HelpTooltip text="A subfolder within the mount point where backups will be stored. This helps organize your backup drive, especially if you use it for multiple purposes. Each source directory will create its own folder inside this subdirectory." />
+          </label>
           <input type="text" id="subdir" bind:value={backupSubdir} class="input" />
           <p class="text-sm text-gray-500 mt-1">
             Files will be backed up to: {mountPoint}/{backupSubdir}/

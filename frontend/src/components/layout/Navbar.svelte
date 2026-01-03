@@ -33,7 +33,7 @@
       </span>
       <button
         onclick={handleLogout}
-        class="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+        class="btn btn-secondary text-sm"
       >
         Logout
       </button>
