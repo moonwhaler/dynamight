@@ -186,7 +186,7 @@
 
 <div class="max-w-4xl mx-auto space-y-6">
   <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold text-gray-900">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
       {isNew ? 'New Backup Job' : 'Edit Backup Job'}
     </h1>
     {#if !isNew}
@@ -205,7 +205,7 @@
     </div>
   {:else}
     {#if error}
-      <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+      <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg">
         {error}
       </div>
     {/if}
@@ -213,7 +213,7 @@
     <form onsubmit={handleSubmit} class="space-y-6">
       <!-- Basic Info -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">Basic Information</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Basic Information</h2>
 
         <div>
           <label for="name" class="label">Job Name</label>
@@ -227,14 +227,14 @@
 
         <label class="flex items-center gap-2">
           <input type="checkbox" bind:checked={enabled} class="rounded text-primary-600" />
-          <span class="text-sm text-gray-700">Job enabled</span>
+          <span class="text-sm text-gray-700 dark:text-gray-300">Job enabled</span>
           <HelpTooltip text="When disabled, scheduled runs won't execute and the job won't appear in the run options. Useful for temporarily pausing backups without deleting the configuration." />
         </label>
       </div>
 
       <!-- Mount Configuration -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">Mount Configuration</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Mount Configuration</h2>
 
         <div>
           <label for="usb" class="label">
@@ -262,12 +262,12 @@
         <div class="flex gap-6">
           <label class="flex items-center gap-2">
             <input type="checkbox" bind:checked={autoMount} class="rounded text-primary-600" />
-            <span class="text-sm text-gray-700">Auto-mount before backup</span>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Auto-mount before backup</span>
             <HelpTooltip text="Automatically mount the selected USB drive before the backup starts. The system will create the mount point directory if it doesn't exist. Only applies when a USB drive is selected above." />
           </label>
           <label class="flex items-center gap-2">
             <input type="checkbox" bind:checked={autoUnmount} class="rounded text-primary-600" />
-            <span class="text-sm text-gray-700">Auto-unmount after backup</span>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Auto-unmount after backup</span>
             <HelpTooltip text="Safely unmount the USB drive after backup completes. This ensures all data is written to disk before the drive is disconnected, preventing data corruption." />
           </label>
         </div>
@@ -275,7 +275,7 @@
 
       <!-- Source Directories -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
           Source Directories
           <HelpTooltip text="The folders on your system that you want to back up. You can add multiple directories, and each will be synced to a matching subfolder in the destination. Use the browser to navigate and select folders." />
         </h2>
@@ -284,14 +284,14 @@
 
       <!-- Destination -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">Destination</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Destination</h2>
         <div>
           <label for="subdir" class="label">
             Backup Subdirectory
             <HelpTooltip text="A subfolder within the mount point where backups will be stored. This helps organize your backup drive, especially if you use it for multiple purposes. Each source directory will create its own folder inside this subdirectory." />
           </label>
           <input type="text" id="subdir" bind:value={backupSubdir} class="input" />
-          <p class="text-sm text-gray-500 mt-1">
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Files will be backed up to: {mountPoint}/{backupSubdir}/
           </p>
         </div>

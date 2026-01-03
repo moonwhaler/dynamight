@@ -42,7 +42,7 @@
 </script>
 
 <div class="space-y-4">
-  <h2 class="text-lg font-semibold text-gray-900">Rsync Options</h2>
+  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Rsync Options</h2>
 
   <!-- Delete Mode -->
   <div class="flex items-start gap-3">
@@ -53,13 +53,13 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="syncDeletes" class="font-medium text-gray-700">
+      <label for="syncDeletes" class="font-medium text-gray-700 dark:text-gray-300">
         Mirror Mode (--delete)
         <HelpTooltip text="Creates an exact mirror of the source. If you delete a file from your source, it will also be deleted from the backup on the next run. This keeps your backup clean but means accidentally deleted files won't be recoverable from the backup." />
       </label>
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-gray-500 dark:text-gray-400">
         Delete files from destination that no longer exist in source.
-        <span class="text-amber-600 font-medium">Use with caution!</span>
+        <span class="text-amber-600 dark:text-amber-500 font-medium">Use with caution!</span>
       </p>
     </div>
   </div>
@@ -73,11 +73,11 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="checksumMode" class="font-medium text-gray-700">
+      <label for="checksumMode" class="font-medium text-gray-700 dark:text-gray-300">
         Checksum Mode (--checksum)
         <HelpTooltip text="Normally rsync checks if files changed by comparing size and modification time (fast). Checksum mode reads the entire file content to calculate a hash (slower but catches every change). Useful if file timestamps are unreliable or you need 100% verification." />
       </label>
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-gray-500 dark:text-gray-400">
         Compare files by checksum instead of modification time and size. Slower but more accurate.
       </p>
     </div>
@@ -92,11 +92,11 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="compress" class="font-medium text-gray-700">
+      <label for="compress" class="font-medium text-gray-700 dark:text-gray-300">
         Compression (-z)
         <HelpTooltip text="Compresses data before sending it over the wire. Great for network backups over slow connections, but not needed for local USB drives. Already-compressed files (videos, images, archives) won't benefit much." />
       </label>
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-gray-500 dark:text-gray-400">
         Compress data during transfer. Useful for slow connections, but adds CPU overhead.
       </p>
     </div>
@@ -111,11 +111,11 @@
       class="mt-1 rounded text-primary-600"
     />
     <div>
-      <label for="dryRun" class="font-medium text-gray-700">
+      <label for="dryRun" class="font-medium text-gray-700 dark:text-gray-300">
         Dry Run (--dry-run)
         <HelpTooltip text="Simulates the backup without actually copying any files. The logs will show exactly what would happen. Perfect for testing a new job configuration or checking what would be deleted with Mirror Mode enabled." />
       </label>
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-gray-500 dark:text-gray-400">
         Show what would be transferred without actually doing it. Good for testing.
       </p>
     </div>
@@ -123,7 +123,7 @@
 
   <!-- Verbosity -->
   <div>
-    <label for="verbosity" class="block font-medium text-gray-700">
+    <label for="verbosity" class="block font-medium text-gray-700 dark:text-gray-300">
       Output Verbosity
       <HelpTooltip text="Controls how much information rsync outputs during backup. Quiet mode only shows errors. Normal shows files transferred and summary statistics. Verbose adds per-file progress bars and transfer speeds." />
     </label>
@@ -132,7 +132,7 @@
       <option value="normal">Normal (files + stats)</option>
       <option value="verbose">Verbose (full progress)</option>
     </select>
-    <p class="text-sm text-gray-500 mt-1">
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
       {#if verbosity === 'quiet'}
         Only errors will be shown in the logs.
       {:else if verbosity === 'normal'}
@@ -145,7 +145,7 @@
 
   <!-- Bandwidth Limit -->
   <div>
-    <label for="bandwidth" class="block font-medium text-gray-700">
+    <label for="bandwidth" class="block font-medium text-gray-700 dark:text-gray-300">
       Bandwidth Limit (KB/s)
       <HelpTooltip text="Limits how fast rsync transfers data. Useful if you're backing up over a network and don't want to saturate your connection. Value is in kilobytes per second (1000 KB/s = ~1 MB/s). Leave empty for maximum speed." />
     </label>
@@ -157,12 +157,12 @@
       min="0"
       class="input mt-1 w-40"
     />
-    <p class="text-sm text-gray-500 mt-1">Leave empty for unlimited.</p>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Leave empty for unlimited.</p>
   </div>
 
   <!-- Excludes -->
   <div>
-    <label class="block font-medium text-gray-700">
+    <label class="block font-medium text-gray-700 dark:text-gray-300">
       Exclude Patterns
       <HelpTooltip text="Files and folders matching these patterns will be skipped. Use wildcards like *.tmp (all .tmp files), node_modules (specific folder), or .* (all hidden files). Patterns are matched against the relative path from the source directory." />
     </label>
@@ -180,12 +180,12 @@
     {#if excludes.length > 0}
       <div class="mt-3 flex flex-wrap gap-2">
         {#each excludes as pattern}
-          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm bg-gray-100">
-            <code class="text-gray-800">{pattern}</code>
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm bg-gray-100 dark:bg-gray-700">
+            <code class="text-gray-800 dark:text-gray-200">{pattern}</code>
             <button
               type="button"
               onclick={() => removeExclude(pattern)}
-              class="text-gray-400 hover:text-gray-600"
+              class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               &times;
             </button>

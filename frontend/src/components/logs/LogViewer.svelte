@@ -90,8 +90,8 @@
 </script>
 
 <!-- Header bar - fixed height -->
-<div class="p-2 border-b flex items-center justify-between bg-gray-50 gap-2 flex-wrap">
-  <span class="text-sm text-gray-500">
+<div class="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800 gap-2 flex-wrap">
+  <span class="text-sm text-gray-500 dark:text-gray-400">
     {#if total > 0}
       {startEntry.toLocaleString()}-{endEntry.toLocaleString()} of {total.toLocaleString()} entries
     {:else}
@@ -100,7 +100,7 @@
   </span>
 
   {#if isStreaming}
-    <label class="flex items-center gap-2 text-sm cursor-pointer">
+    <label class="flex items-center gap-2 text-sm cursor-pointer text-gray-700 dark:text-gray-300">
       <input type="checkbox" bind:checked={autoScroll} class="rounded text-primary-600" />
       Auto-scroll
     </label>
@@ -110,7 +110,7 @@
       <button
         onclick={() => goToPage(1)}
         disabled={currentPage === 1 || loading}
-        class="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
         title="First page"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -120,7 +120,7 @@
       <button
         onclick={() => goToPage(currentPage - 1)}
         disabled={currentPage === 1 || loading}
-        class="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
         title="Previous page"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -128,14 +128,14 @@
         </svg>
       </button>
 
-      <span class="px-2 text-gray-600">
+      <span class="px-2 text-gray-600 dark:text-gray-400">
         Page {currentPage} of {totalPages}
       </span>
 
       <button
         onclick={() => goToPage(currentPage + 1)}
         disabled={currentPage === totalPages || loading}
-        class="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
         title="Next page"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -145,7 +145,7 @@
       <button
         onclick={() => goToPage(totalPages)}
         disabled={currentPage === totalPages || loading}
-        class="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
         title="Last page"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -160,13 +160,13 @@
           placeholder="#"
           min="1"
           max={totalPages}
-          class="w-14 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-primary-500"
+          class="w-14 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           onkeydown={(e) => e.key === 'Enter' && handleJumpToPage()}
         />
         <button
           onclick={handleJumpToPage}
           disabled={loading}
-          class="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40"
+          class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
         >
           Go
         </button>

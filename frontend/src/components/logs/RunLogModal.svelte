@@ -158,15 +158,15 @@
   class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden"
   onwheel={(e) => e.stopPropagation()}
 >
-  <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col overflow-hidden">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col overflow-hidden">
     <!-- Header -->
-    <div class="p-4 border-b flex items-center justify-between shrink-0">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-3">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {jobName}
           </h3>
-          <div class="flex items-center gap-2 text-sm text-gray-500">
+          <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <span>Run #{runId}</span>
             {#if run}
               <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
@@ -192,7 +192,7 @@
         {/if}
         <button
           onclick={onClose}
-          class="text-gray-400 hover:text-gray-600 p-1"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
           aria-label="Close"
         >
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -209,23 +209,23 @@
 
     <!-- Stats bar (shown when job has stats) -->
     {#if run && run.files_transferred !== null}
-      <div class="px-4 py-2 bg-gray-50 border-b flex gap-6 text-sm shrink-0">
+      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700 flex gap-6 text-sm shrink-0">
         <div>
-          <span class="text-gray-500">Files:</span>
-          <span class="font-medium text-gray-900">{run.files_transferred}</span>
+          <span class="text-gray-500 dark:text-gray-400">Files:</span>
+          <span class="font-medium text-gray-900 dark:text-white">{run.files_transferred}</span>
         </div>
         {#if run.bytes_transferred !== null}
           <div>
-            <span class="text-gray-500">Size:</span>
-            <span class="font-medium text-gray-900">
+            <span class="text-gray-500 dark:text-gray-400">Size:</span>
+            <span class="font-medium text-gray-900 dark:text-white">
               {(run.bytes_transferred / (1024 * 1024)).toFixed(1)} MB
             </span>
           </div>
         {/if}
         {#if run.error_count > 0}
           <div>
-            <span class="text-gray-500">Errors:</span>
-            <span class="font-medium text-red-600">{run.error_count}</span>
+            <span class="text-gray-500 dark:text-gray-400">Errors:</span>
+            <span class="font-medium text-red-600 dark:text-red-400">{run.error_count}</span>
           </div>
         {/if}
       </div>
@@ -248,7 +248,7 @@
     </div>
 
     <!-- Footer -->
-    <div class="p-3 border-t bg-gray-50 flex justify-end shrink-0">
+    <div class="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-end shrink-0">
       <button onclick={onClose} class="btn btn-secondary text-sm">
         Close
       </button>

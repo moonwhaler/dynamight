@@ -69,9 +69,9 @@
   {#if paths.length > 0}
     <div class="space-y-2">
       {#each paths as path}
-        <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-          <code class="text-sm text-gray-800">{path}</code>
-          <button onclick={() => removePath(path)} class="text-red-500 hover:text-red-700" aria-label="Remove path">
+        <div class="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-lg">
+          <code class="text-sm text-gray-800 dark:text-gray-200">{path}</code>
+          <button onclick={() => removePath(path)} class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300" aria-label="Remove path">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 stroke-linecap="round"
@@ -111,13 +111,13 @@
     aria-modal="true"
     tabindex="-1"
   >
-    <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
-      <div class="p-4 border-b flex items-center justify-between">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900">Browse Filesystem</h3>
-          <p class="text-sm text-gray-500 font-mono">{currentPath}</p>
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Browse Filesystem</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400 font-mono">{currentPath}</p>
         </div>
-        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600" aria-label="Close browser">
+        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close browser">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
@@ -129,7 +129,7 @@
         </button>
       </div>
 
-      <div class="p-2 border-b flex gap-2">
+      <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
         <button onclick={goUp} disabled={currentPath === '/'} class="btn btn-secondary text-sm">
           Up
         </button>
@@ -149,14 +149,14 @@
               {#if entry.is_dir}
                 <button
                   onclick={() => browse(entry.path)}
-                  class="w-full flex items-center gap-2 p-2 hover:bg-gray-100 rounded text-left"
+                  class="w-full flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-left"
                 >
                   <svg class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"
                     />
                   </svg>
-                  <span class="text-gray-900">{entry.name}</span>
+                  <span class="text-gray-900 dark:text-gray-100">{entry.name}</span>
                 </button>
               {:else}
                 <div class="flex items-center gap-2 p-2 text-gray-400">

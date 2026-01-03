@@ -158,13 +158,13 @@
     aria-modal="true"
     tabindex="-1"
   >
-    <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
-      <div class="p-4 border-b flex items-center justify-between">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900">Browse Filesystem</h3>
-          <p class="text-sm text-gray-500 font-mono">{currentPath}</p>
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Browse Filesystem</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400 font-mono">{currentPath}</p>
         </div>
-        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600" aria-label="Close browser">
+        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close browser">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -172,12 +172,12 @@
       </div>
 
       {#if browseError}
-        <div class="mx-4 mt-3 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg">
+        <div class="mx-4 mt-3 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-sm rounded-lg">
           {browseError}
         </div>
       {/if}
 
-      <div class="p-3 border-b flex gap-2">
+      <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex gap-2">
         <button onclick={goUp} disabled={currentPath === '/'} class="btn btn-secondary text-sm inline-flex items-center">
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
@@ -197,7 +197,7 @@
 
       <div class="flex-1 overflow-auto p-2 min-h-[200px]">
         {#if creatingFolder}
-          <div class="mb-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+          <div class="mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
             <div class="flex items-center gap-2">
               <svg class="w-5 h-5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
@@ -207,13 +207,13 @@
                 bind:value={newFolderName}
                 onkeydown={handleNewFolderKeydown}
                 placeholder="Folder name"
-                class="flex-1 px-2 py-1 text-sm border border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="flex-1 px-2 py-1 text-sm border border-blue-300 dark:border-blue-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               />
               <button onclick={createFolder} class="btn btn-primary text-xs py-1 px-2">Create</button>
               <button onclick={cancelCreatingFolder} class="btn btn-secondary text-xs py-1 px-2">Cancel</button>
             </div>
             {#if createError}
-              <p class="mt-1 text-xs text-red-600">{createError}</p>
+              <p class="mt-1 text-xs text-red-600 dark:text-red-400">{createError}</p>
             {/if}
           </div>
         {/if}
@@ -223,8 +223,8 @@
             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           </div>
         {:else if entries.length === 0 && !creatingFolder}
-          <div class="text-center py-8 text-gray-500">
-            <svg class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+            <svg class="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
             <p>Directory is empty</p>
@@ -235,12 +235,12 @@
               {#if entry.is_dir}
                 <button
                   onclick={() => browse(entry.path)}
-                  class="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-100 rounded-lg text-left transition-colors"
+                  class="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-left transition-colors"
                 >
                   <svg class="w-5 h-5 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                   </svg>
-                  <span class="text-gray-900 truncate">{entry.name}</span>
+                  <span class="text-gray-900 dark:text-gray-100 truncate">{entry.name}</span>
                 </button>
               {:else}
                 <div class="flex items-center gap-2 px-3 py-2 text-gray-400">
@@ -255,8 +255,8 @@
         {/if}
       </div>
 
-      <div class="p-3 border-t bg-gray-50 rounded-b-xl">
-        <p class="text-xs text-gray-500">
+      <div class="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
           Tip: You can type any path in the input field, even if it doesn't exist yet.
         </p>
       </div>

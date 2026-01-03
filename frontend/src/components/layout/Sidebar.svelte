@@ -13,7 +13,7 @@
   }
 </script>
 
-<aside class="w-64 bg-white border-r border-gray-200 p-4">
+<aside class="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 p-4">
   <nav class="space-y-1">
     {#each navItems as item}
       <a
@@ -22,8 +22,8 @@
           item.path,
           $location
         )
-          ? 'bg-primary-50 text-primary-700'
-          : 'text-gray-600 hover:bg-gray-50'}"
+          ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+          : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700/50'}"
       >
         {#if item.icon === 'home'}
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -13,7 +13,7 @@
   }
 </script>
 
-<div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+<div class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
   <div class="max-w-md w-full space-y-8">
     <div class="text-center">
       <div
@@ -28,13 +28,13 @@
           />
         </svg>
       </div>
-      <h2 class="text-3xl font-bold text-gray-900">Dynamight</h2>
-      <p class="mt-2 text-sm text-gray-600">Sign in to manage your backups</p>
+      <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Dynamight</h2>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Sign in to manage your backups</p>
     </div>
 
     <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
       {#if $authStore.error}
-        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+        <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg text-sm">
           {$authStore.error}
         </div>
       {/if}

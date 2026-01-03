@@ -46,12 +46,12 @@
   <div class="flex items-start justify-between">
     <div class="flex-1 min-w-0">
       <a href="#/jobs/{job.id}" class="block">
-        <h3 class="text-lg font-semibold text-gray-900 truncate hover:text-primary-600">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white truncate hover:text-primary-600 dark:hover:text-primary-400">
           {job.name}
         </h3>
       </a>
       {#if job.description}
-        <p class="text-sm text-gray-500 truncate mt-1">{job.description}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 truncate mt-1">{job.description}</p>
       {/if}
     </div>
     <button
@@ -64,7 +64,7 @@
     </button>
   </div>
 
-  <div class="mt-4 space-y-2 text-sm text-gray-600">
+  <div class="mt-4 space-y-2 text-sm text-gray-600 dark:text-gray-400">
     <div class="flex items-center gap-2">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path

@@ -60,29 +60,29 @@
 
 <div class="space-y-6">
   <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
     <a href="#/jobs/new" class="btn btn-primary"> New Job </a>
   </div>
 
   <!-- Stats -->
   <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
     <div class="card p-4">
-      <div class="text-sm text-gray-500">Total Jobs</div>
-      <div class="text-2xl font-bold text-gray-900">{$jobsStore.jobs.length}</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">Total Jobs</div>
+      <div class="text-2xl font-bold text-gray-900 dark:text-white">{$jobsStore.jobs.length}</div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500">Active Jobs</div>
-      <div class="text-2xl font-bold text-gray-900">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Active Jobs</div>
+      <div class="text-2xl font-bold text-gray-900 dark:text-white">
         {$jobsStore.jobs.filter((j) => j.enabled).length}
       </div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500">Recent Runs</div>
-      <div class="text-2xl font-bold text-gray-900">{recentRuns.length}</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">Recent Runs</div>
+      <div class="text-2xl font-bold text-gray-900 dark:text-white">{recentRuns.length}</div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500">Failed Runs</div>
-      <div class="text-2xl font-bold text-red-600">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Failed Runs</div>
+      <div class="text-2xl font-bold text-red-600 dark:text-red-400">
         {recentRuns.filter((r) => r.status === 'failed').length}
       </div>
     </div>
@@ -90,14 +90,14 @@
 
   <!-- Jobs Overview -->
   <div>
-    <h2 class="text-lg font-semibold text-gray-900 mb-4">Backup Jobs</h2>
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Backup Jobs</h2>
     {#if $jobsStore.loading}
       <div class="flex justify-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
       </div>
     {:else if $jobsStore.jobs.length === 0}
       <div class="card p-8 text-center">
-        <p class="text-gray-500 mb-4">No backup jobs configured yet.</p>
+        <p class="text-gray-500 dark:text-gray-400 mb-4">No backup jobs configured yet.</p>
         <a href="#/jobs/new" class="btn btn-primary">Create your first job</a>
       </div>
     {:else}
@@ -111,41 +111,41 @@
 
   <!-- Recent Activity -->
   <div>
-    <h2 class="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h2>
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent Activity</h2>
     {#if loadingRuns}
       <div class="flex justify-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
       </div>
     {:else if recentRuns.length === 0}
       <div class="card p-8 text-center">
-        <p class="text-gray-500">No recent backup runs.</p>
+        <p class="text-gray-500 dark:text-gray-400">No recent backup runs.</p>
       </div>
     {:else}
       <div class="card overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                 Status
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                 Started
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Files</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
             </tr>
           </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             {#each recentRuns as run (run.id)}
-              <tr class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm text-gray-900">
+              <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
                   {$jobsStore.jobs.find((j) => j.id === run.job_id)?.name || `Job #${run.job_id}`}
                 </td>
                 <td class="px-4 py-3">
                   <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-500">{formatDate(run.started_at)}</td>
-                <td class="px-4 py-3 text-sm text-gray-500">{run.files_transferred ?? '-'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatDate(run.started_at)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
               </tr>
             {/each}
           </tbody>

@@ -80,12 +80,12 @@
     aria-labelledby="modal-title"
     tabindex="-1"
   >
-    <div class="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden">
-      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-        <h2 id="modal-title" class="text-lg font-semibold text-gray-900">Change Password</h2>
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <h2 id="modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">Change Password</h2>
         <button
           onclick={close}
-          class="text-gray-400 hover:text-gray-600 transition-colors"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           aria-label="Close"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -97,19 +97,19 @@
       <div class="p-6">
         {#if success}
           <div class="text-center py-4">
-            <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg class="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h3 class="text-lg font-medium text-gray-900 mb-2">Password Changed</h3>
-            <p class="text-sm text-gray-600 mb-6">Your password has been updated successfully.</p>
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Password Changed</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">Your password has been updated successfully.</p>
             <button onclick={close} class="btn btn-primary">Done</button>
           </div>
         {:else}
           <form onsubmit={handleSubmit} class="space-y-4">
             {#if error}
-              <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg text-sm">
                 {error}
               </div>
             {/if}
@@ -140,7 +140,7 @@
               />
               <PasswordStrength password={newPassword} />
               {#if !newPassword}
-                <p class="text-xs text-gray-500 mt-1">Must be at least 8 characters</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Must be at least 8 characters</p>
               {/if}
             </div>
 

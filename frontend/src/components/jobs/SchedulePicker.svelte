@@ -160,7 +160,7 @@
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
-    <h2 class="text-lg font-semibold text-gray-900">
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
       Schedule
       <HelpTooltip text="Set up automatic backup times. You can add multiple schedules (e.g., daily at 2 AM and weekly full backup on Sundays). Each schedule can be individually enabled or disabled. Without a schedule, backups only run when you click 'Run Now'." />
     </h2>
@@ -172,12 +172,12 @@
   </div>
 
   {#if schedules.length === 0 && !showAdd}
-    <p class="text-gray-500 text-sm">No schedules configured. Backups will only run manually.</p>
+    <p class="text-gray-500 dark:text-gray-400 text-sm">No schedules configured. Backups will only run manually.</p>
   {/if}
 
   <!-- Existing Schedules -->
   {#each schedules as schedule (schedule.id)}
-    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+    <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
       <div class="flex items-center gap-3">
         <input
           type="checkbox"
@@ -186,13 +186,13 @@
           class="rounded text-primary-600"
         />
         <div>
-          <div class="font-medium text-gray-900">{formatSchedule(schedule)}</div>
-          <div class="text-sm text-gray-500">Next: {formatNextRun(schedule.next_run_at)}</div>
+          <div class="font-medium text-gray-900 dark:text-white">{formatSchedule(schedule)}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400">Next: {formatNextRun(schedule.next_run_at)}</div>
         </div>
       </div>
       <button
         onclick={() => deleteSchedule(schedule.id)}
-        class="text-red-600 hover:text-red-700 text-sm"
+        class="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
       >
         Delete
       </button>
@@ -201,7 +201,7 @@
 
   <!-- Add Schedule Form -->
   {#if showAdd}
-    <div class="border rounded-lg p-4 space-y-4">
+    <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
       <div>
         <label for="scheduleType" class="label">Schedule Type</label>
         <select id="scheduleType" bind:value={scheduleType} class="input">
@@ -237,7 +237,7 @@
                 onclick={() => toggleDay(index)}
                 class="px-3 py-1.5 text-sm rounded-lg border transition-colors {selectedDays.includes(index)
                   ? 'bg-primary-600 text-white border-primary-600'
-                  : 'bg-white text-gray-700 border-gray-300 hover:border-primary-400'}"
+                  : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-primary-400'}"
               >
                 {day.slice(0, 3)}
               </button>
@@ -300,7 +300,7 @@
             placeholder="0 2 * * *"
             class="input font-mono"
           />
-          <p class="text-sm text-gray-500 mt-1">
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Format: minute hour day-of-month month day-of-week
           </p>
         </div>
@@ -308,9 +308,9 @@
 
       <!-- Cron Preview -->
       {#if scheduleType !== 'custom'}
-        <div class="bg-gray-50 rounded-lg p-3">
-          <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cron Expression</div>
-          <code class="text-sm text-gray-800 font-mono">{cronPreview}</code>
+        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+          <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Cron Expression</div>
+          <code class="text-sm text-gray-800 dark:text-gray-200 font-mono">{cronPreview}</code>
         </div>
       {/if}
 

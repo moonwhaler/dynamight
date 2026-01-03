@@ -216,7 +216,7 @@
 
 <div class="space-y-6">
   <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold text-gray-900">Backup History</h1>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup History</h1>
 
     <div class="flex items-center gap-3">
       {#if runs.length > 0}
@@ -267,49 +267,49 @@
           d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
         />
       </svg>
-      <h3 class="text-lg font-medium text-gray-900 mb-2">No backup history</h3>
-      <p class="text-gray-500">Run a backup job to see history here.</p>
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No backup history</h3>
+      <p class="text-gray-500 dark:text-gray-400">Run a backup job to see history here.</p>
     </div>
   {:else}
     <div class="card overflow-hidden">
-      <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-800/50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Started</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Started</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
               Duration
             </th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Files</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Size</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
           {#each runs as run (run.id)}
-            <tr class="hover:bg-gray-50">
-              <td class="px-4 py-3 text-sm text-gray-900">{getJobName(run.job_id)}</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
               <td class="px-4 py-3">
                 <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500">{formatDate(run.started_at)}</td>
-              <td class="px-4 py-3 text-sm text-gray-500">
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatDate(run.started_at)}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 {formatDuration(run.started_at, run.completed_at)}
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500">{run.files_transferred ?? '-'}</td>
-              <td class="px-4 py-3 text-sm text-gray-500">{formatBytes(run.bytes_transferred)}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatBytes(run.bytes_transferred)}</td>
               <td class="px-4 py-3">
                 <div class="flex items-center gap-2">
                   <button
                     onclick={() => selectRun(run)}
-                    class="text-primary-600 hover:text-primary-700 text-sm font-medium"
+                    class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 text-sm font-medium"
                   >
                     View Logs
                   </button>
                   <button
                     onclick={() => confirmDeleteRun(run.id)}
-                    class="text-red-500 hover:text-red-700 text-sm"
+                    class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
                     title="Delete this run"
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -329,15 +329,15 @@
 <!-- Log Details Modal -->
 {#if selectedRun}
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col">
-      <div class="p-4 border-b flex items-center justify-between">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col">
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
-          <h3 class="text-lg font-semibold text-gray-900">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {getJobName(selectedRun.job_id)} - Run #{selectedRun.id}
           </h3>
-          <p class="text-sm text-gray-500">{formatDate(selectedRun.started_at)}</p>
+          <p class="text-sm text-gray-500 dark:text-gray-400">{formatDate(selectedRun.started_at)}</p>
         </div>
-        <button onclick={closeDetails} class="text-gray-400 hover:text-gray-600" aria-label="Close details">
+        <button onclick={closeDetails} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close details">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
@@ -369,16 +369,16 @@
 <!-- Purge Confirmation Modal -->
 {#if showPurgeConfirm}
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-6">
       <div class="flex items-center gap-3 mb-4">
-        <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-          <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         </div>
-        <h3 class="text-lg font-semibold text-gray-900">Confirm Delete</h3>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Confirm Delete</h3>
       </div>
-      <p class="text-gray-600 mb-6">{getPurgeMessage()}</p>
+      <p class="text-gray-600 dark:text-gray-300 mb-6">{getPurgeMessage()}</p>
       <div class="flex justify-end gap-3">
         <button
           onclick={cancelPurge}
