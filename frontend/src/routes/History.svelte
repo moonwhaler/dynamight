@@ -215,30 +215,32 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup History</h1>
 
-    <div class="flex items-center gap-3">
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
       {#if runs.length > 0}
-        {#if selectedJobId}
+        <div class="flex gap-2">
+          {#if selectedJobId}
+            <button
+              onclick={confirmPurgeJob}
+              class="btn btn-secondary text-sm flex-1 sm:flex-none"
+            >
+              Clear Job
+            </button>
+          {/if}
           <button
-            onclick={confirmPurgeJob}
-            class="btn btn-secondary text-sm"
+            onclick={confirmPurgeAll}
+            class="btn btn-secondary text-sm flex-1 sm:flex-none"
           >
-            Clear Job Logs
+            Clear All
           </button>
-        {/if}
-        <button
-          onclick={confirmPurgeAll}
-          class="btn btn-secondary text-sm"
-        >
-          Clear All
-        </button>
+        </div>
       {/if}
       <select
         bind:value={selectedJobId}
         onchange={() => loadRuns()}
-        class="input w-48"
+        class="input w-full sm:w-48"
       >
         <option value={null}>All Jobs</option>
         {#each $jobsStore.jobs as job}
@@ -272,73 +274,75 @@
     </div>
   {:else}
     <div class="card overflow-hidden">
-      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-800/50">
-          <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Started</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-              Duration
-            </th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Size</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-          {#each runs as run (run.id)}
-            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-              <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
-              <td class="px-4 py-3">
-                <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
-              </td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatDate(run.started_at)}</td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                {formatDuration(run.started_at, run.completed_at)}
-              </td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatBytes(run.bytes_transferred)}</td>
-              <td class="px-4 py-3">
-                <div class="flex items-center gap-2">
-                  <button
-                    onclick={() => selectRun(run)}
-                    class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 text-sm font-medium"
-                  >
-                    View Logs
-                  </button>
-                  <button
-                    onclick={() => confirmDeleteRun(run.id)}
-                    class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
-                    title="Delete this run"
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </td>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">Started</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden sm:table-cell">
+                Duration
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">Files</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">Size</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            {#each runs as run (run.id)}
+              <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
+                <td class="px-4 py-3">
+                  <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
+                  {formatDuration(run.started_at, run.completed_at)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{run.files_transferred ?? '-'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{formatBytes(run.bytes_transferred)}</td>
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <button
+                      onclick={() => selectRun(run)}
+                      class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 text-sm font-medium"
+                    >
+                      Logs
+                    </button>
+                    <button
+                      onclick={() => confirmDeleteRun(run.id)}
+                      class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm p-1"
+                      title="Delete this run"
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     </div>
   {/if}
 </div>
 
 <!-- Log Details Modal -->
 {#if selectedRun}
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col">
-      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl h-[95vh] sm:h-[90vh] flex flex-col">
+      <div class="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
             {getJobName(selectedRun.job_id)} - Run #{selectedRun.id}
           </h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400">{formatDate(selectedRun.started_at)}</p>
+          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{formatDate(selectedRun.started_at)}</p>
         </div>
-        <button onclick={closeDetails} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close details">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button onclick={closeDetails} class="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="Close details">
+          <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -349,7 +353,7 @@
         </button>
       </div>
 
-      <div class="flex-1 min-h-[300px] overflow-hidden relative">
+      <div class="flex-1 min-h-0 overflow-hidden relative">
         <div class="absolute inset-0">
           <LogViewer
             {logs}

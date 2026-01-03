@@ -155,18 +155,18 @@
 </script>
 
 <div
-  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-hidden"
+  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4 overflow-hidden"
   onwheel={(e) => e.stopPropagation()}
 >
-  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-4xl w-full h-[90vh] flex flex-col overflow-hidden">
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden">
     <!-- Header -->
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-3">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+    <div class="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 shrink-0">
+      <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
             {jobName}
           </h3>
-          <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <div class="flex items-center gap-2 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
             <span>Run #{runId}</span>
             {#if run}
               <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
@@ -174,28 +174,28 @@
           </div>
         </div>
         {#if isRunning}
-          <div class="ml-2">
-            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-600"></div>
+          <div class="flex-shrink-0">
+            <div class="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-b-2 border-primary-600"></div>
           </div>
         {/if}
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-shrink-0">
         {#if isRunning || killing}
           <button
             onclick={() => handleKill()}
             disabled={killing}
-            class="btn btn-danger text-sm py-1.5 px-3"
+            class="btn btn-danger text-xs sm:text-sm py-1.5 px-2 sm:px-3"
           >
             {killing ? 'Killing...' : 'Kill'}
           </button>
         {/if}
         <button
           onclick={onClose}
-          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
           aria-label="Close"
         >
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -209,7 +209,7 @@
 
     <!-- Stats bar (shown when job has stats) -->
     {#if run && run.files_transferred !== null}
-      <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700 flex gap-6 text-sm shrink-0">
+      <div class="px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-3 sm:gap-6 text-xs sm:text-sm shrink-0">
         <div>
           <span class="text-gray-500 dark:text-gray-400">Files:</span>
           <span class="font-medium text-gray-900 dark:text-white">{run.files_transferred}</span>
@@ -232,7 +232,7 @@
     {/if}
 
     <!-- Log viewer -->
-    <div class="flex-1 min-h-[300px] overflow-hidden relative">
+    <div class="flex-1 min-h-0 overflow-hidden relative">
       <div class="absolute inset-0">
         <LogViewer
           {logs}

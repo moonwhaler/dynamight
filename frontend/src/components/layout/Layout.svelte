@@ -4,15 +4,34 @@
   import type { Snippet } from 'svelte';
 
   let { children }: { children: Snippet } = $props();
+
+  let sidebarOpen = $state(false);
+
+  function toggleSidebar() {
+    sidebarOpen = !sidebarOpen;
+  }
+
+  function closeSidebar() {
+    sidebarOpen = false;
+  }
 </script>
 
 <div class="min-h-screen flex flex-col">
-  <Navbar />
+  <Navbar onMenuToggle={toggleSidebar} />
 
-  <div class="flex flex-1">
-    <Sidebar />
+  <div class="flex flex-1 relative">
+    <!-- Mobile backdrop -->
+    {#if sidebarOpen}
+      <button
+        class="fixed inset-0 bg-black/50 z-40 md:hidden"
+        onclick={closeSidebar}
+        aria-label="Close sidebar"
+      ></button>
+    {/if}
 
-    <main class="flex-1 p-6 overflow-auto">
+    <Sidebar open={sidebarOpen} onClose={closeSidebar} />
+
+    <main class="flex-1 p-4 sm:p-6 overflow-auto w-full">
       {@render children()}
     </main>
   </div>

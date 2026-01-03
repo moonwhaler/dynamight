@@ -9,9 +9,9 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup Jobs</h1>
-    <a href="#/jobs/new" class="btn btn-primary"> New Job </a>
+    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center"> New Job </a>
   </div>
 
   {#if $jobsStore.loading}

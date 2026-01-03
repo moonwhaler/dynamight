@@ -3,6 +3,8 @@
   import { themeStore } from '../../lib/stores/theme';
   import ChangePasswordModal from '../ChangePasswordModal.svelte';
 
+  let { onMenuToggle }: { onMenuToggle?: () => void } = $props();
+
   let showPasswordModal = $state(false);
   let showSettingsMenu = $state(false);
   let menuRef = $state<HTMLDivElement | null>(null);
@@ -35,9 +37,20 @@
   });
 </script>
 
-<nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
+<nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-3">
   <div class="flex items-center justify-between">
     <div class="flex items-center gap-3">
+      <!-- Mobile hamburger menu -->
+      <button
+        onclick={onMenuToggle}
+        class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 rounded-lg md:hidden"
+        aria-label="Open menu"
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
       <div class="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
         <svg
           class="w-5 h-5 text-white"
@@ -56,8 +69,8 @@
       <h1 class="text-xl font-bold text-gray-900 dark:text-white">Dynamight</h1>
     </div>
 
-    <div class="flex items-center gap-3">
-      <span class="text-sm text-gray-600 dark:text-gray-300">
+    <div class="flex items-center gap-2 sm:gap-3">
+      <span class="hidden sm:inline text-sm text-gray-600 dark:text-gray-300">
         {$authStore.user?.username}
       </span>
 
@@ -79,11 +92,16 @@
 
         {#if showSettingsMenu}
           <div
-            class="absolute right-0 mt-2 w-56 origin-top-right rounded-xl bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black/5 dark:ring-white/10 focus:outline-none z-50 overflow-hidden"
+            class="absolute right-0 mt-2 w-48 sm:w-56 origin-top-right rounded-xl bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black/5 dark:ring-white/10 focus:outline-none z-50 overflow-hidden"
             role="menu"
             aria-orientation="vertical"
           >
             <div class="py-1">
+              <!-- Username (mobile only) -->
+              <div class="sm:hidden px-4 py-2 border-b border-gray-100 dark:border-gray-700">
+                <span class="text-sm font-medium text-gray-900 dark:text-white">{$authStore.user?.username}</span>
+              </div>
+
               <!-- Theme Toggle -->
               <button
                 onclick={() => themeStore.toggle()}
@@ -116,6 +134,19 @@
                 </svg>
                 <span>Change Password</span>
               </button>
+
+              <!-- Mobile Logout -->
+              <div class="sm:hidden border-t border-gray-100 dark:border-gray-700 my-1"></div>
+              <button
+                onclick={handleLogout}
+                class="sm:hidden w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                role="menuitem"
+              >
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                <span>Logout</span>
+              </button>
             </div>
           </div>
         {/if}
@@ -123,7 +154,7 @@
 
       <button
         onclick={handleLogout}
-        class="btn btn-secondary text-sm"
+        class="hidden sm:inline-flex btn btn-secondary text-sm"
       >
         Logout
       </button>

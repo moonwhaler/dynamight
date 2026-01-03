@@ -59,13 +59,13 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-    <a href="#/jobs/new" class="btn btn-primary"> New Job </a>
+    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center"> New Job </a>
   </div>
 
   <!-- Stats -->
-  <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+  <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
     <div class="card p-4">
       <div class="text-sm text-gray-500 dark:text-gray-400">Total Jobs</div>
       <div class="text-2xl font-bold text-gray-900 dark:text-white">{$jobsStore.jobs.length}</div>
@@ -122,34 +122,36 @@
       </div>
     {:else}
       <div class="card overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 dark:bg-gray-800/50">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                Status
-              </th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                Started
-              </th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
-            </tr>
-          </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {#each recentRuns as run (run.id)}
-              <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
-                  {$jobsStore.jobs.find((j) => j.id === run.job_id)?.name || `Job #${run.job_id}`}
-                </td>
-                <td class="px-4 py-3">
-                  <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatDate(run.started_at)}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-800/50">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                  Status
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">
+                  Started
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+              {#each recentRuns as run (run.id)}
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                    {$jobsStore.jobs.find((j) => j.id === run.job_id)?.name || `Job #${run.job_id}`}
+                  </td>
+                  <td class="px-4 py-3">
+                    <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
+                  </td>
+                  <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
+                  <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </div>
     {/if}
   </div>

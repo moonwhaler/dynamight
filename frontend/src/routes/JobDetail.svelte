@@ -185,16 +185,16 @@
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
       {isNew ? 'New Backup Job' : 'Edit Backup Job'}
     </h1>
     {#if !isNew}
       <div class="flex gap-2">
-        <button onclick={handleRun} disabled={running} class="btn btn-secondary">
+        <button onclick={handleRun} disabled={running} class="btn btn-secondary flex-1 sm:flex-none">
           {running ? 'Starting...' : 'Run Now'}
         </button>
-        <button onclick={handleDelete} class="btn btn-danger">Delete</button>
+        <button onclick={handleDelete} class="btn btn-danger flex-1 sm:flex-none">Delete</button>
       </div>
     {/if}
   </div>
@@ -259,7 +259,7 @@
           <SinglePathSelector bind:path={mountPoint} placeholder="/mnt/backup" />
         </div>
 
-        <div class="flex gap-6">
+        <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
           <label class="flex items-center gap-2">
             <input type="checkbox" bind:checked={autoMount} class="rounded text-primary-600" />
             <span class="text-sm text-gray-700 dark:text-gray-300">Auto-mount before backup</span>
@@ -318,8 +318,8 @@
       {/if}
 
       <!-- Actions -->
-      <div class="flex justify-end gap-3">
-        <a href="#/jobs" class="btn btn-secondary">Cancel</a>
+      <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+        <a href="#/jobs" class="btn btn-secondary text-center">Cancel</a>
         <button type="submit" disabled={saving} class="btn btn-primary">
           {saving ? (isNew ? 'Adding...' : 'Saving...') : isNew ? 'Add Job' : 'Save Changes'}
         </button>
