@@ -10,6 +10,19 @@
   let loading = $state(false);
   let manualPath = $state('');
 
+  // Multi-select state
+  let selectedInDialog = $state<Set<string>>(new Set());
+
+  // Computed: directories that can be selected (not already in paths)
+  let selectableDirectories = $derived(
+    entries.filter(e => e.is_dir && !paths.includes(e.path))
+  );
+
+  // Computed: count of new selections (not already in paths)
+  let newSelectionCount = $derived(
+    [...selectedInDialog].filter(p => !paths.includes(p)).length
+  );
+
   async function browse(path: string) {
     loading = true;
     try {
@@ -24,19 +37,50 @@
   }
 
   function openBrowser() {
+    selectedInDialog = new Set();
     showBrowser = true;
     browse('/');
   }
 
   function closeBrowser() {
     showBrowser = false;
+    selectedInDialog = new Set();
   }
 
-  function selectPath(path: string) {
-    if (!paths.includes(path)) {
-      paths = [...paths, path];
+  function toggleSelection(path: string) {
+    const newSet = new Set(selectedInDialog);
+    if (newSet.has(path)) {
+      newSet.delete(path);
+    } else {
+      newSet.add(path);
+    }
+    selectedInDialog = newSet;
+  }
+
+  function selectAllVisible() {
+    const newSet = new Set(selectedInDialog);
+    for (const dir of selectableDirectories) {
+      newSet.add(dir.path);
+    }
+    selectedInDialog = newSet;
+  }
+
+  function clearSelection() {
+    selectedInDialog = new Set();
+  }
+
+  function addSelectedPaths() {
+    const newPaths = [...selectedInDialog].filter(p => !paths.includes(p));
+    if (newPaths.length > 0) {
+      paths = [...paths, ...newPaths];
     }
     closeBrowser();
+  }
+
+  function quickAddCurrentPath() {
+    if (!paths.includes(currentPath)) {
+      paths = [...paths, currentPath];
+    }
   }
 
   function removePath(path: string) {
@@ -61,6 +105,10 @@
   function goUp() {
     const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
     browse(parent);
+  }
+
+  function isAlreadyAdded(path: string): boolean {
+    return paths.includes(path);
   }
 </script>
 
@@ -112,6 +160,7 @@
     tabindex="-1"
   >
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+      <!-- Header -->
       <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div>
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Browse Filesystem</h3>
@@ -119,61 +168,148 @@
         </div>
         <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close browser">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
 
-      <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex gap-2">
+      <!-- Navigation & Quick Actions -->
+      <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-2 items-center">
         <button onclick={goUp} disabled={currentPath === '/'} class="btn btn-secondary text-sm">
+          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+          </svg>
           Up
         </button>
-        <button onclick={() => selectPath(currentPath)} class="btn btn-primary text-sm">
-          Select Current Directory
+        <button
+          onclick={quickAddCurrentPath}
+          disabled={isAlreadyAdded(currentPath)}
+          class="btn btn-secondary text-sm"
+          title={isAlreadyAdded(currentPath) ? 'Already added' : 'Add current directory'}
+        >
+          {#if isAlreadyAdded(currentPath)}
+            <svg class="w-4 h-4 mr-1 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+            Added
+          {:else}
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+            Add This Directory
+          {/if}
         </button>
+        <div class="flex-1"></div>
+        {#if selectableDirectories.length > 0}
+          <button onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline">
+            Select all
+          </button>
+        {/if}
+        {#if selectedInDialog.size > 0}
+          <button onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:underline">
+            Clear ({selectedInDialog.size})
+          </button>
+        {/if}
       </div>
 
+      <!-- Directory Listing -->
       <div class="flex-1 overflow-auto p-2">
         {#if loading}
           <div class="flex justify-center py-8">
             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           </div>
+        {:else if entries.length === 0}
+          <p class="text-center text-gray-500 dark:text-gray-400 py-8">Empty directory</p>
         {:else}
           <div class="space-y-1">
             {#each entries as entry}
               {#if entry.is_dir}
-                <button
-                  onclick={() => browse(entry.path)}
-                  class="w-full flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-left"
+                {@const alreadyAdded = isAlreadyAdded(entry.path)}
+                {@const isSelected = selectedInDialog.has(entry.path)}
+                <div
+                  class="flex items-center gap-2 p-2 rounded transition-colors {alreadyAdded ? 'bg-green-50 dark:bg-green-900/20' : isSelected ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}"
                 >
-                  <svg class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"
-                    />
-                  </svg>
-                  <span class="text-gray-900 dark:text-gray-100">{entry.name}</span>
-                </button>
+                  <!-- Checkbox for selection -->
+                  {#if alreadyAdded}
+                    <div class="w-5 h-5 flex items-center justify-center" title="Already added">
+                      <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
+                  {:else}
+                    <button
+                      onclick={() => toggleSelection(entry.path)}
+                      class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors {isSelected ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600 hover:border-primary-500'}"
+                      aria-label={isSelected ? 'Deselect directory' : 'Select directory'}
+                    >
+                      {#if isSelected}
+                        <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                        </svg>
+                      {/if}
+                    </button>
+                  {/if}
+
+                  <!-- Folder icon and name (clickable to navigate) -->
+                  <button
+                    onclick={() => browse(entry.path)}
+                    class="flex-1 flex items-center gap-2 text-left min-w-0"
+                  >
+                    <svg class="w-5 h-5 flex-shrink-0 {alreadyAdded ? 'text-green-500' : 'text-yellow-500'}" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                    <span class="truncate {alreadyAdded ? 'text-green-700 dark:text-green-400' : 'text-gray-900 dark:text-gray-100'}">{entry.name}</span>
+                  </button>
+
+                  <!-- Quick add button for individual directory -->
+                  {#if !alreadyAdded && !isSelected}
+                    <button
+                      onclick={() => toggleSelection(entry.path)}
+                      class="text-xs text-primary-600 dark:text-primary-400 hover:underline flex-shrink-0"
+                      title="Add to selection"
+                    >
+                      +Add
+                    </button>
+                  {/if}
+                </div>
               {:else}
-                <div class="flex items-center gap-2 p-2 text-gray-400">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
+                <div class="flex items-center gap-2 p-2 text-gray-400 pl-9">
+                  <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  <span>{entry.name}</span>
+                  <span class="truncate">{entry.name}</span>
                 </div>
               {/if}
             {/each}
           </div>
         {/if}
+      </div>
+
+      <!-- Footer with action buttons -->
+      <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3">
+        <div class="text-sm text-gray-500 dark:text-gray-400">
+          {#if newSelectionCount > 0}
+            <span class="font-medium text-primary-600 dark:text-primary-400">{newSelectionCount}</span> director{newSelectionCount === 1 ? 'y' : 'ies'} selected
+          {:else}
+            Select directories to add
+          {/if}
+        </div>
+        <div class="flex gap-2">
+          <button onclick={closeBrowser} class="btn btn-secondary">
+            Cancel
+          </button>
+          <button
+            onclick={addSelectedPaths}
+            disabled={newSelectionCount === 0}
+            class="btn btn-primary"
+          >
+            {#if newSelectionCount > 0}
+              Add {newSelectionCount} Director{newSelectionCount === 1 ? 'y' : 'ies'}
+            {:else}
+              Add Selected
+            {/if}
+          </button>
+        </div>
       </div>
     </div>
   </div>

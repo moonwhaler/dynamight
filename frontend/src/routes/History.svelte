@@ -295,22 +295,21 @@
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup History</h1>
 
     <div class="flex items-center gap-2">
-      {#if runs.length > 0}
-        {#if selectedJobId}
-          <button
-            onclick={confirmPurgeJob}
-            class="btn btn-secondary"
-          >
-            Clear Job
-          </button>
-        {/if}
+      {#if runs.length > 0 && selectedJobId}
         <button
-          onclick={confirmPurgeAll}
+          onclick={confirmPurgeJob}
           class="btn btn-secondary"
         >
-          Clear All
+          Clear Job
         </button>
       {/if}
+      <button
+        onclick={confirmPurgeAll}
+        disabled={runs.length === 0}
+        class="btn btn-secondary"
+      >
+        Clear All
+      </button>
     </div>
   </div>
 
