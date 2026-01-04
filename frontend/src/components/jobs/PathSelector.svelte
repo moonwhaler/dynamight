@@ -214,32 +214,41 @@
 {#if showBrowser}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
     onclick={(e) => e.target === e.currentTarget && closeBrowser()}
     onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
   >
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full h-[70vh] flex flex-col overflow-hidden">
       <!-- Header -->
-      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Browse Filesystem</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400 font-mono">{currentPath}</p>
+      <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+        <div class="min-w-0 flex-1">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Select Directories</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
-        <button onclick={closeBrowser} class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Close browser">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button
+          onclick={closeBrowser}
+          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-3"
+          aria-label="Close browser"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
 
       <!-- Navigation & Quick Actions -->
-      <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-2 items-center">
-        <button type="button" onclick={goUp} disabled={showingRoots || (allowedPaths.includes(currentPath) && allowedPaths.length === 1)} class="btn btn-secondary text-sm">
-          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-wrap gap-2 items-center flex-shrink-0">
+        <button
+          type="button"
+          onclick={goUp}
+          disabled={showingRoots || (allowedPaths.includes(currentPath) && allowedPaths.length === 1)}
+          class="btn btn-secondary text-sm inline-flex items-center"
+        >
+          <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
           </svg>
           Up
         </button>
@@ -247,16 +256,16 @@
           type="button"
           onclick={quickAddCurrentPath}
           disabled={isAlreadyAdded(currentPath)}
-          class="btn btn-secondary text-sm"
+          class="btn {isAlreadyAdded(currentPath) ? 'btn-secondary' : 'btn-primary'} text-sm inline-flex items-center"
           title={isAlreadyAdded(currentPath) ? 'Already added' : 'Add current directory'}
         >
           {#if isAlreadyAdded(currentPath)}
-            <svg class="w-4 h-4 mr-1 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+            <svg class="w-4 h-4 mr-1.5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
             </svg>
             Added
           {:else}
-            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
             Add This Directory
@@ -264,37 +273,42 @@
         </button>
         <div class="flex-1"></div>
         {#if selectableDirectories.length > 0}
-          <button type="button" onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline">
+          <button type="button" onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium px-2">
             Select all
           </button>
         {/if}
         {#if selectedInDialog.size > 0}
-          <button type="button" onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:underline">
+          <button type="button" onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-2">
             Clear ({selectedInDialog.size})
           </button>
         {/if}
       </div>
 
       <!-- Directory Listing -->
-      <div class="flex-1 overflow-auto p-2">
+      <div class="flex-1 min-h-0 overflow-y-auto p-3">
         {#if loading}
-          <div class="flex justify-center py-8">
+          <div class="flex items-center justify-center h-full">
             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           </div>
         {:else if entries.length === 0}
-          <p class="text-center text-gray-500 dark:text-gray-400 py-8">Empty directory</p>
+          <div class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+            <svg class="w-12 h-12 mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            <p>Empty directory</p>
+          </div>
         {:else}
-          <div class="space-y-1">
+          <div class="space-y-0.5">
             {#each entries as entry}
               {#if entry.is_dir}
                 {@const alreadyAdded = isAlreadyAdded(entry.path)}
                 {@const isSelected = selectedInDialog.has(entry.path)}
                 <div
-                  class="flex items-center gap-2 p-2 rounded transition-colors {alreadyAdded ? 'bg-green-50 dark:bg-green-900/20' : isSelected ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                  class="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors {alreadyAdded ? 'bg-green-50 dark:bg-green-900/20' : isSelected ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-700/50'}"
                 >
                   <!-- Checkbox for selection -->
                   {#if alreadyAdded}
-                    <div class="w-5 h-5 flex items-center justify-center" title="Already added">
+                    <div class="w-5 h-5 flex items-center justify-center flex-shrink-0" title="Already added">
                       <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
@@ -303,7 +317,7 @@
                     <button
                       type="button"
                       onclick={() => toggleSelection(entry.path)}
-                      class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors {isSelected ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600 hover:border-primary-500'}"
+                      class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors flex-shrink-0 {isSelected ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600 hover:border-primary-500'}"
                       aria-label={isSelected ? 'Deselect directory' : 'Select directory'}
                     >
                       {#if isSelected}
@@ -318,7 +332,7 @@
                   <button
                     type="button"
                     onclick={() => browse(entry.path)}
-                    class="flex-1 flex items-center gap-2 text-left min-w-0"
+                    class="flex-1 flex items-center gap-2.5 text-left min-w-0"
                   >
                     <svg class="w-5 h-5 flex-shrink-0 {alreadyAdded ? 'text-green-500' : 'text-yellow-500'}" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
@@ -331,7 +345,7 @@
                     <button
                       type="button"
                       onclick={() => toggleSelection(entry.path)}
-                      class="text-xs text-primary-600 dark:text-primary-400 hover:underline flex-shrink-0"
+                      class="text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex-shrink-0 px-2 py-1 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors"
                       title="Add to selection"
                     >
                       +Add
@@ -339,7 +353,7 @@
                   {/if}
                 </div>
               {:else}
-                <div class="flex items-center gap-2 p-2 text-gray-400 pl-9">
+                <div class="flex items-center gap-3 px-3 py-2.5 text-gray-400 dark:text-gray-500 ml-8">
                   <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
@@ -352,15 +366,15 @@
       </div>
 
       <!-- Footer with action buttons -->
-      <div class="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3">
-        <div class="text-sm text-gray-500 dark:text-gray-400">
+      <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center justify-between gap-4 flex-shrink-0">
+        <div class="text-sm text-gray-600 dark:text-gray-400">
           {#if newSelectionCount > 0}
-            <span class="font-medium text-primary-600 dark:text-primary-400">{newSelectionCount}</span> director{newSelectionCount === 1 ? 'y' : 'ies'} selected
+            <span class="font-semibold text-primary-600 dark:text-primary-400">{newSelectionCount}</span> director{newSelectionCount === 1 ? 'y' : 'ies'} selected
           {:else}
-            Select directories to add
+            <span class="text-gray-500 dark:text-gray-500">Select directories to add</span>
           {/if}
         </div>
-        <div class="flex gap-2">
+        <div class="flex gap-3">
           <button type="button" onclick={closeBrowser} class="btn btn-secondary">
             Cancel
           </button>
