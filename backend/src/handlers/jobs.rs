@@ -69,6 +69,15 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
+    // Validate at least one source directory
+    if req.source_dirs.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "At least one source directory must be specified"})),
+        )
+            .into_response();
+    }
+
     // Check for duplicate job name
     let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
         .bind(&req.name)
@@ -162,6 +171,17 @@ pub async fn update_job(
     }
 
     let existing = existing.unwrap();
+
+    // Validate source directories if provided
+    if let Some(ref source_dirs) = req.source_dirs {
+        if source_dirs.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "At least one source directory must be specified"})),
+            )
+                .into_response();
+        }
+    }
 
     // Check for duplicate job name (exclude current job)
     if let Some(ref new_name) = req.name {

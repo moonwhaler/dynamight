@@ -109,8 +109,15 @@
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
-    saving = true;
     error = null;
+
+    // Validate at least one source directory is selected
+    if (sourceDirs.length === 0) {
+      error = 'At least one source directory must be selected';
+      return;
+    }
+
+    saving = true;
 
     const jobData: CreateJobRequest = {
       name,
