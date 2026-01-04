@@ -79,24 +79,24 @@
 
   const variantStyles: Record<ToastVariant, { bg: string; icon: string; border: string }> = {
     error: {
-      bg: 'bg-red-50 dark:bg-red-900/30',
-      icon: 'text-red-500 dark:text-red-400',
-      border: 'border-red-200 dark:border-red-800',
+      bg: 'bg-red-100 dark:bg-red-900',
+      icon: 'text-red-600 dark:text-red-400',
+      border: 'border-red-300 dark:border-red-700',
     },
     success: {
-      bg: 'bg-green-50 dark:bg-green-900/30',
-      icon: 'text-green-500 dark:text-green-400',
-      border: 'border-green-200 dark:border-green-800',
+      bg: 'bg-green-100 dark:bg-green-900',
+      icon: 'text-green-600 dark:text-green-400',
+      border: 'border-green-300 dark:border-green-700',
     },
     warning: {
-      bg: 'bg-amber-50 dark:bg-amber-900/30',
-      icon: 'text-amber-500 dark:text-amber-400',
-      border: 'border-amber-200 dark:border-amber-800',
+      bg: 'bg-amber-100 dark:bg-amber-900',
+      icon: 'text-amber-600 dark:text-amber-400',
+      border: 'border-amber-300 dark:border-amber-700',
     },
     info: {
-      bg: 'bg-blue-50 dark:bg-blue-900/30',
-      icon: 'text-blue-500 dark:text-blue-400',
-      border: 'border-blue-200 dark:border-blue-800',
+      bg: 'bg-blue-100 dark:bg-blue-900',
+      icon: 'text-blue-600 dark:text-blue-400',
+      border: 'border-blue-300 dark:border-blue-700',
     },
   };
 
@@ -110,7 +110,7 @@
 
 {#if visible}
   <div
-    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-toast-in max-w-md w-[calc(100%-2rem)]"
+    class="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-toast-in max-w-md w-[calc(100%-2rem)]"
     role="alert"
     aria-live="assertive"
   >
@@ -161,7 +161,7 @@
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translate(-50%, 1rem);
+      transform: translate(-50%, -1rem);
     }
     to {
       opacity: 1;
