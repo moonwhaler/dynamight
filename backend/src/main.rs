@@ -120,6 +120,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/me", get(handlers::auth::me))
         .route("/auth/change-password", post(handlers::auth::change_password))
+        // TOTP / 2FA routes
+        .route("/auth/totp/setup", post(handlers::totp::setup))
+        .route("/auth/totp/enable", post(handlers::totp::enable))
+        .route("/auth/totp/disable", post(handlers::totp::disable))
+        .route("/auth/totp/status", get(handlers::totp::status))
+        .route("/auth/totp/validate", post(handlers::totp::validate))
+        .route("/auth/totp/recovery", post(handlers::totp::recovery))
         // Job routes
         .route("/jobs", get(handlers::jobs::list_jobs).post(handlers::jobs::create_job))
         .route("/jobs/:id", get(handlers::jobs::get_job).put(handlers::jobs::update_job).delete(handlers::jobs::delete_job))

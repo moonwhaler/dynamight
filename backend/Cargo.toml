@@ -22,6 +22,12 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 rand = "0.8"
 
+# TOTP / 2FA
+totp-rs = { version = "5", features = ["otpauth", "gen_secret"] }
+qrcode = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+
 # Scheduling
 cron = "0.12"
 

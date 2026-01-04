@@ -1,6 +1,37 @@
 export interface User {
   id: number;
   username: string;
+  totp_enabled: boolean;
+}
+
+// TOTP / 2FA types
+export interface TotpSetupResponse {
+  secret: string;
+  qr_code: string;
+  otpauth_url: string;
+}
+
+export interface TotpEnableResponse {
+  success: boolean;
+  recovery_codes: string[];
+}
+
+export interface TotpStatusResponse {
+  enabled: boolean;
+  recovery_codes_remaining: number;
+}
+
+export interface LoginResponse {
+  success?: boolean;
+  user?: User;
+  requires_totp?: boolean;
+  pending_session_id?: string;
+}
+
+export interface TotpRecoveryResponse {
+  success: boolean;
+  user: User;
+  codes_remaining: number;
 }
 
 export interface Job {

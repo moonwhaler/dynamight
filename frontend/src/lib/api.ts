@@ -9,6 +9,11 @@ import type {
   DirectoryEntry,
   CreateJobRequest,
   CreateScheduleRequest,
+  LoginResponse,
+  TotpSetupResponse,
+  TotpEnableResponse,
+  TotpStatusResponse,
+  TotpRecoveryResponse,
 } from './types';
 
 const API_BASE = '/api';
@@ -69,7 +74,7 @@ export const api = {
         body: JSON.stringify({ username, password }),
       }),
     login: (username: string, password: string) =>
-      request<{ success: boolean; user: User }>('/auth/login', {
+      request<LoginResponse>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       }),
@@ -82,6 +87,29 @@ export const api = {
           current_password: currentPassword,
           new_password: newPassword,
         }),
+      }),
+    // TOTP / 2FA methods
+    totpSetup: () => request<TotpSetupResponse>('/auth/totp/setup', { method: 'POST' }),
+    totpEnable: (code: string, secret: string) =>
+      request<TotpEnableResponse>('/auth/totp/enable', {
+        method: 'POST',
+        body: JSON.stringify({ code, secret }),
+      }),
+    totpDisable: (password: string) =>
+      request<{ success: boolean }>('/auth/totp/disable', {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+      }),
+    totpStatus: () => request<TotpStatusResponse>('/auth/totp/status'),
+    totpValidate: (pendingSessionId: string, code: string) =>
+      request<LoginResponse>('/auth/totp/validate', {
+        method: 'POST',
+        body: JSON.stringify({ pending_session_id: pendingSessionId, code }),
+      }),
+    totpRecovery: (pendingSessionId: string, recoveryCode: string) =>
+      request<TotpRecoveryResponse>('/auth/totp/recovery', {
+        method: 'POST',
+        body: JSON.stringify({ pending_session_id: pendingSessionId, recovery_code: recoveryCode }),
       }),
   },
 

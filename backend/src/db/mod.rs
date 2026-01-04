@@ -34,6 +34,45 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await;
 
+    // TOTP / 2FA migrations
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT NULL")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    // Pending TOTP sessions for 2FA login flow
+    let _ = sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS pending_totp_sessions (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await;
+
+    // Recovery codes for 2FA backup authentication
+    let _ = sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS recovery_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            code_hash TEXT NOT NULL,
+            used_at DATETIME DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await;
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }

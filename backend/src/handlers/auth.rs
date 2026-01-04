@@ -4,6 +4,7 @@ use axum::{
     response::{AppendHeaders, IntoResponse},
     Json,
 };
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -52,7 +53,37 @@ pub async fn login(
             .into_response();
     }
 
-    // Generate token
+    // Check if 2FA is enabled
+    if user.totp_enabled {
+        // Create pending TOTP session
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let expires_at = Utc::now() + Duration::minutes(5);
+
+        let result = sqlx::query(
+            "INSERT INTO pending_totp_sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
+        )
+        .bind(&session_id)
+        .bind(user.id)
+        .bind(expires_at)
+        .execute(&state.db)
+        .await;
+
+        if result.is_err() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to create 2FA session"})),
+            )
+                .into_response();
+        }
+
+        return Json(json!({
+            "requires_totp": true,
+            "pending_session_id": session_id
+        }))
+        .into_response();
+    }
+
+    // Generate token (no 2FA required)
     let token = match state.auth_service.generate_token(user.id) {
         Ok(t) => t,
         Err(_) => {

@@ -1,11 +1,21 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import PasswordStrength from './PasswordStrength.svelte';
+  import TotpSetup from './TotpSetup.svelte';
+  import type { TotpStatusResponse } from '../lib/types';
 
   let { open = $bindable(false) } = $props();
 
-  type Tab = 'account' | 'logs';
+  type Tab = 'account' | 'security' | 'logs';
   let activeTab = $state<Tab>('account');
+
+  // 2FA state
+  let totpStatus = $state<TotpStatusResponse | null>(null);
+  let totpLoading = $state(false);
+  let totpError = $state('');
+  let disablePassword = $state('');
+  let disableLoading = $state(false);
+  let disableError = $state('');
 
   // Password change state
   let currentPassword = $state('');
@@ -62,9 +72,39 @@
     }
   }
 
+  async function loadTotpStatus() {
+    totpLoading = true;
+    totpError = '';
+    try {
+      totpStatus = await api.auth.totpStatus();
+    } catch (err) {
+      totpError = err instanceof Error ? err.message : 'Failed to load 2FA status';
+    }
+    totpLoading = false;
+  }
+
+  async function handleDisable2FA(e: Event) {
+    e.preventDefault();
+    disableError = '';
+    disableLoading = true;
+    try {
+      await api.auth.totpDisable(disablePassword);
+      totpStatus = { enabled: false, recovery_codes_remaining: 0 };
+      disablePassword = '';
+    } catch (err) {
+      disableError = err instanceof Error ? err.message : 'Failed to disable 2FA';
+    }
+    disableLoading = false;
+  }
+
+  function handleTotpEnabled() {
+    loadTotpStatus();
+  }
+
   $effect(() => {
     if (open) {
       loadSettings();
+      loadTotpStatus();
     }
   });
 
@@ -131,6 +171,10 @@
     if (tab === 'account') {
       resetPasswordForm();
     }
+    if (tab === 'security') {
+      disablePassword = '';
+      disableError = '';
+    }
     logsError = '';
     logsSaved = false;
   }
@@ -147,6 +191,12 @@
       label: 'Account',
       description: 'Manage your password',
       icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'
+    },
+    {
+      id: 'security' as Tab,
+      label: 'Security',
+      description: 'Two-factor authentication',
+      icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'
     },
     {
       id: 'logs' as Tab,
@@ -334,6 +384,129 @@
                       </button>
                     </div>
                   </form>
+                </div>
+              {/if}
+
+            {:else if activeTab === 'security'}
+              <!-- Security Tab -->
+              <div class="mb-10">
+                <h3 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Two-Factor Authentication</h3>
+                <p class="text-gray-500 dark:text-gray-400 text-lg">Add an extra layer of security to your account with 2FA.</p>
+              </div>
+
+              {#if totpLoading}
+                <div class="flex items-center justify-center py-16">
+                  <svg class="animate-spin h-8 w-8 text-primary-600" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </div>
+              {:else if totpError}
+                <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-5 py-4 rounded-xl">
+                  {totpError}
+                </div>
+              {:else if totpStatus?.enabled}
+                <!-- 2FA is enabled - show status and disable option -->
+                <div class="grid gap-6 lg:grid-cols-2">
+                  <!-- Status card -->
+                  <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 md:p-8">
+                    <div class="flex items-center gap-4 mb-6">
+                      <div class="w-12 h-12 bg-green-100 dark:bg-green-900/40 rounded-xl flex items-center justify-center">
+                        <svg class="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 class="font-semibold text-gray-900 dark:text-white">2FA Status</h4>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">Your account is protected</p>
+                      </div>
+                    </div>
+
+                    <div class="space-y-4">
+                      <div class="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-700">
+                        <span class="text-gray-600 dark:text-gray-400">Status</span>
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">
+                          Enabled
+                        </span>
+                      </div>
+                      <div class="flex items-center justify-between py-3">
+                        <span class="text-gray-600 dark:text-gray-400">Recovery Codes</span>
+                        <span class="font-medium text-gray-900 dark:text-white">
+                          {totpStatus.recovery_codes_remaining} remaining
+                        </span>
+                      </div>
+                    </div>
+
+                    {#if totpStatus.recovery_codes_remaining < 3}
+                      <div class="mt-4 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
+                        <p class="text-sm text-amber-800 dark:text-amber-300">
+                          <strong>Warning:</strong> You're running low on recovery codes. Consider disabling and re-enabling 2FA to generate new codes.
+                        </p>
+                      </div>
+                    {/if}
+                  </div>
+
+                  <!-- Disable card -->
+                  <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col">
+                    <div class="p-6 md:p-8 flex-1">
+                      <div class="flex items-center gap-4 mb-6">
+                        <div class="w-12 h-12 bg-red-100 dark:bg-red-900/40 rounded-xl flex items-center justify-center">
+                          <svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h4 class="font-semibold text-gray-900 dark:text-white">Disable 2FA</h4>
+                          <p class="text-sm text-gray-500 dark:text-gray-400">Remove two-factor authentication</p>
+                        </div>
+                      </div>
+
+                      {#if disableError}
+                        <div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
+                          {disableError}
+                        </div>
+                      {/if}
+
+                      <form onsubmit={handleDisable2FA}>
+                        <div>
+                          <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Confirm your password
+                          </label>
+                          <input
+                            id="disable-password"
+                            type="password"
+                            bind:value={disablePassword}
+                            class="input"
+                            placeholder="Enter your password"
+                            autocomplete="current-password"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={disableLoading || !disablePassword}
+                          class="mt-4 btn btn-danger w-full py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {#if disableLoading}
+                            <span class="flex items-center justify-center gap-2">
+                              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              Disabling...
+                            </span>
+                          {:else}
+                            Disable Two-Factor Authentication
+                          {/if}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              {:else}
+                <!-- 2FA is not enabled - show setup -->
+                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 md:p-8">
+                  <TotpSetup onEnabled={handleTotpEnabled} />
                 </div>
               {/if}
 
