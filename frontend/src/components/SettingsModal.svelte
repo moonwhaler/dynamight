@@ -250,21 +250,21 @@
       <div class="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
         <!-- Sidebar Navigation (Desktop) / Top Tabs (Mobile) -->
         <nav class="md:w-56 lg:w-64 md:border-r border-b md:border-b-0 border-gray-200 dark:border-gray-700 flex-shrink-0 bg-gray-50/50 dark:bg-gray-900/30">
-          <!-- Mobile: Horizontal tabs -->
-          <div class="flex md:hidden p-2 gap-1">
+          <!-- Mobile: Horizontal scrollable tabs -->
+          <div class="flex md:hidden p-2 gap-1.5 overflow-x-auto scroll-smooth snap-x snap-mandatory scrollbar-hide">
             {#each tabs as tab}
               <button
                 onclick={() => switchTab(tab.id)}
-                class="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all {activeTab === tab.id
+                class="flex-shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all snap-start {activeTab === tab.id
                   ? 'bg-white dark:bg-gray-700 text-primary-600 dark:text-primary-400 shadow-sm'
                   : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-700/50'}"
                 aria-selected={activeTab === tab.id}
                 role="tab"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={tab.icon} />
                 </svg>
-                {tab.label}
+                <span class="whitespace-nowrap">{tab.label}</span>
               </button>
             {/each}
           </div>
