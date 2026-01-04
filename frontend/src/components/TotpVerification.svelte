@@ -120,7 +120,7 @@
         <button
           type="submit"
           disabled={loading || (useRecoveryCode ? recoveryCode.length < 10 : code.length !== 6)}
-          class="btn btn-primary w-full py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="btn btn-lg btn-primary w-full"
         >
           {#if loading}
             <span class="flex items-center justify-center gap-2">

@@ -230,7 +230,7 @@
         </span>
       </label>
 
-      <button onclick={finishSetup} disabled={!confirmedSaved} class="btn btn-primary w-full py-2 mt-4 disabled:opacity-50">
+      <button onclick={finishSetup} disabled={!confirmedSaved} class="btn btn-primary w-full mt-4">
         Complete Setup
       </button>
     </div>

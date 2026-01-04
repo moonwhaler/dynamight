@@ -299,14 +299,14 @@
         {#if selectedJobId}
           <button
             onclick={confirmPurgeJob}
-            class="btn btn-secondary text-sm"
+            class="btn btn-secondary"
           >
             Clear Job
           </button>
         {/if}
         <button
           onclick={confirmPurgeAll}
-          class="btn btn-secondary text-sm"
+          class="btn btn-secondary"
         >
           Clear All
         </button>
@@ -478,7 +478,7 @@
           {#if activeFilterCount > 0}
             <button
               onclick={clearAllFilters}
-              class="btn btn-secondary w-full text-sm"
+              class="btn btn-sm btn-secondary w-full"
             >
               Clear all filters
             </button>
@@ -665,7 +665,7 @@
         </button>
         <button
           onclick={executePurge}
-          class="btn bg-red-600 text-white hover:bg-red-700"
+          class="btn btn-danger"
           disabled={purging}
         >
           {#if purging}

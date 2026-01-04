@@ -130,7 +130,7 @@
     <button
       onclick={handleRun}
       disabled={running || !job.enabled}
-      class="btn btn-secondary text-sm py-1 px-3"
+      class="btn btn-sm btn-secondary"
       title={!job.enabled ? 'Enable job to run' : 'Start backup job'}
     >
       {running ? 'Starting...' : 'Run'}

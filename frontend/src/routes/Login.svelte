@@ -71,7 +71,7 @@
           </div>
         </div>
 
-        <button type="submit" disabled={loading} class="w-full btn btn-primary py-3">
+        <button type="submit" disabled={loading} class="w-full btn btn-lg btn-primary">
           {#if loading}
             <span class="flex items-center justify-center gap-2">
               <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">

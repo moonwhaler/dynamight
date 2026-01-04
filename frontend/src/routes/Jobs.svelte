@@ -276,7 +276,7 @@
             {#if activeFilterCount > 0}
               <button
                 onclick={clearAllFilters}
-                class="btn btn-secondary w-full text-sm"
+                class="btn btn-sm btn-secondary w-full"
               >
                 Clear all filters
               </button>
