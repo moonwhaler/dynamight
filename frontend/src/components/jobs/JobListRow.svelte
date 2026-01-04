@@ -2,6 +2,7 @@
   import type { Job } from '../../lib/types';
   import { api } from '../../lib/api';
   import { jobsStore } from '../../lib/stores/jobs';
+  import { preferencesStore } from '../../lib/stores/preferences';
   import RunLogModal from '../logs/RunLogModal.svelte';
 
   let { job }: { job: Job } = $props();
@@ -50,7 +51,9 @@
     running = true;
     try {
       const result = await api.jobs.run(job.id);
-      activeRunId = result.runId;
+      if ($preferencesStore.showLogViewerAfterManualRun) {
+        activeRunId = result.runId;
+      }
     } catch {
       // Ignore
     } finally {

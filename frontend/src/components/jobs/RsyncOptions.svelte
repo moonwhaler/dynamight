@@ -127,7 +127,7 @@
       Output Verbosity
       <HelpTooltip text="Controls how much information rsync outputs during backup. Quiet mode only shows errors. Normal shows files transferred and summary statistics. Verbose adds per-file progress bars and transfer speeds." />
     </label>
-    <select id="verbosity" bind:value={verbosity} class="input mt-1 w-48">
+    <select id="verbosity" bind:value={verbosity} class="input mt-1 w-64">
       <option value="quiet">Quiet (errors only)</option>
       <option value="normal">Normal (files + stats)</option>
       <option value="verbose">Verbose (full progress)</option>

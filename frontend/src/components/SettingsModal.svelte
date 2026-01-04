@@ -3,11 +3,12 @@
   import PasswordStrength from './PasswordStrength.svelte';
   import TotpSetup from './TotpSetup.svelte';
   import type { TotpStatusResponse } from '../lib/types';
+  import { preferencesStore } from '../lib/stores/preferences';
 
   let { open = $bindable(false) } = $props();
 
-  type Tab = 'account' | 'security' | 'logs';
-  let activeTab = $state<Tab>('account');
+  type Tab = 'general' | 'account' | 'security' | 'logs';
+  let activeTab = $state<Tab>('general');
 
   // 2FA state
   let totpStatus = $state<TotpStatusResponse | null>(null);
@@ -43,7 +44,7 @@
 
   function close() {
     open = false;
-    activeTab = 'account';
+    activeTab = 'general';
     resetPasswordForm();
     logsError = '';
     logsSaved = false;
@@ -187,6 +188,12 @@
 
   const tabs = [
     {
+      id: 'general' as Tab,
+      label: 'General',
+      description: 'App preferences',
+      icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z'
+    },
+    {
       id: 'account' as Tab,
       label: 'Account',
       description: 'Manage your password',
@@ -289,7 +296,38 @@
         <!-- Content Panel - scrollable -->
         <div class="flex-1 overflow-y-auto">
           <div class="p-6 md:p-8 max-w-2xl">
-            {#if activeTab === 'account'}
+            {#if activeTab === 'general'}
+              <!-- General Tab -->
+              <div class="mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">General Preferences</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Customize your application experience.</p>
+              </div>
+
+              <div class="space-y-4">
+                <!-- Job Execution Section -->
+                <div class="space-y-3">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Job Execution</h4>
+
+                  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+                    <div class="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={$preferencesStore.showLogViewerAfterManualRun}
+                        onchange={(e) => preferencesStore.setShowLogViewerAfterManualRun(e.currentTarget.checked)}
+                        class="peer sr-only"
+                      />
+                      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+                      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium text-gray-900 dark:text-white text-sm">Show log viewer after manual runs</div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Automatically open the log viewer dialog when you manually start a backup job.</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+            {:else if activeTab === 'account'}
               <!-- Account Tab -->
               {#if passwordSuccess}
                 <div class="flex flex-col items-center justify-center py-12">

@@ -3,6 +3,7 @@
   import { push } from 'svelte-spa-router';
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
+  import { preferencesStore } from '../lib/stores/preferences';
   import type { Job, Schedule, UsbDrive, CreateJobRequest } from '../lib/types';
   import RsyncOptions from '../components/jobs/RsyncOptions.svelte';
   import SchedulePicker from '../components/jobs/SchedulePicker.svelte';
@@ -172,7 +173,9 @@
     error = null;
     try {
       const result = await api.jobs.run(parseInt(params.id!));
-      activeRunId = result.runId;
+      if ($preferencesStore.showLogViewerAfterManualRun) {
+        activeRunId = result.runId;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to start job';
     } finally {
