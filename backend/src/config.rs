@@ -11,6 +11,7 @@ pub struct Config {
     pub static_files_dir: String,
     pub max_runs_per_job: Option<u32>,
     pub allowed_browse_paths: Vec<String>,
+    pub cors_origins: Option<Vec<String>>,
 }
 
 impl Config {
@@ -53,6 +54,12 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            cors_origins: env::var("CORS_ORIGINS").ok().map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            }),
         }
     }
 

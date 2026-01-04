@@ -15,6 +15,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use axum::http::{header, HeaderValue, Method};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -29,6 +30,42 @@ pub struct AppState {
     pub backup_service: Arc<BackupService>,
     pub mount_service: MountService,
     pub log_tx: broadcast::Sender<models::LogMessage>,
+}
+
+/// Build a CORS layer based on configuration.
+/// If CORS_ORIGINS is not set, only same-origin requests are allowed (most secure).
+/// If CORS_ORIGINS is set, those specific origins are allowed.
+fn build_cors_layer(config: &Config) -> CorsLayer {
+    let cors = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::COOKIE,
+        ])
+        .allow_credentials(true);
+
+    match &config.cors_origins {
+        Some(origins) if !origins.is_empty() => {
+            // Explicit origins configured
+            let origins: Vec<HeaderValue> = origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            cors.allow_origin(origins)
+        }
+        _ => {
+            // No origins configured = same-origin only (default, most secure)
+            // This works because we serve frontend from the same origin
+            cors
+        }
+    }
 }
 
 #[tokio::main]
@@ -179,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api", api_routes)
         .fallback_service(ServeDir::new(&config.static_files_dir))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(build_cors_layer(&config))
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
