@@ -132,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/:id", get(handlers::jobs::get_job).put(handlers::jobs::update_job).delete(handlers::jobs::delete_job))
         .route("/jobs/:id/run", post(handlers::jobs::run_job))
         .route("/jobs/:id/cancel", post(handlers::jobs::cancel_job))
+        .route("/jobs/:id/clone", post(handlers::jobs::clone_job))
         // Schedule routes
         .route("/jobs/:id/schedules", get(handlers::schedules::list_schedules).post(handlers::schedules::create_schedule))
         .route("/schedules/:id", put(handlers::schedules::update_schedule).delete(handlers::schedules::delete_schedule))

@@ -135,6 +135,8 @@ export const api = {
         `/jobs/${id}/cancel`,
         { method: 'POST' }
       ),
+    clone: (id: number) =>
+      request<Job>(`/jobs/${id}/clone`, { method: 'POST' }),
   },
 
   schedules: {

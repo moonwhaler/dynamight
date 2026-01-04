@@ -69,6 +69,21 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
+    // Check for duplicate job name
+    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
+        .bind(&req.name)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    if existing.is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "A job with this name already exists"})),
+        )
+            .into_response();
+    }
+
     let source_dirs_json = serde_json::to_string(&req.source_dirs).unwrap_or_default();
     let excludes_json = req
         .rsync_excludes
@@ -147,6 +162,25 @@ pub async fn update_job(
     }
 
     let existing = existing.unwrap();
+
+    // Check for duplicate job name (exclude current job)
+    if let Some(ref new_name) = req.name {
+        let duplicate: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM jobs WHERE name = ? AND id != ?")
+                .bind(new_name)
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .unwrap_or(None);
+
+        if duplicate.is_some() {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error": "A job with this name already exists"})),
+            )
+                .into_response();
+        }
+    }
 
     // Build update with coalesced values
     let name = req.name.unwrap_or(existing.name);
@@ -418,5 +452,120 @@ pub async fn cancel_job(
                 Json(json!({"error": "No running job found"})),
             )
         },
+    }
+}
+
+pub async fn clone_job(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    // Fetch the job to clone
+    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    let job = match job {
+        Some(j) => j,
+        None => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response()
+        }
+    };
+
+    // Generate a unique clone name
+    let base_name = job.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ')' || c == '(' || c == ' ');
+    let base_name = base_name.trim_end_matches(" (clone");
+    let clone_name = generate_unique_clone_name(&state.db, base_name).await;
+
+    // Insert the cloned job
+    let result = sqlx::query(
+        r#"
+        INSERT INTO jobs (
+            name, description, enabled,
+            usb_uuid, mount_point, auto_mount, auto_unmount,
+            source_dirs, backup_subdir,
+            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&clone_name)
+    .bind(&job.description)
+    .bind(job.enabled)
+    .bind(&job.usb_uuid)
+    .bind(&job.mount_point)
+    .bind(job.auto_mount)
+    .bind(job.auto_unmount)
+    .bind(&job.source_dirs)
+    .bind(&job.backup_subdir)
+    .bind(job.sync_deletes)
+    .bind(&job.rsync_excludes)
+    .bind(job.checksum_mode)
+    .bind(job.compress)
+    .bind(job.dry_run)
+    .bind(job.bandwidth_limit)
+    .bind(&job.verbosity)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(r) => {
+            let new_id = r.last_insert_rowid();
+            let new_job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
+                .bind(new_id)
+                .fetch_optional(&state.db)
+                .await
+                .unwrap_or(None);
+
+            match new_job {
+                Some(j) => (StatusCode::CREATED, Json(JobResponse::from(j))).into_response(),
+                None => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "Failed to fetch cloned job"})),
+                )
+                    .into_response(),
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to clone job: {}", e)})),
+        )
+            .into_response(),
+    }
+}
+
+async fn generate_unique_clone_name(db: &sqlx::SqlitePool, base_name: &str) -> String {
+    let first_attempt = format!("{} (clone)", base_name);
+
+    // Check if the simple "(clone)" name is available
+    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
+        .bind(&first_attempt)
+        .fetch_optional(db)
+        .await
+        .unwrap_or(None);
+
+    if exists.is_none() {
+        return first_attempt;
+    }
+
+    // Find the next available number
+    let mut counter = 2;
+    loop {
+        let candidate = format!("{} (clone {})", base_name, counter);
+        let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
+            .bind(&candidate)
+            .fetch_optional(db)
+            .await
+            .unwrap_or(None);
+
+        if exists.is_none() {
+            return candidate;
+        }
+        counter += 1;
+
+        // Safety limit
+        if counter > 100 {
+            return format!("{} (clone {})", base_name, chrono::Utc::now().timestamp());
+        }
     }
 }

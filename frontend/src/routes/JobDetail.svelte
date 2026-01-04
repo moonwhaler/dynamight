@@ -22,6 +22,7 @@
   let loadedJobId = $state<string | null>(null);
   let activeRunId = $state<number | null>(null);
   let running = $state(false);
+  let cloning = $state(false);
 
   // Form state
   let name = $state('');
@@ -182,6 +183,21 @@
   function closeRunModal() {
     activeRunId = null;
   }
+
+  async function handleClone() {
+    if (cloning) return;
+    cloning = true;
+    error = null;
+    try {
+      const clonedJob = await api.jobs.clone(parseInt(params.id!));
+      jobsStore.addJob(clonedJob);
+      push(`/jobs/${clonedJob.id}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to clone job';
+    } finally {
+      cloning = false;
+    }
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -193,6 +209,9 @@
       <div class="flex gap-2">
         <button onclick={handleRun} disabled={running} class="btn btn-secondary flex-1 sm:flex-none">
           {running ? 'Starting...' : 'Run Now'}
+        </button>
+        <button onclick={handleClone} disabled={cloning} class="btn btn-secondary flex-1 sm:flex-none">
+          {cloning ? 'Cloning...' : 'Clone'}
         </button>
         <button onclick={handleDelete} class="btn btn-danger flex-1 sm:flex-none">Delete</button>
       </div>
