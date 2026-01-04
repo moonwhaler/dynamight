@@ -111,6 +111,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ pending_session_id: pendingSessionId, recovery_code: recoveryCode }),
       }),
+    // Get current JWT token for WebSocket authentication
+    getToken: () => request<{ token: string }>('/auth/token'),
   },
 
   jobs: {

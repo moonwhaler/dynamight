@@ -1,10 +1,13 @@
 mod config;
 mod db;
+mod extractors;
 mod handlers;
+mod middleware;
 mod models;
 mod services;
 
 use axum::{
+    middleware as axum_middleware,
     routing::{delete, get, post, put},
     Router,
 };
@@ -111,22 +114,29 @@ async fn main() -> anyhow::Result<()> {
         scheduler.start().await;
     });
 
-    // Build router
-    let api_routes = Router::new()
-        // Auth routes
+    // Build router - split into public and protected routes
+
+    // Public routes (no authentication required)
+    let public_routes = Router::new()
         .route("/auth/setup-required", get(handlers::auth::setup_required))
         .route("/auth/setup", post(handlers::auth::setup))
         .route("/auth/login", post(handlers::auth::login))
+        .route("/auth/totp/validate", post(handlers::totp::validate))
+        .route("/auth/totp/recovery", post(handlers::totp::recovery))
+        .route("/system/health", get(handlers::system::health));
+
+    // Protected routes (authentication required)
+    let protected_routes = Router::new()
+        // Auth routes (protected)
         .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/me", get(handlers::auth::me))
+        .route("/auth/token", get(handlers::auth::get_token))
         .route("/auth/change-password", post(handlers::auth::change_password))
-        // TOTP / 2FA routes
+        // TOTP / 2FA routes (protected)
         .route("/auth/totp/setup", post(handlers::totp::setup))
         .route("/auth/totp/enable", post(handlers::totp::enable))
         .route("/auth/totp/disable", post(handlers::totp::disable))
         .route("/auth/totp/status", get(handlers::totp::status))
-        .route("/auth/totp/validate", post(handlers::totp::validate))
-        .route("/auth/totp/recovery", post(handlers::totp::recovery))
         // Job routes
         .route("/jobs", get(handlers::jobs::list_jobs).post(handlers::jobs::create_job))
         .route("/jobs/:id", get(handlers::jobs::get_job).put(handlers::jobs::update_job).delete(handlers::jobs::delete_job))
@@ -148,12 +158,20 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/unmount", post(handlers::system::unmount_drive))
         .route("/system/browse", get(handlers::system::browse_path))
         .route("/system/mkdir", post(handlers::system::create_directory))
-        .route("/system/health", get(handlers::system::health))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
-        // WebSocket
+        // Apply auth middleware to all protected routes
+        .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::require_auth));
+
+    // WebSocket routes (handle their own auth via query param token)
+    let ws_routes = Router::new()
         .route("/ws/logs/:run_id", get(handlers::websocket::ws_logs_handler))
         .route("/ws/status", get(handlers::websocket::ws_status_handler));
+
+    let api_routes = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
+        .merge(ws_routes);
 
     let app = Router::new()
         .nest("/api", api_routes)

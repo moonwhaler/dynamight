@@ -1,21 +1,46 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
+    http::StatusCode,
     response::Response,
+    Json,
 };
 use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
+use serde_json::json;
 use std::sync::Arc;
 
 use crate::AppState;
 
+#[derive(Deserialize)]
+pub struct WsAuthQuery {
+    token: Option<String>,
+}
+
 pub async fn ws_logs_handler(
     ws: WebSocketUpgrade,
     Path(run_id): Path<i64>,
+    Query(query): Query<WsAuthQuery>,
     State(state): State<Arc<AppState>>,
-) -> Response {
-    ws.on_upgrade(move |socket| handle_logs_socket(socket, run_id, state))
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    // Validate token from query parameter
+    let token = query.token.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Missing token parameter"})),
+        )
+    })?;
+
+    state.auth_service.validate_token(&token).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid or expired token"})),
+        )
+    })?;
+
+    Ok(ws.on_upgrade(move |socket| handle_logs_socket(socket, run_id, state)))
 }
 
 async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>) {
@@ -60,9 +85,25 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
 
 pub async fn ws_status_handler(
     ws: WebSocketUpgrade,
+    Query(query): Query<WsAuthQuery>,
     State(state): State<Arc<AppState>>,
-) -> Response {
-    ws.on_upgrade(move |socket| handle_status_socket(socket, state))
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    // Validate token from query parameter
+    let token = query.token.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Missing token parameter"})),
+        )
+    })?;
+
+    state.auth_service.validate_token(&token).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid or expired token"})),
+        )
+    })?;
+
+    Ok(ws.on_upgrade(move |socket| handle_status_socket(socket, state)))
 }
 
 async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {

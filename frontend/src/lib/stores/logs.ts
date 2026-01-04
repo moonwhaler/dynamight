@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { LogEntry } from '../types';
+import { api } from '../api';
 
 interface LogMessage {
   run_id: number;
@@ -17,7 +18,7 @@ function createLogStore() {
   return {
     subscribe,
 
-    connect(runId: number) {
+    async connect(runId: number) {
       if (ws) {
         ws.close();
       }
@@ -25,9 +26,19 @@ function createLogStore() {
       currentRunId = runId;
       set([]);
 
+      // Get token for WebSocket authentication
+      let token: string;
+      try {
+        const response = await api.auth.getToken();
+        token = response.token;
+      } catch {
+        console.error('Failed to get token for WebSocket');
+        return;
+      }
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}`);
+      ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}?token=${encodeURIComponent(token)}`);
 
       ws.onmessage = (event) => {
         try {
@@ -90,12 +101,22 @@ function createStatusStore() {
   return {
     subscribe,
 
-    connect() {
+    async connect() {
       if (ws) return;
+
+      // Get token for WebSocket authentication
+      let token: string;
+      try {
+        const response = await api.auth.getToken();
+        token = response.token;
+      } catch {
+        console.error('Failed to get token for WebSocket');
+        return;
+      }
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      ws = new WebSocket(`${protocol}//${host}/api/ws/status`);
+      ws = new WebSocket(`${protocol}//${host}/api/ws/status?token=${encodeURIComponent(token)}`);
 
       ws.onmessage = (event) => {
         try {

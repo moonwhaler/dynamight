@@ -268,6 +268,33 @@ pub async fn setup_required(State(state): State<Arc<AppState>>) -> impl IntoResp
     }))
 }
 
+/// GET /auth/token - Return the current JWT token for WebSocket authentication
+pub async fn get_token(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    // Extract token from cookie
+    let token = headers
+        .get("Cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|c| {
+                let mut parts = c.trim().splitn(2, '=');
+                if parts.next() == Some("token") {
+                    parts.next().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+        });
+
+    match token {
+        Some(t) => Json(json!({"token": t})).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Not authenticated"})),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn setup(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SetupRequest>,
