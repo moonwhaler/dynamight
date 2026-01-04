@@ -8,6 +8,7 @@ pub struct Config {
     pub port: u16,
     pub static_files_dir: String,
     pub max_runs_per_job: Option<u32>,
+    pub allowed_browse_paths: Vec<String>,
 }
 
 impl Config {
@@ -29,6 +30,12 @@ impl Config {
             max_runs_per_job: env::var("MAX_RUNS_PER_JOB")
                 .ok()
                 .and_then(|v| v.parse().ok()),
+            allowed_browse_paths: env::var("ALLOWED_BROWSE_PATHS")
+                .unwrap_or_else(|_| "/mnt,/home,/media".to_string())
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         }
     }
 }

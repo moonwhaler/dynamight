@@ -158,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/unmount", post(handlers::system::unmount_drive))
         .route("/system/browse", get(handlers::system::browse_path))
         .route("/system/mkdir", post(handlers::system::create_directory))
+        .route("/system/allowed-paths", get(handlers::system::allowed_paths))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
         // Apply auth middleware to all protected routes

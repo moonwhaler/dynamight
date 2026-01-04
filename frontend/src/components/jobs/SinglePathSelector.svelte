@@ -9,6 +9,8 @@
   let entries = $state<DirectoryEntry[]>([]);
   let loading = $state(false);
   let browseError = $state<string | null>(null);
+  let allowedPaths = $state<string[]>([]);
+  let showingRoots = $state(false);
 
   // New folder creation state
   let creatingFolder = $state(false);
@@ -21,22 +23,32 @@
     browseError = null;
     creatingFolder = false;
     newFolderName = '';
+    showingRoots = false;
     try {
       const result = await api.system.browse(targetPath);
       currentPath = result.path;
       entries = result.entries;
     } catch {
-      // Path doesn't exist - try parent
-      const parent = targetPath.split('/').slice(0, -1).join('/') || '/';
-      if (parent !== targetPath) {
+      // Path doesn't exist or not allowed - try to show allowed roots
+      if (allowedPaths.length > 1) {
+        showingRoots = true;
+        currentPath = '/';
+        entries = allowedPaths.map(p => ({
+          name: p,
+          path: p,
+          is_dir: true,
+        }));
+        browseError = `"${targetPath}" is not accessible. Select an allowed path below.`;
+      } else if (allowedPaths.length === 1) {
+        // Try the single allowed path
         try {
-          const result = await api.system.browse(parent);
+          const result = await api.system.browse(allowedPaths[0]);
           currentPath = result.path;
           entries = result.entries;
-          browseError = `"${targetPath}" doesn't exist. Showing parent directory.`;
+          browseError = `"${targetPath}" is not accessible. Showing ${allowedPaths[0]}.`;
         } catch {
           entries = [];
-          browseError = 'Cannot access this path';
+          browseError = 'Cannot access any allowed paths';
         }
       } else {
         entries = [];
@@ -47,13 +59,45 @@
     }
   }
 
-  function openBrowser() {
+  async function openBrowser() {
     showBrowser = true;
     browseError = null;
     createError = null;
-    // Start from the current path value, or root if empty
-    const startPath = path.trim() || '/';
-    browse(startPath);
+    loading = true;
+
+    try {
+      // Fetch allowed paths first
+      const result = await api.system.allowedPaths();
+      allowedPaths = result.paths;
+
+      // Start from the current path value if it's set and valid
+      const startPath = path.trim();
+      if (startPath && allowedPaths.some(allowed => startPath.startsWith(allowed))) {
+        await browse(startPath);
+      } else if (allowedPaths.length === 1) {
+        // Only one allowed path, go directly to it
+        await browse(allowedPaths[0]);
+      } else if (allowedPaths.length > 1) {
+        // Multiple allowed paths, show them as selectable roots
+        showingRoots = true;
+        currentPath = '/';
+        entries = allowedPaths.map(p => ({
+          name: p,
+          path: p,
+          is_dir: true,
+        }));
+        loading = false;
+      } else {
+        // No allowed paths configured
+        entries = [];
+        browseError = 'No browseable paths configured';
+        loading = false;
+      }
+    } catch {
+      entries = [];
+      browseError = 'Failed to load allowed paths';
+      loading = false;
+    }
   }
 
   function closeBrowser() {
@@ -70,8 +114,41 @@
   }
 
   function goUp() {
-    const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
-    browse(parent);
+    // Check if we're at an allowed root path
+    const isAtRoot = allowedPaths.includes(currentPath);
+
+    if (isAtRoot && allowedPaths.length > 1) {
+      // Go back to showing root options
+      showingRoots = true;
+      currentPath = '/';
+      entries = allowedPaths.map(p => ({
+        name: p,
+        path: p,
+        is_dir: true,
+      }));
+      browseError = null;
+    } else if (isAtRoot) {
+      // Only one allowed path, can't go higher
+      return;
+    } else {
+      // Navigate to parent directory
+      const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+      // Check if parent is still within allowed paths
+      const isParentAllowed = allowedPaths.some(allowed => parent.startsWith(allowed) || parent === allowed);
+      if (isParentAllowed) {
+        browse(parent);
+      } else if (allowedPaths.length > 1) {
+        // Go back to showing root options
+        showingRoots = true;
+        currentPath = '/';
+        entries = allowedPaths.map(p => ({
+          name: p,
+          path: p,
+          is_dir: true,
+        }));
+        browseError = null;
+      }
+    }
   }
 
   function startCreatingFolder() {
@@ -178,19 +255,19 @@
       {/if}
 
       <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex gap-2">
-        <button onclick={goUp} disabled={currentPath === '/'} class="btn btn-secondary text-sm inline-flex items-center">
+        <button type="button" onclick={goUp} disabled={showingRoots || (allowedPaths.includes(currentPath) && allowedPaths.length === 1)} class="btn btn-secondary text-sm inline-flex items-center">
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
           </svg>
           Up
         </button>
-        <button onclick={startCreatingFolder} disabled={creatingFolder} class="btn btn-secondary text-sm inline-flex items-center">
+        <button type="button" onclick={startCreatingFolder} disabled={creatingFolder} class="btn btn-secondary text-sm inline-flex items-center">
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
           New Folder
         </button>
-        <button onclick={() => selectPath(currentPath)} class="btn btn-primary text-sm ml-auto">
+        <button type="button" onclick={() => selectPath(currentPath)} class="btn btn-primary text-sm ml-auto">
           Select This Directory
         </button>
       </div>
@@ -209,8 +286,8 @@
                 placeholder="Folder name"
                 class="flex-1 px-2 py-1 text-sm border border-blue-300 dark:border-blue-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               />
-              <button onclick={createFolder} class="btn btn-primary text-xs py-1 px-2">Create</button>
-              <button onclick={cancelCreatingFolder} class="btn btn-secondary text-xs py-1 px-2">Cancel</button>
+              <button type="button" onclick={createFolder} class="btn btn-primary text-xs py-1 px-2">Create</button>
+              <button type="button" onclick={cancelCreatingFolder} class="btn btn-secondary text-xs py-1 px-2">Cancel</button>
             </div>
             {#if createError}
               <p class="mt-1 text-xs text-red-600 dark:text-red-400">{createError}</p>

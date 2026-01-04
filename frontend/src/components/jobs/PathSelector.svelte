@@ -9,6 +9,8 @@
   let entries = $state<DirectoryEntry[]>([]);
   let loading = $state(false);
   let manualPath = $state('');
+  let allowedPaths = $state<string[]>([]);
+  let showingRoots = $state(false);
 
   // Multi-select state
   let selectedInDialog = $state<Set<string>>(new Set());
@@ -25,6 +27,7 @@
 
   async function browse(path: string) {
     loading = true;
+    showingRoots = false;
     try {
       const result = await api.system.browse(path);
       currentPath = result.path;
@@ -36,10 +39,38 @@
     }
   }
 
-  function openBrowser() {
+  async function openBrowser() {
     selectedInDialog = new Set();
     showBrowser = true;
-    browse('/');
+    loading = true;
+
+    try {
+      // Fetch allowed paths and show them as root options
+      const result = await api.system.allowedPaths();
+      allowedPaths = result.paths;
+
+      if (allowedPaths.length === 1) {
+        // Only one allowed path, go directly to it
+        await browse(allowedPaths[0]);
+      } else if (allowedPaths.length > 1) {
+        // Multiple allowed paths, show them as selectable roots
+        showingRoots = true;
+        currentPath = '/';
+        entries = allowedPaths.map(p => ({
+          name: p,
+          path: p,
+          is_dir: true,
+        }));
+        loading = false;
+      } else {
+        // No allowed paths configured
+        entries = [];
+        loading = false;
+      }
+    } catch {
+      entries = [];
+      loading = false;
+    }
   }
 
   function closeBrowser() {
@@ -103,8 +134,39 @@
   }
 
   function goUp() {
-    const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
-    browse(parent);
+    // Check if we're at an allowed root path
+    const isAtRoot = allowedPaths.includes(currentPath);
+
+    if (isAtRoot && allowedPaths.length > 1) {
+      // Go back to showing root options
+      showingRoots = true;
+      currentPath = '/';
+      entries = allowedPaths.map(p => ({
+        name: p,
+        path: p,
+        is_dir: true,
+      }));
+    } else if (isAtRoot) {
+      // Only one allowed path, can't go higher
+      return;
+    } else {
+      // Navigate to parent directory
+      const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+      // Check if parent is still within allowed paths
+      const isParentAllowed = allowedPaths.some(allowed => parent.startsWith(allowed) || parent === allowed);
+      if (isParentAllowed) {
+        browse(parent);
+      } else if (allowedPaths.length > 1) {
+        // Go back to showing root options
+        showingRoots = true;
+        currentPath = '/';
+        entries = allowedPaths.map(p => ({
+          name: p,
+          path: p,
+          is_dir: true,
+        }));
+      }
+    }
   }
 
   function isAlreadyAdded(path: string): boolean {
@@ -175,13 +237,14 @@
 
       <!-- Navigation & Quick Actions -->
       <div class="p-2 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-2 items-center">
-        <button onclick={goUp} disabled={currentPath === '/'} class="btn btn-secondary text-sm">
+        <button type="button" onclick={goUp} disabled={showingRoots || (allowedPaths.includes(currentPath) && allowedPaths.length === 1)} class="btn btn-secondary text-sm">
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
           </svg>
           Up
         </button>
         <button
+          type="button"
           onclick={quickAddCurrentPath}
           disabled={isAlreadyAdded(currentPath)}
           class="btn btn-secondary text-sm"
@@ -201,12 +264,12 @@
         </button>
         <div class="flex-1"></div>
         {#if selectableDirectories.length > 0}
-          <button onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline">
+          <button type="button" onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline">
             Select all
           </button>
         {/if}
         {#if selectedInDialog.size > 0}
-          <button onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:underline">
+          <button type="button" onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:underline">
             Clear ({selectedInDialog.size})
           </button>
         {/if}
@@ -238,6 +301,7 @@
                     </div>
                   {:else}
                     <button
+                      type="button"
                       onclick={() => toggleSelection(entry.path)}
                       class="w-5 h-5 rounded border-2 flex items-center justify-center transition-colors {isSelected ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600 hover:border-primary-500'}"
                       aria-label={isSelected ? 'Deselect directory' : 'Select directory'}
@@ -252,6 +316,7 @@
 
                   <!-- Folder icon and name (clickable to navigate) -->
                   <button
+                    type="button"
                     onclick={() => browse(entry.path)}
                     class="flex-1 flex items-center gap-2 text-left min-w-0"
                   >
@@ -264,6 +329,7 @@
                   <!-- Quick add button for individual directory -->
                   {#if !alreadyAdded && !isSelected}
                     <button
+                      type="button"
                       onclick={() => toggleSelection(entry.path)}
                       class="text-xs text-primary-600 dark:text-primary-400 hover:underline flex-shrink-0"
                       title="Add to selection"
@@ -295,10 +361,11 @@
           {/if}
         </div>
         <div class="flex gap-2">
-          <button onclick={closeBrowser} class="btn btn-secondary">
+          <button type="button" onclick={closeBrowser} class="btn btn-secondary">
             Cancel
           </button>
           <button
+            type="button"
             onclick={addSelectedPaths}
             disabled={newSelectionCount === 0}
             class="btn btn-primary"

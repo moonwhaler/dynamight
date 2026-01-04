@@ -203,6 +203,7 @@ export const api = {
         body: JSON.stringify({ path }),
       }),
     health: () => request<{ status: string; version: string }>('/system/health'),
+    allowedPaths: () => request<{ paths: string[] }>('/system/allowed-paths'),
   },
 };
 

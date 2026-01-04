@@ -39,6 +39,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}  # Only used on first run
+      - ALLOWED_BROWSE_PATHS=${ALLOWED_BROWSE_PATHS:-/mnt,/home,/media}
 
     # Security options
     security_opt:

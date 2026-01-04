@@ -239,7 +239,11 @@ impl MountService {
         let mut result = Vec::new();
 
         for entry in entries.flatten() {
-            let metadata = entry.metadata()?;
+            // Skip entries we can't read metadata for (permission denied, broken symlinks, etc.)
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
             let name = entry.file_name().to_string_lossy().to_string();
 
             result.push(DirectoryEntry {
