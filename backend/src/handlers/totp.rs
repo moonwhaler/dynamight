@@ -1,13 +1,15 @@
 use axum::{
-    extract::State,
-    http::{header::SET_COOKIE, StatusCode},
+    extract::{ConnectInfo, State},
+    http::{header::SET_COOKIE, HeaderMap, StatusCode},
     response::{AppendHeaders, IntoResponse},
     Json,
 };
 use chrono::Utc;
 use serde_json::json;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::handlers::auth::extract_client_ip;
 use crate::models::{
     PendingTotpSession, RecoveryCode, TotpDisableRequest, TotpEnableRequest, TotpEnableResponse,
     TotpRecoveryRequest, TotpRecoveryResponse, TotpSetupResponse, TotpStatusResponse,
@@ -295,8 +297,24 @@ pub async fn status(
 /// POST /auth/totp/validate - Complete login with TOTP code
 pub async fn validate(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(req): Json<TotpValidateRequest>,
 ) -> impl IntoResponse {
+    let client_ip = extract_client_ip(&headers, connect_info.as_ref().map(|c| &c.0));
+
+    // Check rate limit before processing
+    if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
+                "retry_after": e.retry_after_secs
+            })),
+        )
+            .into_response();
+    }
+
     // Get pending session
     let session: Option<PendingTotpSession> =
         sqlx::query_as("SELECT user_id, expires_at FROM pending_totp_sessions WHERE id = ?")
@@ -308,6 +326,7 @@ pub async fn validate(
     let session = match session {
         Some(s) => s,
         None => {
+            state.rate_limit_service.record_failure(&client_ip);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "Invalid or expired session"})),
@@ -324,6 +343,7 @@ pub async fn validate(
             .execute(&state.db)
             .await;
 
+        state.rate_limit_service.record_failure(&client_ip);
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Session expired, please login again"})),
@@ -373,6 +393,7 @@ pub async fn validate(
     };
 
     if !valid {
+        state.rate_limit_service.record_failure(&client_ip);
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Invalid verification code"})),
@@ -398,6 +419,9 @@ pub async fn validate(
         }
     };
 
+    // TOTP validation successful - clear rate limit
+    state.rate_limit_service.record_success(&client_ip);
+
     // Set httpOnly cookie
     let cookie = format!(
         "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
@@ -417,8 +441,24 @@ pub async fn validate(
 /// POST /auth/totp/recovery - Complete login with recovery code
 pub async fn recovery(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(req): Json<TotpRecoveryRequest>,
 ) -> impl IntoResponse {
+    let client_ip = extract_client_ip(&headers, connect_info.as_ref().map(|c| &c.0));
+
+    // Check rate limit before processing
+    if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
+                "retry_after": e.retry_after_secs
+            })),
+        )
+            .into_response();
+    }
+
     // Get pending session
     let session: Option<PendingTotpSession> =
         sqlx::query_as("SELECT user_id, expires_at FROM pending_totp_sessions WHERE id = ?")
@@ -430,6 +470,7 @@ pub async fn recovery(
     let session = match session {
         Some(s) => s,
         None => {
+            state.rate_limit_service.record_failure(&client_ip);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "Invalid or expired session"})),
@@ -445,6 +486,7 @@ pub async fn recovery(
             .execute(&state.db)
             .await;
 
+        state.rate_limit_service.record_failure(&client_ip);
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Session expired, please login again"})),
@@ -490,6 +532,7 @@ pub async fn recovery(
     let code_id = match matched_code_id {
         Some(id) => id,
         None => {
+            state.rate_limit_service.record_failure(&client_ip);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "Invalid recovery code"})),
@@ -529,6 +572,9 @@ pub async fn recovery(
                 .into_response()
         }
     };
+
+    // Recovery code validation successful - clear rate limit
+    state.rate_limit_service.record_success(&client_ip);
 
     // Set httpOnly cookie
     let cookie = format!(

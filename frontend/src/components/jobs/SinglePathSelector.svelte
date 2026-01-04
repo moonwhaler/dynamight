@@ -37,6 +37,7 @@
           name: p,
           path: p,
           is_dir: true,
+          size: null,
         }));
         browseError = `"${targetPath}" is not accessible. Select an allowed path below.`;
       } else if (allowedPaths.length === 1) {
@@ -85,6 +86,7 @@
           name: p,
           path: p,
           is_dir: true,
+          size: null,
         }));
         loading = false;
       } else {
@@ -125,6 +127,7 @@
         name: p,
         path: p,
         is_dir: true,
+        size: null,
       }));
       browseError = null;
     } else if (isAtRoot) {
@@ -145,6 +148,7 @@
           name: p,
           path: p,
           is_dir: true,
+          size: null,
         }));
         browseError = null;
       }

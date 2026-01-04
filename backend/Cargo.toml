@@ -31,6 +31,9 @@ base64 = "0.22"
 # Scheduling
 cron = "0.12"
 
+# Rate limiting
+dashmap = "6"
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }

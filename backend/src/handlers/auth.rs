@@ -1,17 +1,47 @@
 use axum::{
-    extract::State,
-    http::{header::SET_COOKIE, StatusCode},
+    extract::{ConnectInfo, State},
+    http::{header::SET_COOKIE, HeaderMap, StatusCode},
     response::{AppendHeaders, IntoResponse},
     Json,
 };
 use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::json;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
 use crate::services::AuthService;
 use crate::AppState;
+
+/// Extract client IP address from request headers or connection info.
+/// Prioritizes X-Forwarded-For and X-Real-IP headers for reverse proxy setups.
+pub fn extract_client_ip(headers: &HeaderMap, connect_info: Option<&SocketAddr>) -> String {
+    // Try X-Forwarded-For header first (common with reverse proxies)
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
+        if let Ok(forwarded_str) = forwarded.to_str() {
+            // Take the first IP in the chain (original client)
+            if let Some(ip) = forwarded_str.split(',').next() {
+                return ip.trim().to_string();
+            }
+        }
+    }
+
+    // Try X-Real-IP header
+    if let Some(real_ip) = headers.get("x-real-ip") {
+        if let Ok(ip) = real_ip.to_str() {
+            return ip.trim().to_string();
+        }
+    }
+
+    // Fall back to connection info
+    if let Some(addr) = connect_info {
+        return addr.ip().to_string();
+    }
+
+    // Last resort
+    "unknown".to_string()
+}
 
 #[derive(Deserialize)]
 pub struct SetupRequest {
@@ -21,8 +51,24 @@ pub struct SetupRequest {
 
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
+    let client_ip = extract_client_ip(&headers, connect_info.as_ref().map(|c| &c.0));
+
+    // Check rate limit before processing
+    if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
+                "retry_after": e.retry_after_secs
+            })),
+        )
+            .into_response();
+    }
+
     // Find user
     let user: Option<User> =
         sqlx::query_as("SELECT * FROM users WHERE username = ?")
@@ -34,6 +80,7 @@ pub async fn login(
     let user = match user {
         Some(u) => u,
         None => {
+            state.rate_limit_service.record_failure(&client_ip);
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({"error": "Invalid credentials"})),
@@ -46,6 +93,7 @@ pub async fn login(
     let valid = AuthService::verify_password(&req.password, &user.password_hash).unwrap_or(false);
 
     if !valid {
+        state.rate_limit_service.record_failure(&client_ip);
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Invalid credentials"})),
@@ -94,6 +142,9 @@ pub async fn login(
                 .into_response()
         }
     };
+
+    // Login successful (no 2FA) - clear rate limit
+    state.rate_limit_service.record_success(&client_ip);
 
     // Set httpOnly cookie
     let cookie = format!(

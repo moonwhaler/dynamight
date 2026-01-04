@@ -20,7 +20,7 @@ use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
-use crate::services::{AuthService, BackupService, MountService, SchedulerService};
+use crate::services::{AuthService, BackupService, MountService, RateLimitConfig, RateLimitService, SchedulerService};
 
 pub struct AppState {
     pub db: sqlx::SqlitePool,
@@ -29,6 +29,7 @@ pub struct AppState {
     pub auth_service: AuthService,
     pub backup_service: Arc<BackupService>,
     pub mount_service: MountService,
+    pub rate_limit_service: Arc<RateLimitService>,
     pub log_tx: broadcast::Sender<models::LogMessage>,
 }
 
@@ -136,6 +137,16 @@ async fn main() -> anyhow::Result<()> {
     let mount_service = MountService::new();
     let backup_service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx.clone(), max_runs_per_job));
 
+    // Initialize rate limiting service
+    let rate_limit_config = RateLimitConfig {
+        max_attempts: config.rate_limit_max_attempts,
+        window_secs: config.rate_limit_window_secs,
+        lockout_secs: config.rate_limit_lockout_secs,
+        max_lockout_secs: config.rate_limit_max_lockout_secs,
+    };
+    let rate_limit_service = RateLimitService::new(rate_limit_config);
+    RateLimitService::start_cleanup_task(rate_limit_service.clone());
+
     let state = Arc::new(AppState {
         db: db.clone(),
         logs_db: logs_db.clone(),
@@ -143,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         auth_service,
         backup_service: backup_service.clone(),
         mount_service,
+        rate_limit_service,
         log_tx,
     });
 

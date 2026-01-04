@@ -12,6 +12,11 @@ pub struct Config {
     pub max_runs_per_job: Option<u32>,
     pub allowed_browse_paths: Vec<String>,
     pub cors_origins: Option<Vec<String>>,
+    // Rate limiting
+    pub rate_limit_max_attempts: u32,
+    pub rate_limit_window_secs: u64,
+    pub rate_limit_lockout_secs: u64,
+    pub rate_limit_max_lockout_secs: u64,
 }
 
 impl Config {
@@ -60,6 +65,23 @@ impl Config {
                     .filter(|s| !s.is_empty())
                     .collect()
             }),
+            // Rate limiting with sensible defaults
+            rate_limit_max_attempts: env::var("RATE_LIMIT_MAX_ATTEMPTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
+            rate_limit_window_secs: env::var("RATE_LIMIT_WINDOW_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
+            rate_limit_lockout_secs: env::var("RATE_LIMIT_LOCKOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
+            rate_limit_max_lockout_secs: env::var("RATE_LIMIT_MAX_LOCKOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3600),
         }
     }
 
