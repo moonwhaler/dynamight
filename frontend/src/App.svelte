@@ -9,6 +9,7 @@
   import JobDetail from './routes/JobDetail.svelte';
   import History from './routes/History.svelte';
   import Layout from './components/layout/Layout.svelte';
+  import ConfirmDialog from './components/ui/ConfirmDialog.svelte';
 
   const routes = {
     '/': Dashboard,
@@ -35,3 +36,6 @@
 {:else}
   <Login />
 {/if}
+
+<!-- Global confirmation dialog -->
+<ConfirmDialog />

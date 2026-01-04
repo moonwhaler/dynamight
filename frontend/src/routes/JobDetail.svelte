@@ -11,6 +11,7 @@
   import SinglePathSelector from '../components/jobs/SinglePathSelector.svelte';
   import HelpTooltip from '../components/ui/HelpTooltip.svelte';
   import RunLogModal from '../components/logs/RunLogModal.svelte';
+  import { confirm } from '../components/ui/ConfirmDialog.svelte';
 
   let { params = {} }: { params?: { id?: string } } = $props();
 
@@ -163,7 +164,13 @@
   }
 
   async function handleDelete() {
-    if (!confirm('Are you sure you want to delete this job?')) return;
+    const confirmed = await confirm({
+      title: 'Delete Job',
+      message: `Are you sure you want to delete "${name}"? This action cannot be undone.`,
+      confirmText: 'Delete',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
 
     try {
       await api.jobs.delete(parseInt(params.id!));
