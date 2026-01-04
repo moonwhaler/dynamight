@@ -17,6 +17,8 @@ pub struct Config {
     pub rate_limit_window_secs: u64,
     pub rate_limit_lockout_secs: u64,
     pub rate_limit_max_lockout_secs: u64,
+    // Cookie security
+    pub secure_cookies: bool,
 }
 
 impl Config {
@@ -82,6 +84,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3600),
+            // Default to true for production safety; set SECURE_COOKIES=false for local HTTP development
+            secure_cookies: env::var("SECURE_COOKIES")
+                .map(|v| v.to_lowercase() != "false" && v != "0")
+                .unwrap_or(true),
         }
     }
 

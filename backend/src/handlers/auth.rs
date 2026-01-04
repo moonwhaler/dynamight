@@ -14,6 +14,31 @@ use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
 use crate::services::AuthService;
 use crate::AppState;
 
+/// Build a cookie string with appropriate security flags.
+/// When `secure_cookies` is true, adds the `Secure` flag to prevent transmission over HTTP.
+pub fn build_auth_cookie(token: &str, secure: bool) -> String {
+    if secure {
+        format!(
+            "token={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400",
+            token
+        )
+    } else {
+        format!(
+            "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
+            token
+        )
+    }
+}
+
+/// Build a cookie string to clear the auth token.
+pub fn build_logout_cookie(secure: bool) -> String {
+    if secure {
+        "token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0".to_string()
+    } else {
+        "token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0".to_string()
+    }
+}
+
 /// Extract client IP address from request headers or connection info.
 /// Prioritizes X-Forwarded-For and X-Real-IP headers for reverse proxy setups.
 pub fn extract_client_ip(headers: &HeaderMap, connect_info: Option<&SocketAddr>) -> String {
@@ -146,11 +171,8 @@ pub async fn login(
     // Login successful (no 2FA) - clear rate limit
     state.rate_limit_service.record_success(&client_ip);
 
-    // Set httpOnly cookie
-    let cookie = format!(
-        "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    // Set httpOnly cookie with Secure flag based on configuration
+    let cookie = build_auth_cookie(&token, state.config.secure_cookies);
 
     (
         AppendHeaders([(SET_COOKIE, cookie)]),
@@ -162,12 +184,12 @@ pub async fn login(
         .into_response()
 }
 
-pub async fn logout() -> impl IntoResponse {
-    // Clear cookie
-    let cookie = "token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+pub async fn logout(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Clear cookie with Secure flag based on configuration
+    let cookie = build_logout_cookie(state.config.secure_cookies);
 
     (
-        AppendHeaders([(SET_COOKIE, cookie.to_string())]),
+        AppendHeaders([(SET_COOKIE, cookie)]),
         Json(json!({"success": true})),
     )
 }

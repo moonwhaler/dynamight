@@ -9,7 +9,7 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::handlers::auth::extract_client_ip;
+use crate::handlers::auth::{build_auth_cookie, extract_client_ip};
 use crate::models::{
     PendingTotpSession, RecoveryCode, TotpDisableRequest, TotpEnableRequest, TotpEnableResponse,
     TotpRecoveryRequest, TotpRecoveryResponse, TotpSetupResponse, TotpStatusResponse,
@@ -453,11 +453,8 @@ pub async fn validate(
     // TOTP validation successful - clear rate limit
     state.rate_limit_service.record_success(&client_ip);
 
-    // Set httpOnly cookie
-    let cookie = format!(
-        "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    // Set httpOnly cookie with Secure flag based on configuration
+    let cookie = build_auth_cookie(&token, state.config.secure_cookies);
 
     (
         AppendHeaders([(SET_COOKIE, cookie)]),
@@ -607,11 +604,8 @@ pub async fn recovery(
     // Recovery code validation successful - clear rate limit
     state.rate_limit_service.record_success(&client_ip);
 
-    // Set httpOnly cookie
-    let cookie = format!(
-        "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    // Set httpOnly cookie with Secure flag based on configuration
+    let cookie = build_auth_cookie(&token, state.config.secure_cookies);
 
     tracing::info!(
         "User '{}' logged in with recovery code ({} remaining)",
