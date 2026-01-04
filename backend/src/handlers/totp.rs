@@ -221,7 +221,7 @@ pub async fn enable(
     .into_response()
 }
 
-/// POST /auth/totp/disable - Disable 2FA (requires password)
+/// POST /auth/totp/disable - Disable 2FA (requires password and TOTP code)
 pub async fn disable(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -239,6 +239,37 @@ pub async fn disable(
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Invalid password"})),
+        )
+            .into_response();
+    }
+
+    // Verify TOTP code
+    let secret = match &user.totp_secret {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "2FA is not enabled"})),
+            )
+                .into_response()
+        }
+    };
+
+    let code_valid = match TotpService::verify_code(secret, &req.code) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid verification code"})),
+            )
+                .into_response()
+        }
+    };
+
+    if !code_valid {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid verification code"})),
         )
             .into_response();
     }

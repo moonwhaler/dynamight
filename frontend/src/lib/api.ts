@@ -95,10 +95,10 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ code, secret }),
       }),
-    totpDisable: (password: string) =>
+    totpDisable: (password: string, code: string) =>
       request<{ success: boolean }>('/auth/totp/disable', {
         method: 'POST',
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, code }),
       }),
     totpStatus: () => request<TotpStatusResponse>('/auth/totp/status'),
     totpValidate: (pendingSessionId: string, code: string) =>

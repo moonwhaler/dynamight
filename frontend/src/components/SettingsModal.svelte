@@ -15,6 +15,7 @@
   let totpLoading = $state(false);
   let totpError = $state('');
   let disablePassword = $state('');
+  let disableCode = $state('');
   let disableLoading = $state(false);
   let disableError = $state('');
 
@@ -89,9 +90,10 @@
     disableError = '';
     disableLoading = true;
     try {
-      await api.auth.totpDisable(disablePassword);
+      await api.auth.totpDisable(disablePassword, disableCode);
       totpStatus = { enabled: false, recovery_codes_remaining: 0 };
       disablePassword = '';
+      disableCode = '';
     } catch (err) {
       disableError = err instanceof Error ? err.message : 'Failed to disable 2FA';
     }
@@ -174,6 +176,7 @@
     }
     if (tab === 'security') {
       disablePassword = '';
+      disableCode = '';
       disableError = '';
     }
     logsError = '';
@@ -459,38 +462,76 @@
                     </div>
                   {/if}
 
-                  <div class="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Disable Two-Factor Authentication</p>
+                  <div class="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                    <div class="flex items-start gap-3 mb-4">
+                      <div class="w-8 h-8 bg-red-100 dark:bg-red-900/40 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="text-sm font-medium text-gray-900 dark:text-white">Disable Two-Factor Authentication</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Enter your password and current authenticator code to disable 2FA.</p>
+                      </div>
+                    </div>
 
                     {#if disableError}
-                      <div class="mb-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
+                      <div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
                         {disableError}
                       </div>
                     {/if}
 
-                    <form onsubmit={handleDisable2FA} class="flex gap-3">
-                      <input
-                        id="disable-password"
-                        type="password"
-                        bind:value={disablePassword}
-                        class="input flex-1"
-                        placeholder="Enter password to confirm"
-                        autocomplete="current-password"
-                      />
-                      <button
-                        type="submit"
-                        disabled={disableLoading || !disablePassword}
-                        class="btn btn-danger px-5 py-2 disabled:opacity-50 whitespace-nowrap"
-                      >
-                        {#if disableLoading}
-                          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                        {:else}
-                          Disable
-                        {/if}
-                      </button>
+                    <form onsubmit={handleDisable2FA} class="space-y-4">
+                      <div class="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Password</label>
+                          <input
+                            id="disable-password"
+                            type="password"
+                            bind:value={disablePassword}
+                            class="input"
+                            placeholder="Enter your password"
+                            autocomplete="current-password"
+                          />
+                        </div>
+                        <div>
+                          <label for="disable-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Authenticator Code</label>
+                          <input
+                            id="disable-code"
+                            type="text"
+                            inputmode="numeric"
+                            pattern="[0-9]*"
+                            maxlength="6"
+                            bind:value={disableCode}
+                            class="input font-mono tracking-widest"
+                            placeholder="000000"
+                            autocomplete="one-time-code"
+                          />
+                        </div>
+                      </div>
+
+                      <div class="flex justify-end pt-2">
+                        <button
+                          type="submit"
+                          disabled={disableLoading || !disablePassword || disableCode.length !== 6}
+                          class="btn btn-danger px-6 py-2 disabled:opacity-50"
+                        >
+                          {#if disableLoading}
+                            <span class="flex items-center gap-2">
+                              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              Disabling...
+                            </span>
+                          {:else}
+                            Disable 2FA
+                          {/if}
+                        </button>
+                      </div>
                     </form>
                   </div>
                 </div>

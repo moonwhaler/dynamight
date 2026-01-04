@@ -68,6 +68,7 @@ pub struct TotpEnableResponse {
 #[derive(Debug, Deserialize)]
 pub struct TotpDisableRequest {
     pub password: String,
+    pub code: String,
 }
 
 #[derive(Debug, Serialize)]
