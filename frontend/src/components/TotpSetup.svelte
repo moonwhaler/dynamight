@@ -16,6 +16,7 @@
   let showManualEntry = $state(false);
   let copiedCodes = $state(false);
   let confirmedSaved = $state(false);
+  let showEnlargedQr = $state(false);
 
   async function startSetup() {
     loading = true;
@@ -110,12 +111,18 @@
       <div class="flex flex-col sm:flex-row gap-4 items-center sm:items-start">
         <!-- QR Code -->
         <div class="flex-shrink-0">
-          <div class="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+          <button
+            type="button"
+            onclick={() => showEnlargedQr = true}
+            class="bg-white p-2 rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+            title="Click to enlarge"
+          >
             <img src={qrCode} alt="2FA QR Code" class="w-32 h-32 sm:w-36 sm:h-36" />
-          </div>
+          </button>
+          <p class="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 text-center">Tap to enlarge</p>
           <button
             onclick={() => showManualEntry = !showManualEntry}
-            class="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:underline w-full text-center"
+            class="mt-1 text-xs text-primary-600 dark:text-primary-400 hover:underline w-full text-center"
           >
             {showManualEntry ? 'Hide key' : 'Manual entry'}
           </button>
@@ -243,3 +250,59 @@
     </div>
   {/if}
 </div>
+
+<!-- Enlarged QR Code Modal -->
+{#if showEnlargedQr}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Enlarged QR Code"
+  >
+    <!-- Backdrop -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
+      onclick={() => showEnlargedQr = false}
+      aria-label="Close enlarged QR code"
+    ></button>
+
+    <!-- QR Code Container -->
+    <div class="relative animate-scale-in">
+      <button
+        type="button"
+        onclick={() => showEnlargedQr = false}
+        class="bg-white p-4 sm:p-6 rounded-2xl shadow-2xl cursor-pointer transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-primary-500/50"
+      >
+        <img src={qrCode} alt="2FA QR Code" class="w-64 h-64 sm:w-80 sm:h-80" />
+      </button>
+      <p class="text-center text-white/80 text-sm mt-3">Tap anywhere to close</p>
+    </div>
+  </div>
+{/if}
+
+<style>
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.25s ease-out forwards;
+  }
+</style>
