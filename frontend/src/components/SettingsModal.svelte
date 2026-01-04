@@ -4,6 +4,7 @@
   import TotpSetup from './TotpSetup.svelte';
   import type { TotpStatusResponse } from '../lib/types';
   import { preferencesStore } from '../lib/stores/preferences';
+  import { showToast } from './ui/Toast.svelte';
 
   let { open = $bindable(false) } = $props();
 
@@ -13,42 +14,32 @@
   // 2FA state
   let totpStatus = $state<TotpStatusResponse | null>(null);
   let totpLoading = $state(false);
-  let totpError = $state('');
   let disablePassword = $state('');
   let disableCode = $state('');
   let disableLoading = $state(false);
-  let disableError = $state('');
 
   // Password change state
   let currentPassword = $state('');
   let newPassword = $state('');
   let confirmPassword = $state('');
   let passwordLoading = $state(false);
-  let passwordError = $state('');
-  let passwordSuccess = $state(false);
 
   // Logs settings state
   let maxRunsPerJob = $state<number | null>(null);
   let maxRunsInput = $state('');
   let logsLoading = $state(false);
-  let logsError = $state('');
-  let logsSaved = $state(false);
   let initialMaxRuns = $state<number | null>(null);
 
   function resetPasswordForm() {
     currentPassword = '';
     newPassword = '';
     confirmPassword = '';
-    passwordError = '';
-    passwordSuccess = false;
   }
 
   function close() {
     open = false;
     activeTab = 'general';
     resetPasswordForm();
-    logsError = '';
-    logsSaved = false;
   }
 
   function handleBackdropClick(e: MouseEvent) {
@@ -76,26 +67,25 @@
 
   async function loadTotpStatus() {
     totpLoading = true;
-    totpError = '';
     try {
       totpStatus = await api.auth.totpStatus();
     } catch (err) {
-      totpError = err instanceof Error ? err.message : 'Failed to load 2FA status';
+      showToast({ message: err instanceof Error ? err.message : 'Failed to load 2FA status', variant: 'error' });
     }
     totpLoading = false;
   }
 
   async function handleDisable2FA(e: Event) {
     e.preventDefault();
-    disableError = '';
     disableLoading = true;
     try {
       await api.auth.totpDisable(disablePassword, disableCode);
       totpStatus = { enabled: false, recovery_codes_remaining: 0 };
       disablePassword = '';
       disableCode = '';
+      showToast({ message: 'Two-factor authentication disabled', variant: 'success' });
     } catch (err) {
-      disableError = err instanceof Error ? err.message : 'Failed to disable 2FA';
+      showToast({ message: err instanceof Error ? err.message : 'Failed to disable 2FA', variant: 'error' });
     }
     disableLoading = false;
   }
@@ -113,45 +103,41 @@
 
   async function handlePasswordSubmit(e: Event) {
     e.preventDefault();
-    passwordError = '';
 
     if (newPassword.length < 8) {
-      passwordError = 'New password must be at least 8 characters';
+      showToast({ message: 'New password must be at least 8 characters', variant: 'error' });
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      passwordError = 'Passwords do not match';
+      showToast({ message: 'Passwords do not match', variant: 'error' });
       return;
     }
 
     if (currentPassword === newPassword) {
-      passwordError = 'New password must be different from current password';
+      showToast({ message: 'New password must be different from current password', variant: 'error' });
       return;
     }
 
     passwordLoading = true;
     try {
       await api.auth.changePassword(currentPassword, newPassword);
-      passwordSuccess = true;
+      showToast({ message: 'Password changed successfully', variant: 'success' });
       currentPassword = '';
       newPassword = '';
       confirmPassword = '';
     } catch (err) {
-      passwordError = err instanceof Error ? err.message : 'Failed to change password';
+      showToast({ message: err instanceof Error ? err.message : 'Failed to change password', variant: 'error' });
     } finally {
       passwordLoading = false;
     }
   }
 
   async function handleLogsSave() {
-    logsError = '';
-    logsSaved = false;
-
     const value = maxRunsInput.trim() === '' ? null : parseInt(maxRunsInput, 10);
 
     if (value !== null && (isNaN(value) || value < 1)) {
-      logsError = 'Please enter a valid number (minimum 1) or leave empty for unlimited';
+      showToast({ message: 'Please enter a valid number (minimum 1) or leave empty for unlimited', variant: 'error' });
       return;
     }
 
@@ -160,10 +146,9 @@
       await api.settings.update({ max_runs_per_job: value });
       maxRunsPerJob = value;
       initialMaxRuns = value;
-      logsSaved = true;
-      setTimeout(() => logsSaved = false, 3000);
+      showToast({ message: 'Settings saved', variant: 'success' });
     } catch (err) {
-      logsError = err instanceof Error ? err.message : 'Failed to save settings';
+      showToast({ message: err instanceof Error ? err.message : 'Failed to save settings', variant: 'error' });
     } finally {
       logsLoading = false;
     }
@@ -177,10 +162,7 @@
     if (tab === 'security') {
       disablePassword = '';
       disableCode = '';
-      disableError = '';
     }
-    logsError = '';
-    logsSaved = false;
   }
 
   let hasLogsChanges = $derived(() => {
@@ -332,34 +314,13 @@
 
             {:else if activeTab === 'account'}
               <!-- Account Tab -->
-              {#if passwordSuccess}
-                <div class="flex flex-col items-center justify-center py-12">
-                  <div class="w-14 h-14 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-4">
-                    <svg class="w-7 h-7 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Password Changed</h3>
-                  <p class="text-sm text-gray-500 dark:text-gray-400 mb-5 text-center">Your password has been updated successfully.</p>
-                  <button onclick={() => passwordSuccess = false} class="btn btn-secondary px-5 py-2">Done</button>
-                </div>
-              {:else}
-                <div class="mb-6">
-                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Change Password</h3>
-                  <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Update your account password.</p>
-                </div>
+              <div class="mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Change Password</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Update your account password.</p>
+              </div>
 
-                <form onsubmit={handlePasswordSubmit} class="space-y-4">
-                  {#if passwordError}
-                    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-                      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {passwordError}
-                    </div>
-                  {/if}
-
-                  <div>
+              <form onsubmit={handlePasswordSubmit} class="space-y-4">
+                <div>
                     <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Current Password</label>
                     <input
                       id="current-password"
@@ -417,7 +378,6 @@
                     </button>
                   </div>
                 </form>
-              {/if}
 
             {:else if activeTab === 'security'}
               <!-- Security Tab -->
@@ -432,10 +392,6 @@
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                </div>
-              {:else if totpError}
-                <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
-                  {totpError}
                 </div>
               {:else if totpStatus?.enabled}
                 <!-- 2FA is enabled -->
@@ -474,15 +430,6 @@
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Enter your password and current authenticator code to disable 2FA.</p>
                       </div>
                     </div>
-
-                    {#if disableError}
-                      <div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {disableError}
-                      </div>
-                    {/if}
 
                     <form onsubmit={handleDisable2FA} class="space-y-4">
                       <div class="grid gap-4 sm:grid-cols-2">
@@ -548,24 +495,6 @@
               </div>
 
               <div class="space-y-4">
-                {#if logsError}
-                  <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {logsError}
-                  </div>
-                {/if}
-
-                {#if logsSaved}
-                  <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-600 dark:text-green-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                    Settings saved
-                  </div>
-                {/if}
-
                 <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
                   <span class="text-sm text-gray-600 dark:text-gray-400">Current setting</span>
                   <span class="text-sm font-medium text-gray-900 dark:text-white">

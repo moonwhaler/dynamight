@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import { showToast } from './ui/Toast.svelte';
 
   type SetupStep = 'initial' | 'qr' | 'verify' | 'recovery' | 'complete';
 
@@ -12,7 +13,6 @@
   let verificationCode = $state('');
   let recoveryCodes = $state<string[]>([]);
   let loading = $state(false);
-  let error = $state('');
   let showManualEntry = $state(false);
   let copiedCodes = $state(false);
   let confirmedSaved = $state(false);
@@ -20,7 +20,6 @@
 
   async function startSetup() {
     loading = true;
-    error = '';
     try {
       const response = await api.auth.totpSetup();
       secret = response.secret;
@@ -28,25 +27,24 @@
       otpauthUrl = response.otpauth_url;
       step = 'qr';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to start setup';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to start setup', variant: 'error' });
     }
     loading = false;
   }
 
   async function verifyCode() {
     if (verificationCode.length !== 6) {
-      error = 'Please enter a 6-digit code';
+      showToast({ message: 'Please enter a 6-digit code', variant: 'error' });
       return;
     }
 
     loading = true;
-    error = '';
     try {
       const response = await api.auth.totpEnable(verificationCode, secret);
       recoveryCodes = response.recovery_codes;
       step = 'recovery';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Verification failed';
+      showToast({ message: e instanceof Error ? e.message : 'Verification failed', variant: 'error' });
     }
     loading = false;
   }
@@ -102,12 +100,6 @@
   {:else if step === 'qr'}
     <!-- QR Code step -->
     <div>
-      {#if error}
-        <div class="mb-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-3 py-2 rounded-lg text-sm">
-          {error}
-        </div>
-      {/if}
-
       <div class="flex flex-col sm:flex-row gap-4 items-center sm:items-start">
         <!-- QR Code -->
         <div class="flex-shrink-0">

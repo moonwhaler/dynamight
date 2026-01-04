@@ -145,11 +145,13 @@
         const job = await api.jobs.create(jobData);
         console.log('[JobDetail] Job created:', job);
         jobsStore.addJob(job);
+        showToast({ message: 'Job created successfully', variant: 'success' });
       } else {
         console.log('[JobDetail] Updating job:', params.id);
         const job = await api.jobs.update(parseInt(params.id!), jobData);
         console.log('[JobDetail] Job updated:', job);
         jobsStore.updateJob(job);
+        showToast({ message: 'Job saved successfully', variant: 'success' });
       }
       console.log('[JobDetail] Navigating to jobs list');
       push('/jobs');
