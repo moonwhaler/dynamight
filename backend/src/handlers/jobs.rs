@@ -5,11 +5,98 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::models::{CreateJobRequest, Job, JobResponse, JobRunStatus, UpdateJobRequest};
 use crate::AppState;
+
+/// Validates rsync exclude patterns to prevent shell injection and unexpected behavior.
+/// Returns Ok(()) if valid, or Err with a description of the problem.
+fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
+    // Reject empty patterns
+    if pattern.is_empty() {
+        return Err("Empty exclude pattern".to_string());
+    }
+
+    // Reject patterns that are too long (rsync has practical limits)
+    if pattern.len() > 4096 {
+        return Err("Exclude pattern too long (max 4096 characters)".to_string());
+    }
+
+    // Reject null bytes and control characters (except for valid escape sequences)
+    if pattern.bytes().any(|b| b == 0 || (b < 32 && b != b'\t')) {
+        return Err("Exclude pattern contains invalid control characters".to_string());
+    }
+
+    // Reject shell injection characters
+    // These could be dangerous if the pattern is ever mishandled
+    static DANGEROUS_CHARS: Lazy<Regex> = Lazy::new(|| {
+        // Backticks, $(), ${}, and shell operators
+        Regex::new(r"(`|\$\(|\$\{|[;&|><])").unwrap()
+    });
+
+    if DANGEROUS_CHARS.is_match(pattern) {
+        return Err("Exclude pattern contains potentially dangerous shell characters".to_string());
+    }
+
+    // Reject patterns starting with a dash (could be interpreted as rsync options)
+    if pattern.starts_with('-') {
+        return Err("Exclude pattern cannot start with a dash".to_string());
+    }
+
+    // Allow valid rsync pattern characters:
+    // - Alphanumeric, path separators, dots, dashes, underscores
+    // - Wildcards: * ? [ ] (for glob patterns)
+    // - Backslash (for escaping)
+    // - Spaces (valid in filenames)
+    // - Other common filename characters: @, #, %, +, =, ~, comma, parentheses
+    static SAFE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^[\w\s./\-_*?\[\]\\@#%+=~,()':!]+$").unwrap()
+    });
+
+    if !SAFE_PATTERN.is_match(pattern) {
+        return Err("Exclude pattern contains invalid characters".to_string());
+    }
+
+    Ok(())
+}
+
+/// Validates a list of exclude patterns.
+/// Returns Ok(()) if all patterns are valid, or Err with details of the first invalid pattern.
+fn validate_exclude_patterns(patterns: &[String]) -> Result<(), String> {
+    for (i, pattern) in patterns.iter().enumerate() {
+        if let Err(e) = validate_exclude_pattern(pattern) {
+            return Err(format!("Invalid exclude pattern at index {}: {} - {}", i, pattern, e));
+        }
+    }
+    Ok(())
+}
+
+/// Validates display fields (name, description) for basic safety.
+/// Checks for length limits and control characters.
+/// Set `allow_empty` to true for optional fields like description.
+fn validate_display_field(value: &str, field_name: &str, max_len: usize, allow_empty: bool) -> Result<(), String> {
+    if value.is_empty() {
+        if allow_empty {
+            return Ok(());
+        }
+        return Err(format!("{} cannot be empty", field_name));
+    }
+
+    if value.len() > max_len {
+        return Err(format!("{} too long (max {} characters)", field_name, max_len));
+    }
+
+    // Reject null bytes and control characters (allow tabs and newlines for description)
+    if value.bytes().any(|b| b == 0 || (b < 32 && b != b'\t' && b != b'\n' && b != b'\r')) {
+        return Err(format!("{} contains invalid control characters", field_name));
+    }
+
+    Ok(())
+}
 
 pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let jobs: Vec<Job> = sqlx::query_as("SELECT * FROM jobs ORDER BY name")
@@ -69,6 +156,26 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
+    // Validate job name
+    if let Err(e) = validate_display_field(&req.name, "Job name", 255, false) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": e})),
+        )
+            .into_response();
+    }
+
+    // Validate job description if provided
+    if let Some(ref desc) = req.description {
+        if let Err(e) = validate_display_field(desc, "Description", 4096, true) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+                .into_response();
+        }
+    }
+
     // Validate at least one source directory
     if req.source_dirs.is_empty() {
         return (
@@ -76,6 +183,17 @@ pub async fn create_job(
             Json(json!({"error": "At least one source directory must be specified"})),
         )
             .into_response();
+    }
+
+    // Validate rsync exclude patterns
+    if let Some(ref excludes) = req.rsync_excludes {
+        if let Err(e) = validate_exclude_patterns(excludes) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+                .into_response();
+        }
     }
 
     // Check for duplicate job name
@@ -172,12 +290,45 @@ pub async fn update_job(
 
     let existing = existing.unwrap();
 
+    // Validate job name if provided
+    if let Some(ref name) = req.name {
+        if let Err(e) = validate_display_field(name, "Job name", 255, false) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+                .into_response();
+        }
+    }
+
+    // Validate job description if provided
+    if let Some(ref desc) = req.description {
+        if let Err(e) = validate_display_field(desc, "Description", 4096, true) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
+            )
+                .into_response();
+        }
+    }
+
     // Validate source directories if provided
     if let Some(ref source_dirs) = req.source_dirs {
         if source_dirs.is_empty() {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "At least one source directory must be specified"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Validate rsync exclude patterns if provided
+    if let Some(ref excludes) = req.rsync_excludes {
+        if let Err(e) = validate_exclude_patterns(excludes) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": e})),
             )
                 .into_response();
         }
