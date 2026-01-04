@@ -217,7 +217,7 @@
     aria-labelledby="settings-title"
     tabindex="-1"
   >
-    <!-- Large dialog using viewport units like LogViewer -->
+    <!-- Large dialog with sidebar -->
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-[95vw] lg:max-w-[85vw] xl:max-w-5xl h-[90vh] md:h-[85vh] flex flex-col overflow-hidden">
       <!-- Header -->
       <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
@@ -239,13 +239,13 @@
       <!-- Main Content Area -->
       <div class="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
         <!-- Sidebar Navigation (Desktop) / Top Tabs (Mobile) -->
-        <nav class="md:w-64 md:border-r border-b md:border-b-0 border-gray-200 dark:border-gray-700 flex-shrink-0 bg-gray-50/50 dark:bg-gray-900/30">
+        <nav class="md:w-56 lg:w-64 md:border-r border-b md:border-b-0 border-gray-200 dark:border-gray-700 flex-shrink-0 bg-gray-50/50 dark:bg-gray-900/30">
           <!-- Mobile: Horizontal tabs -->
           <div class="flex md:hidden p-2 gap-1">
             {#each tabs as tab}
               <button
                 onclick={() => switchTab(tab.id)}
-                class="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all {activeTab === tab.id
+                class="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all {activeTab === tab.id
                   ? 'bg-white dark:bg-gray-700 text-primary-600 dark:text-primary-400 shadow-sm'
                   : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-700/50'}"
                 aria-selected={activeTab === tab.id}
@@ -264,22 +264,22 @@
             {#each tabs as tab}
               <button
                 onclick={() => switchTab(tab.id)}
-                class="flex items-center gap-3 w-full h-16 px-4 rounded-xl text-left transition-all {activeTab === tab.id
+                class="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-left transition-all {activeTab === tab.id
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                   : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-700/50'}"
                 aria-selected={activeTab === tab.id}
                 role="tab"
               >
-                <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 {activeTab === tab.id
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 {activeTab === tab.id
                   ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={tab.icon} />
                   </svg>
                 </div>
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-sm">{tab.label}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">{tab.description}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{tab.description}</div>
                 </div>
               </button>
             {/each}
@@ -287,361 +287,249 @@
         </nav>
 
         <!-- Content Panel - scrollable -->
-        <div class="flex-1 overflow-y-auto bg-gray-50/30 dark:bg-gray-900/20">
-          <div class="p-6 md:p-10 lg:p-12">
+        <div class="flex-1 overflow-y-auto">
+          <div class="p-6 md:p-8 max-w-2xl">
             {#if activeTab === 'account'}
               <!-- Account Tab -->
               {#if passwordSuccess}
-                <div class="flex flex-col items-center justify-center py-16 md:py-24">
-                  <div class="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-6">
-                    <svg class="w-10 h-10 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="flex flex-col items-center justify-center py-12">
+                  <div class="w-14 h-14 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-4">
+                    <svg class="w-7 h-7 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
-                  <h3 class="text-2xl font-semibold text-gray-900 dark:text-white mb-3">Password Changed</h3>
-                  <p class="text-gray-600 dark:text-gray-400 mb-10 text-center max-w-md text-lg">Your password has been updated successfully. Use your new password next time you log in.</p>
-                  <button onclick={() => passwordSuccess = false} class="btn btn-primary px-8 py-2.5">Change Another Password</button>
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Password Changed</h3>
+                  <p class="text-sm text-gray-500 dark:text-gray-400 mb-5 text-center">Your password has been updated successfully.</p>
+                  <button onclick={() => passwordSuccess = false} class="btn btn-secondary px-5 py-2">Done</button>
                 </div>
               {:else}
-                <!-- Page header -->
-                <div class="mb-10">
-                  <h3 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Change Password</h3>
-                  <p class="text-gray-500 dark:text-gray-400 text-lg">Update your account password. Choose a strong password that you don't use elsewhere.</p>
+                <div class="mb-6">
+                  <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Change Password</h3>
+                  <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Update your account password.</p>
                 </div>
 
-                <!-- Content card -->
-                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm">
-                  <form onsubmit={handlePasswordSubmit}>
-                    {#if passwordError}
-                      <div class="mx-6 md:mx-8 mt-6 md:mt-8 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-5 py-4 rounded-xl flex items-start gap-4">
-                        <svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span class="text-sm">{passwordError}</span>
-                      </div>
-                    {/if}
+                <form onsubmit={handlePasswordSubmit} class="space-y-4">
+                  {#if passwordError}
+                    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
+                      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {passwordError}
+                    </div>
+                  {/if}
 
-                    <div class="p-6 md:p-8 space-y-6">
-                      <div class="grid gap-6 md:grid-cols-2">
-                        <div class="md:col-span-2">
-                          <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Password</label>
-                          <input
-                            id="current-password"
-                            type="password"
-                            required
-                            bind:value={currentPassword}
-                            class="input"
-                            placeholder="Enter current password"
-                            autocomplete="current-password"
-                          />
-                        </div>
+                  <div>
+                    <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Current Password</label>
+                    <input
+                      id="current-password"
+                      type="password"
+                      required
+                      bind:value={currentPassword}
+                      class="input"
+                      placeholder="Enter current password"
+                      autocomplete="current-password"
+                    />
+                  </div>
 
-                        <div>
-                          <label for="new-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">New Password</label>
-                          <input
-                            id="new-password"
-                            type="password"
-                            required
-                            bind:value={newPassword}
-                            class="input"
-                            placeholder="Enter new password"
-                            autocomplete="new-password"
-                          />
-                          <PasswordStrength password={newPassword} />
-                          {#if !newPassword}
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Must be at least 8 characters</p>
-                          {/if}
-                        </div>
-
-                        <div>
-                          <label for="confirm-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm New Password</label>
-                          <input
-                            id="confirm-password"
-                            type="password"
-                            required
-                            bind:value={confirmPassword}
-                            class="input"
-                            placeholder="Confirm new password"
-                            autocomplete="new-password"
-                          />
-                        </div>
-                      </div>
+                  <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label for="new-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">New Password</label>
+                      <input
+                        id="new-password"
+                        type="password"
+                        required
+                        bind:value={newPassword}
+                        class="input"
+                        placeholder="Min. 8 characters"
+                        autocomplete="new-password"
+                      />
+                      <PasswordStrength password={newPassword} />
                     </div>
 
-                    <div class="px-6 md:px-8 py-5 bg-gray-50 dark:bg-gray-900/50 border-t border-gray-200 dark:border-gray-700 rounded-b-2xl flex justify-end">
-                      <button type="submit" disabled={passwordLoading} class="btn btn-primary px-8 py-2.5">
-                        {#if passwordLoading}
-                          <span class="flex items-center justify-center gap-2">
-                            <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                            Updating...
-                          </span>
-                        {:else}
-                          Update Password
-                        {/if}
-                      </button>
+                    <div>
+                      <label for="confirm-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Confirm Password</label>
+                      <input
+                        id="confirm-password"
+                        type="password"
+                        required
+                        bind:value={confirmPassword}
+                        class="input"
+                        placeholder="Confirm password"
+                        autocomplete="new-password"
+                      />
                     </div>
-                  </form>
-                </div>
+                  </div>
+
+                  <div class="flex justify-end pt-2">
+                    <button type="submit" disabled={passwordLoading} class="btn btn-primary px-6 py-2">
+                      {#if passwordLoading}
+                        <span class="flex items-center gap-2">
+                          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          Updating...
+                        </span>
+                      {:else}
+                        Update Password
+                      {/if}
+                    </button>
+                  </div>
+                </form>
               {/if}
 
             {:else if activeTab === 'security'}
               <!-- Security Tab -->
-              <div class="mb-10">
-                <h3 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Two-Factor Authentication</h3>
-                <p class="text-gray-500 dark:text-gray-400 text-lg">Add an extra layer of security to your account with 2FA.</p>
+              <div class="mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Two-Factor Authentication</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Add an extra layer of security to your account.</p>
               </div>
 
               {#if totpLoading}
-                <div class="flex items-center justify-center py-16">
-                  <svg class="animate-spin h-8 w-8 text-primary-600" viewBox="0 0 24 24">
+                <div class="flex items-center justify-center py-12">
+                  <svg class="animate-spin h-7 w-7 text-primary-600" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
                 </div>
               {:else if totpError}
-                <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-5 py-4 rounded-xl">
+                <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
                   {totpError}
                 </div>
               {:else if totpStatus?.enabled}
-                <!-- 2FA is enabled - show status and disable option -->
-                <div class="grid gap-6 lg:grid-cols-2">
-                  <!-- Status card -->
-                  <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 md:p-8">
-                    <div class="flex items-center gap-4 mb-6">
-                      <div class="w-12 h-12 bg-green-100 dark:bg-green-900/40 rounded-xl flex items-center justify-center">
-                        <svg class="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <!-- 2FA is enabled -->
+                <div class="space-y-4">
+                  <div class="flex items-center justify-between p-4 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 bg-green-100 dark:bg-green-900/40 rounded-full flex items-center justify-center">
+                        <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                         </svg>
                       </div>
                       <div>
-                        <h4 class="font-semibold text-gray-900 dark:text-white">2FA Status</h4>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Your account is protected</p>
+                        <p class="font-medium text-green-800 dark:text-green-300">2FA Enabled</p>
+                        <p class="text-sm text-green-600 dark:text-green-400">{totpStatus.recovery_codes_remaining} recovery codes remaining</p>
                       </div>
                     </div>
-
-                    <div class="space-y-4">
-                      <div class="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-700">
-                        <span class="text-gray-600 dark:text-gray-400">Status</span>
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">
-                          Enabled
-                        </span>
-                      </div>
-                      <div class="flex items-center justify-between py-3">
-                        <span class="text-gray-600 dark:text-gray-400">Recovery Codes</span>
-                        <span class="font-medium text-gray-900 dark:text-white">
-                          {totpStatus.recovery_codes_remaining} remaining
-                        </span>
-                      </div>
-                    </div>
-
-                    {#if totpStatus.recovery_codes_remaining < 3}
-                      <div class="mt-4 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
-                        <p class="text-sm text-amber-800 dark:text-amber-300">
-                          <strong>Warning:</strong> You're running low on recovery codes. Consider disabling and re-enabling 2FA to generate new codes.
-                        </p>
-                      </div>
-                    {/if}
                   </div>
 
-                  <!-- Disable card -->
-                  <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col">
-                    <div class="p-6 md:p-8 flex-1">
-                      <div class="flex items-center gap-4 mb-6">
-                        <div class="w-12 h-12 bg-red-100 dark:bg-red-900/40 rounded-xl flex items-center justify-center">
-                          <svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                          </svg>
-                        </div>
-                        <div>
-                          <h4 class="font-semibold text-gray-900 dark:text-white">Disable 2FA</h4>
-                          <p class="text-sm text-gray-500 dark:text-gray-400">Remove two-factor authentication</p>
-                        </div>
-                      </div>
-
-                      {#if disableError}
-                        <div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
-                          {disableError}
-                        </div>
-                      {/if}
-
-                      <form onsubmit={handleDisable2FA}>
-                        <div>
-                          <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Confirm your password
-                          </label>
-                          <input
-                            id="disable-password"
-                            type="password"
-                            bind:value={disablePassword}
-                            class="input"
-                            placeholder="Enter your password"
-                            autocomplete="current-password"
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          disabled={disableLoading || !disablePassword}
-                          class="mt-4 btn btn-danger w-full py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {#if disableLoading}
-                            <span class="flex items-center justify-center gap-2">
-                              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                              </svg>
-                              Disabling...
-                            </span>
-                          {:else}
-                            Disable Two-Factor Authentication
-                          {/if}
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-                </div>
-              {:else}
-                <!-- 2FA is not enabled - show setup -->
-                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 md:p-8">
-                  <TotpSetup onEnabled={handleTotpEnabled} />
-                </div>
-              {/if}
-
-            {:else if activeTab === 'logs'}
-              <!-- History Tab -->
-              <!-- Page header -->
-              <div class="mb-10">
-                <h3 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">History Retention</h3>
-                <p class="text-gray-500 dark:text-gray-400 text-lg">Control how many job runs are kept in history. Older runs will be automatically deleted.</p>
-              </div>
-
-              <!-- Alerts -->
-              {#if logsError}
-                <div class="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-5 py-4 rounded-xl flex items-start gap-4">
-                  <svg class="w-6 h-6 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>{logsError}</span>
-                </div>
-              {/if}
-
-              {#if logsSaved}
-                <div class="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 px-5 py-4 rounded-xl flex items-center gap-4">
-                  <svg class="w-6 h-6 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>Settings saved successfully</span>
-                </div>
-              {/if}
-
-              <!-- Content cards -->
-              <div class="grid gap-6 lg:grid-cols-2">
-                <!-- Settings card -->
-                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col">
-                  <div class="p-6 md:p-8 flex-1">
-                    <div class="flex items-center gap-4 mb-6">
-                      <div class="w-12 h-12 bg-primary-100 dark:bg-primary-900/40 rounded-xl flex items-center justify-center">
-                        <svg class="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                        </svg>
-                      </div>
-                      <div>
-                        <h4 class="font-semibold text-gray-900 dark:text-white">Retention Limit</h4>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Set max runs per job</p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label for="max-runs" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Maximum Runs per Job</label>
-                      <div class="relative">
-                        <input
-                          id="max-runs"
-                          type="text"
-                          inputmode="numeric"
-                          bind:value={maxRunsInput}
-                          class="input pr-16 text-lg"
-                          placeholder="5"
-                        />
-                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 dark:text-gray-500">runs</span>
-                      </div>
-                      <p class="text-sm text-gray-500 dark:text-gray-400 mt-3">
-                        Leave empty for unlimited retention.
+                  {#if totpStatus.recovery_codes_remaining < 3}
+                    <div class="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
+                      <p class="text-sm text-amber-700 dark:text-amber-300">
+                        Low recovery codes. Consider re-enabling 2FA for new codes.
                       </p>
                     </div>
-                  </div>
+                  {/if}
 
-                  <div class="px-6 md:px-8 py-5 bg-gray-50 dark:bg-gray-900/50 border-t border-gray-200 dark:border-gray-700 rounded-b-2xl flex justify-end mt-auto">
-                    <button
-                      onclick={handleLogsSave}
-                      disabled={logsLoading || !hasLogsChanges()}
-                      class="btn btn-primary px-8 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {#if logsLoading}
-                        <span class="flex items-center justify-center gap-2">
+                  <div class="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Disable Two-Factor Authentication</p>
+
+                    {#if disableError}
+                      <div class="mb-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm">
+                        {disableError}
+                      </div>
+                    {/if}
+
+                    <form onsubmit={handleDisable2FA} class="flex gap-3">
+                      <input
+                        id="disable-password"
+                        type="password"
+                        bind:value={disablePassword}
+                        class="input flex-1"
+                        placeholder="Enter password to confirm"
+                        autocomplete="current-password"
+                      />
+                      <button
+                        type="submit"
+                        disabled={disableLoading || !disablePassword}
+                        class="btn btn-danger px-5 py-2 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {#if disableLoading}
                           <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
-                          Saving...
-                        </span>
+                        {:else}
+                          Disable
+                        {/if}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              {:else}
+                <!-- 2FA is not enabled - show setup -->
+                <TotpSetup onEnabled={handleTotpEnabled} />
+              {/if}
+
+            {:else if activeTab === 'logs'}
+              <!-- History Tab -->
+              <div class="mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">History Retention</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Control how many job runs are kept in history.</p>
+              </div>
+
+              <div class="space-y-4">
+                {#if logsError}
+                  <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
+                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {logsError}
+                  </div>
+                {/if}
+
+                {#if logsSaved}
+                  <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-600 dark:text-green-400 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
+                    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Settings saved
+                  </div>
+                {/if}
+
+                <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                  <span class="text-sm text-gray-600 dark:text-gray-400">Current setting</span>
+                  <span class="text-sm font-medium text-gray-900 dark:text-white">
+                    {#if maxRunsPerJob === null}
+                      Unlimited retention
+                    {:else}
+                      Keep last {maxRunsPerJob} runs per job
+                    {/if}
+                  </span>
+                </div>
+
+                <div>
+                  <label for="max-runs" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Maximum Runs per Job</label>
+                  <div class="flex gap-3">
+                    <div class="relative flex-1">
+                      <input
+                        id="max-runs"
+                        type="text"
+                        inputmode="numeric"
+                        bind:value={maxRunsInput}
+                        class="input pr-14"
+                        placeholder="Empty = unlimited"
+                      />
+                      <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 dark:text-gray-500">runs</span>
+                    </div>
+                    <button
+                      onclick={handleLogsSave}
+                      disabled={logsLoading || !hasLogsChanges()}
+                      class="btn btn-primary px-6 py-2 disabled:opacity-50"
+                    >
+                      {#if logsLoading}
+                        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
                       {:else}
-                        Save Changes
+                        Save
                       {/if}
                     </button>
                   </div>
-                </div>
-
-                <!-- Info card -->
-                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 md:p-8">
-                  <div class="flex items-center gap-4 mb-6">
-                    <div class="w-12 h-12 bg-blue-100 dark:bg-blue-900/40 rounded-xl flex items-center justify-center">
-                      <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h4 class="font-semibold text-gray-900 dark:text-white">Current Status</h4>
-                      <p class="text-sm text-gray-500 dark:text-gray-400">Active retention setting</p>
-                    </div>
-                  </div>
-
-                  <div class="space-y-4">
-                    <div class="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-700">
-                      <span class="text-gray-600 dark:text-gray-400">Retention Mode</span>
-                      <span class="font-medium text-gray-900 dark:text-white">
-                        {#if maxRunsPerJob === null}
-                          Unlimited
-                        {:else}
-                          Limited
-                        {/if}
-                      </span>
-                    </div>
-                    <div class="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-700">
-                      <span class="text-gray-600 dark:text-gray-400">Runs Kept</span>
-                      <span class="font-medium text-gray-900 dark:text-white">
-                        {#if maxRunsPerJob === null}
-                          All runs
-                        {:else}
-                          Last {maxRunsPerJob} per job
-                        {/if}
-                      </span>
-                    </div>
-                    <div class="flex items-center justify-between py-3">
-                      <span class="text-gray-600 dark:text-gray-400">Auto Cleanup</span>
-                      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium {maxRunsPerJob === null ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400' : 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'}">
-                        {maxRunsPerJob === null ? 'Disabled' : 'Enabled'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
-                    <p class="text-sm text-amber-800 dark:text-amber-300">
-                      <strong>Note:</strong> When a limit is set, older job runs and their logs are automatically deleted when new runs exceed the threshold.
-                    </p>
-                  </div>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                    When set, older runs are automatically deleted when new runs exceed the limit.
+                  </p>
                 </div>
               </div>
             {/if}
