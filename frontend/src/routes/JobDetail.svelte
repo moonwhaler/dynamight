@@ -12,13 +12,13 @@
   import HelpTooltip from '../components/ui/HelpTooltip.svelte';
   import RunLogModal from '../components/logs/RunLogModal.svelte';
   import { confirm } from '../components/ui/ConfirmDialog.svelte';
+  import { showToast } from '../components/ui/Toast.svelte';
 
   let { params = {} }: { params?: { id?: string } } = $props();
 
   let isNew = $derived(!params.id || params.id === 'new');
   let loading = $state(true);
   let saving = $state(false);
-  let error = $state<string | null>(null);
   let drives = $state<UsbDrive[]>([]);
   let schedules = $state<Schedule[]>([]);
   let loadedJobId = $state<string | null>(null);
@@ -47,7 +47,6 @@
   async function loadData() {
     console.log('[JobDetail] loadData, params:', params, 'isNew:', isNew);
     loading = true;
-    error = null;
 
     try {
       // Load USB drives if not already loaded
@@ -70,7 +69,7 @@
       }
     } catch (e) {
       console.error('[JobDetail] Error:', e);
-      error = e instanceof Error ? e.message : 'Failed to load job';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to load job', variant: 'error' });
     } finally {
       loading = false;
     }
@@ -110,11 +109,10 @@
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
-    error = null;
 
     // Validate at least one source directory is selected
     if (sourceDirs.length === 0) {
-      error = 'At least one source directory must be selected';
+      showToast({ message: 'At least one source directory must be selected', variant: 'error' });
       return;
     }
 
@@ -157,7 +155,7 @@
       push('/jobs');
     } catch (e) {
       console.error('[JobDetail] Submit error:', e);
-      error = e instanceof Error ? e.message : 'Failed to save job';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to save job', variant: 'error' });
     } finally {
       saving = false;
     }
@@ -177,21 +175,20 @@
       jobsStore.removeJob(parseInt(params.id!));
       push('/jobs');
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to delete job';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to delete job', variant: 'error' });
     }
   }
 
   async function handleRun() {
     if (running) return;
     running = true;
-    error = null;
     try {
       const result = await api.jobs.run(parseInt(params.id!));
       if ($preferencesStore.showLogViewerAfterManualRun) {
         activeRunId = result.runId;
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to start job';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to start job', variant: 'error' });
     } finally {
       running = false;
     }
@@ -204,13 +201,12 @@
   async function handleClone() {
     if (cloning) return;
     cloning = true;
-    error = null;
     try {
       const clonedJob = await api.jobs.clone(parseInt(params.id!));
       jobsStore.addJob(clonedJob);
       push(`/jobs/${clonedJob.id}`);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to clone job';
+      showToast({ message: e instanceof Error ? e.message : 'Failed to clone job', variant: 'error' });
     } finally {
       cloning = false;
     }
@@ -240,12 +236,6 @@
       <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600"></div>
     </div>
   {:else}
-    {#if error}
-      <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg">
-        {error}
-      </div>
-    {/if}
-
     <form onsubmit={handleSubmit} class="space-y-6">
       <!-- Basic Info -->
       <div class="card p-6 space-y-4">

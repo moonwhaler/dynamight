@@ -10,6 +10,7 @@
   import History from './routes/History.svelte';
   import Layout from './components/layout/Layout.svelte';
   import ConfirmDialog from './components/ui/ConfirmDialog.svelte';
+  import Toast from './components/ui/Toast.svelte';
 
   const routes = {
     '/': Dashboard,
@@ -39,3 +40,6 @@
 
 <!-- Global confirmation dialog -->
 <ConfirmDialog />
+
+<!-- Global toast notifications -->
+<Toast />
