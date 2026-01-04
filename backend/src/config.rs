@@ -1,8 +1,10 @@
 use std::env;
+use std::path::Path;
 
 #[derive(Clone)]
 pub struct Config {
     pub database_url: String,
+    pub logs_database_url: String,
     pub jwt_secret: String,
     pub host: String,
     pub port: u16,
@@ -15,9 +17,24 @@ impl Config {
     pub fn from_env() -> Self {
         dotenvy::dotenv().ok();
 
+        let database_url = env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "sqlite:data/dynamight.db".to_string());
+
+        // Derive logs database URL from main database URL if not specified
+        let logs_database_url = env::var("LOGS_DATABASE_URL").unwrap_or_else(|_| {
+            // Extract the path from sqlite:path/to/db.db and create logs.db in same directory
+            if let Some(path) = database_url.strip_prefix("sqlite:") {
+                let db_path = Path::new(path);
+                if let Some(parent) = db_path.parent() {
+                    return format!("sqlite:{}/logs.db", parent.display());
+                }
+            }
+            "sqlite:data/logs.db".to_string()
+        });
+
         Self {
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite:data/dynamight.db".to_string()),
+            database_url,
+            logs_database_url,
             jwt_secret: env::var("JWT_SECRET")
                 .expect("JWT_SECRET must be set"),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -37,5 +54,13 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
         }
+    }
+
+    /// Returns the directory containing the database files
+    pub fn database_dir(&self) -> Option<&Path> {
+        self.database_url
+            .strip_prefix("sqlite:")
+            .map(Path::new)
+            .and_then(|p| p.parent())
     }
 }

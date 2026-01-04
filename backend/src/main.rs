@@ -44,8 +44,10 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env();
 
-    // Ensure data directory exists
-    std::fs::create_dir_all("data").ok();
+    // Ensure database directory exists
+    if let Some(db_dir) = config.database_dir() {
+        std::fs::create_dir_all(db_dir).ok();
+    }
 
     // Connect to main database with create_if_missing and WAL mode for better concurrency
     let db_options = SqliteConnectOptions::from_str(&config.database_url)?
@@ -60,8 +62,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // Connect to logs database (separate for performance)
-    let logs_db_url = config.database_url.replace("dynamight.db", "logs.db");
-    let logs_db_options = SqliteConnectOptions::from_str(&logs_db_url)?
+    let logs_db_options = SqliteConnectOptions::from_str(&config.logs_database_url)?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
