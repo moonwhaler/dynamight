@@ -60,6 +60,9 @@
   let syncOptions = $state<SyncOptions>(createDefaultSyncOptions());
   let credentialId = $state<number | null>(null);
 
+  // Pending schedules for new jobs (cron expressions stored until job is created)
+  let pendingSchedules = $state<string[]>([]);
+
   async function loadData() {
     loading = true;
 
@@ -205,6 +208,18 @@
       if (isNew) {
         const job = await api.jobs.create(jobData);
         jobsStore.addJob(job);
+
+        // Create pending schedules for the new job
+        if (pendingSchedules.length > 0) {
+          for (const cron of pendingSchedules) {
+            try {
+              await api.schedules.create(job.id, { cron_expression: cron });
+            } catch (e) {
+              console.error('[JobDetail] Failed to create schedule:', e);
+            }
+          }
+        }
+
         showToast({ message: m.job_toast_created(), variant: 'success' });
       } else {
         const job = await api.jobs.update(parseInt(params.id!), jobData);
@@ -430,11 +445,13 @@
       </div>
 
       <!-- Schedule -->
-      {#if !isNew}
-        <div class="card p-6">
+      <div class="card p-6">
+        {#if isNew}
+          <SchedulePicker bind:schedules bind:pendingSchedules />
+        {:else}
           <SchedulePicker jobId={parseInt(params.id!)} bind:schedules />
-        </div>
-      {/if}
+        {/if}
+      </div>
 
       <!-- Actions -->
       <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">

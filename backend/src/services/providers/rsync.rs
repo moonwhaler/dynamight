@@ -51,13 +51,16 @@ impl RsyncProvider {
             args.push("--delete".to_string());
         }
 
-        // Provider-specific options (checksum, compression)
+        // Provider-specific options (checksum, compression, ignore-times)
         if let Some(provider_opts) = ctx.options.provider_options.as_ref() {
             if provider_opts.get("checksum_mode").and_then(|v| v.as_bool()).unwrap_or(false) {
                 args.push("--checksum".to_string());
             }
             if provider_opts.get("compress").and_then(|v| v.as_bool()).unwrap_or(false) {
                 args.push("-z".to_string());
+            }
+            if provider_opts.get("ignore_times").and_then(|v| v.as_bool()).unwrap_or(false) {
+                args.push("--ignore-times".to_string());
             }
         }
 

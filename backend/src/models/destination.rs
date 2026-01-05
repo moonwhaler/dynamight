@@ -203,4 +203,13 @@ impl SyncOptions {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     }
+
+    /// Get rsync-specific ignore_times option (force sync)
+    pub fn ignore_times(&self) -> bool {
+        self.provider_options
+            .as_ref()
+            .and_then(|o| o.get("ignore_times"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
 }

@@ -5,12 +5,17 @@
   import * as m from '$lib/paraglide/messages.js';
 
   let {
-    jobId,
+    jobId = null,
     schedules = $bindable<Schedule[]>([]),
+    pendingSchedules = $bindable<string[]>([]),
   }: {
-    jobId: number;
+    jobId?: number | null;
     schedules: Schedule[];
+    pendingSchedules?: string[];
   } = $props();
+
+  // Pending mode: when jobId is null, we store cron expressions locally
+  let isPendingMode = $derived(jobId === null);
 
   let showAdd = $state(false);
   let saving = $state(false);
@@ -71,17 +76,29 @@
     saving = true;
     try {
       const cron = buildCronExpression();
-      const request: CreateScheduleRequest = { cron_expression: cron };
 
-      const schedule = await api.schedules.create(jobId, request);
-      schedules = [...schedules, schedule];
-      showAdd = false;
-      resetForm();
+      if (isPendingMode) {
+        // In pending mode, store cron expression locally
+        pendingSchedules = [...pendingSchedules, cron];
+        showAdd = false;
+        resetForm();
+      } else {
+        // Normal mode: create via API
+        const request: CreateScheduleRequest = { cron_expression: cron };
+        const schedule = await api.schedules.create(jobId!, request);
+        schedules = [...schedules, schedule];
+        showAdd = false;
+        resetForm();
+      }
     } catch {
       // Ignore
     } finally {
       saving = false;
     }
+  }
+
+  function removePendingSchedule(index: number) {
+    pendingSchedules = pendingSchedules.filter((_, i) => i !== index);
   }
 
   async function deleteSchedule(id: number) {
@@ -113,8 +130,10 @@
   }
 
   function formatSchedule(schedule: Schedule): string {
-    // Try to parse the cron expression for a human-readable format
-    const cron = schedule.cron_expression;
+    return formatCron(schedule.cron_expression);
+  }
+
+  function formatCron(cron: string): string {
     const parts = cron.split(' ');
 
     if (parts.length !== 5) return cron;
@@ -179,9 +198,32 @@
     {/if}
   </div>
 
-  {#if schedules.length === 0 && !showAdd}
+  {#if schedules.length === 0 && pendingSchedules.length === 0 && !showAdd}
     <p class="text-gray-500 dark:text-gray-400 text-sm">{m.schedule_no_schedules()}</p>
   {/if}
+
+  <!-- Pending Schedules (for new jobs) -->
+  {#each pendingSchedules as cron, index (index)}
+    <div class="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+      <div class="flex items-center gap-3">
+        <div class="w-5 h-5 flex items-center justify-center">
+          <svg class="w-4 h-4 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div>
+          <div class="font-medium text-gray-900 dark:text-white">{formatCron(cron)}</div>
+          <div class="text-sm text-amber-600 dark:text-amber-400">{m.schedule_pending()}</div>
+        </div>
+      </div>
+      <button
+        onclick={() => removePendingSchedule(index)}
+        class="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
+      >
+        {m.common_delete()}
+      </button>
+    </div>
+  {/each}
 
   <!-- Existing Schedules -->
   {#each schedules as schedule (schedule.id)}

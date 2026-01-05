@@ -34,12 +34,18 @@
     (options.provider_options?.checksum_mode as boolean) ?? false
   );
   let compress = $derived((options.provider_options?.compress as boolean) ?? false);
+  let ignoreTimes = $derived((options.provider_options?.ignore_times as boolean) ?? false);
 
   function setProviderOption(key: string, value: boolean) {
-    options.provider_options = {
+    const newOptions = {
       ...(options.provider_options ?? {}),
       [key]: value,
     };
+    // When enabling ignore_times, disable checksum_mode (they're mutually exclusive)
+    if (key === 'ignore_times' && value) {
+      newOptions.checksum_mode = false;
+    }
+    options.provider_options = newOptions;
   }
 
   function addExclude() {
@@ -97,13 +103,14 @@
   <!-- Rsync-specific: Checksum Mode -->
   {#if effectiveCapabilities.supports_checksum && destinationType === 'local'}
     <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
+      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl transition-colors {ignoreTimes ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70'}"
     >
       <div class="relative flex items-center">
         <input
           type="checkbox"
-          checked={checksumMode}
+          checked={checksumMode && !ignoreTimes}
           onchange={(e) => setProviderOption('checksum_mode', e.currentTarget.checked)}
+          disabled={ignoreTimes}
           class="peer sr-only"
         />
         <div
@@ -121,7 +128,11 @@
           />
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.sync_checksum_desc()}
+          {#if ignoreTimes}
+            {m.sync_checksum_disabled_by_force()}
+          {:else}
+            {m.sync_checksum_desc()}
+          {/if}
         </p>
       </div>
     </label>
@@ -155,6 +166,39 @@
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
           {m.sync_compression_desc()}
+        </p>
+      </div>
+    </label>
+  {/if}
+
+  <!-- Rsync-specific: Force Sync (Ignore Times) -->
+  {#if destinationType === 'local'}
+    <label
+      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
+    >
+      <div class="relative flex items-center">
+        <input
+          type="checkbox"
+          checked={ignoreTimes}
+          onchange={(e) => setProviderOption('ignore_times', e.currentTarget.checked)}
+          class="peer sr-only"
+        />
+        <div
+          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
+        ></div>
+        <div
+          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
+        ></div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
+          {m.sync_ignore_times_title()}
+          <HelpTooltip
+            text={m.sync_ignore_times_help()}
+          />
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          {m.sync_ignore_times_desc()}
         </p>
       </div>
     </label>
