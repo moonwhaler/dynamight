@@ -1,6 +1,6 @@
-use crate::models::{Job, JobRunStatus, LogLevel, LogMessage};
+use crate::models::{DestinationConfig, Job, JobRunStatus, LogLevel, LogMessage};
 use crate::services::credential_service::CredentialService;
-use crate::services::providers::{self, SyncContext, ProviderError};
+use crate::services::providers::{self, RsyncProvider, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -221,6 +221,54 @@ impl BackupService {
                 error_count: 1,
                 ..Default::default()
             });
+        }
+
+        // Pre-flight space check for local destinations
+        if matches!(destination, DestinationConfig::Local { .. }) {
+            let space_mode = sync_options.space_check_mode();
+            if space_mode != "none" {
+                let rsync = RsyncProvider::new();
+                match rsync.check_space(&source_dirs, &destination, &sync_options).await {
+                    Ok(result) if !result.fits => {
+                        let deficit = result.deficit.unwrap_or(0);
+                        let msg = format!(
+                            "Insufficient space: need {} bytes to transfer, have {} bytes free (deficit: {} bytes)",
+                            result.transfer_size, result.destination_free, deficit
+                        );
+                        if space_mode == "fail" {
+                            self.log(run_id, LogLevel::Error, &msg, "space-check").await;
+                            return Ok(JobResult {
+                                exit_code: 1,
+                                error_count: 1,
+                                ..Default::default()
+                            });
+                        } else {
+                            // "warn" mode - log warning but continue
+                            self.log(run_id, LogLevel::Warning, &msg, "space-check").await;
+                        }
+                    }
+                    Ok(result) => {
+                        self.log(
+                            run_id,
+                            LogLevel::Info,
+                            &format!(
+                                "Space check passed: {} bytes to transfer, {} bytes free",
+                                result.transfer_size, result.destination_free
+                            ),
+                            "space-check",
+                        ).await;
+                    }
+                    Err(e) => {
+                        // Space check failed - log warning but don't block
+                        self.log(
+                            run_id,
+                            LogLevel::Warning,
+                            &format!("Space check failed: {}", e),
+                            "space-check",
+                        ).await;
+                    }
+                }
+            }
         }
 
         // Create cancellation checker closure

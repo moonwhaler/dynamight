@@ -1,17 +1,45 @@
 //! Rsync-based sync provider for local and USB destinations
 
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
-use crate::models::{CredentialData, DestinationConfig, LogLevel};
+use crate::models::{CredentialData, DestinationConfig, LogLevel, SyncOptions};
 use async_trait::async_trait;
 #[cfg(unix)]
 use nix::sys::signal::{self, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
+use serde::Serialize;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+/// Result of a space check operation
+#[derive(Debug, Clone, Serialize)]
+pub struct SpaceCheckResult {
+    /// Total size of all source directories
+    pub source_size: u64,
+    /// Estimated transfer size (from rsync dry-run)
+    pub transfer_size: u64,
+    /// Free space at destination
+    pub destination_free: u64,
+    /// Total space at destination
+    pub destination_total: u64,
+    /// Whether the transfer will fit
+    pub fits: bool,
+    /// How many bytes short (if !fits)
+    pub deficit: Option<u64>,
+    /// Per-source breakdown
+    pub sources: Vec<SourceSizeInfo>,
+}
+
+/// Size information for a single source directory
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceSizeInfo {
+    pub path: String,
+    pub size: u64,
+    pub transfer_size: u64,
+}
 
 pub struct RsyncProvider;
 
@@ -162,6 +190,248 @@ impl RsyncProvider {
                 ctx.log_warning(&format!("Unmount error: {}", e), "mount").await;
             }
         }
+    }
+
+    /// Unmount a mount point (standalone version without SyncContext)
+    async fn unmount_standalone(&self, mount_point: &str) {
+        let _ = Command::new("sync").output().await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let _ = Command::new("umount").arg(mount_point).output().await;
+    }
+
+    /// Build rsync args for space check (dry-run with stats)
+    fn build_space_check_args(&self, options: &SyncOptions, fstype: &str) -> Vec<String> {
+        let mut args = vec![
+            "--dry-run".to_string(),
+            "--stats".to_string(),
+            "-v".to_string(),
+        ];
+
+        // Filesystem-aware options
+        match fstype {
+            "exfat" | "ntfs" | "vfat" | "msdos" | "ntfs3" => {
+                args.extend(["-r", "-l", "-t", "-D"].iter().map(|s| s.to_string()));
+            }
+            _ => {
+                args.push("-a".to_string());
+            }
+        }
+
+        // Include delete flag if set (affects what would be transferred)
+        if options.delete_extraneous {
+            args.push("--delete".to_string());
+        }
+
+        // Excludes
+        for exclude in &options.exclude_patterns {
+            args.push(format!("--exclude={}", exclude));
+        }
+
+        args
+    }
+
+    /// Get the size of a directory using du
+    async fn get_directory_size(&self, path: &str) -> Result<u64, ProviderError> {
+        let output = Command::new("du")
+            .args(["-sb", path])
+            .output()
+            .await
+            .map_err(ProviderError::IoError)?;
+
+        if !output.status.success() {
+            return Err(ProviderError::ConfigError(format!(
+                "Failed to get size of {}",
+                path
+            )));
+        }
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let size_str = output_str.split_whitespace().next().unwrap_or("0");
+        size_str
+            .parse::<u64>()
+            .map_err(|_| ProviderError::ConfigError("Failed to parse directory size".to_string()))
+    }
+
+    /// Run rsync dry-run and parse transfer size from output
+    async fn get_transfer_size(
+        &self,
+        source: &str,
+        dest: &str,
+        args: &[String],
+    ) -> Result<u64, ProviderError> {
+        let mut cmd = Command::new("rsync");
+        cmd.args(args)
+            .arg(format!("{}/", source))
+            .arg(format!("{}/", dest))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let output = cmd.output().await.map_err(ProviderError::IoError)?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut transfer_size: u64 = 0;
+
+        // Parse "Total transferred file size: X bytes" from rsync stats
+        for line in stdout.lines() {
+            if line.contains("Total transferred file size") {
+                if let Some(size_part) = line.split(':').nth(1) {
+                    if let Some(bytes_str) = size_part.split_whitespace().next() {
+                        if let Ok(bytes) = bytes_str.replace(',', "").parse::<u64>() {
+                            transfer_size = bytes;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(transfer_size)
+    }
+
+    /// Check if destination has enough space for the sync
+    pub async fn check_space(
+        &self,
+        source_dirs: &[String],
+        destination: &DestinationConfig,
+        options: &SyncOptions,
+    ) -> Result<SpaceCheckResult, ProviderError> {
+        // Extract local destination config
+        let (mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount) = match destination {
+            DestinationConfig::Local {
+                mount_point,
+                backup_subdir,
+                usb_uuid,
+                auto_mount,
+                auto_unmount,
+            } => (
+                mount_point.clone(),
+                backup_subdir.clone(),
+                usb_uuid.clone(),
+                *auto_mount,
+                *auto_unmount,
+            ),
+            _ => {
+                return Err(ProviderError::ConfigError(
+                    "Space check only supports Local destination".to_string(),
+                ))
+            }
+        };
+
+        // Mount if needed
+        let did_mount = if auto_mount {
+            if let Some(uuid) = &usb_uuid {
+                // Create mount point if needed
+                let _ = tokio::fs::create_dir_all(&mount_point).await;
+
+                let mount_result = Command::new("mount")
+                    .args(["-U", uuid, &mount_point])
+                    .output()
+                    .await;
+
+                match mount_result {
+                    Ok(output) => output.status.success() || String::from_utf8_lossy(&output.stderr).contains("already mounted"),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Detect filesystem type
+        let fstype = self.detect_filesystem(&mount_point).await;
+
+        // Build rsync args for dry-run
+        let rsync_args = self.build_space_check_args(options, &fstype);
+
+        let mut sources_info = Vec::new();
+        let mut total_source_size: u64 = 0;
+        let mut total_transfer_size: u64 = 0;
+
+        // Check each source directory
+        for source_dir in source_dirs {
+            if !Path::new(source_dir).exists() {
+                continue;
+            }
+
+            // Get source size
+            let source_size = self.get_directory_size(source_dir).await.unwrap_or(0);
+            total_source_size += source_size;
+
+            // Derive destination path
+            let dest_name = Path::new(source_dir)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "backup".to_string());
+
+            let dest = format!("{}/{}/{}", mount_point, backup_subdir, dest_name);
+
+            // Create destination if it doesn't exist (for accurate dry-run)
+            let _ = tokio::fs::create_dir_all(&dest).await;
+
+            // Get transfer size via rsync dry-run
+            let transfer_size = self
+                .get_transfer_size(source_dir, &dest, &rsync_args)
+                .await
+                .unwrap_or(source_size); // Fall back to source size if dry-run fails
+
+            total_transfer_size += transfer_size;
+
+            sources_info.push(SourceSizeInfo {
+                path: source_dir.clone(),
+                size: source_size,
+                transfer_size,
+            });
+        }
+
+        // Get destination free space using df command
+        let (destination_free, destination_total) = {
+            let output = Command::new("df")
+                .args(["--block-size=1", "--output=avail,size", &mount_point])
+                .output()
+                .await;
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let mut lines = stdout.lines();
+                    lines.next(); // Skip header
+                    if let Some(data_line) = lines.next() {
+                        let parts: Vec<&str> = data_line.split_whitespace().collect();
+                        let free: u64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        (free, total)
+                    } else {
+                        (0, 0)
+                    }
+                }
+                _ => (0, 0),
+            }
+        };
+
+        // Unmount if we mounted
+        if did_mount && auto_unmount && usb_uuid.is_some() {
+            self.unmount_standalone(&mount_point).await;
+        }
+
+        // Add 5% safety margin
+        let required_with_margin = (total_transfer_size as f64 * 1.05) as u64;
+        let fits = required_with_margin <= destination_free;
+        let deficit = if fits {
+            None
+        } else {
+            Some(required_with_margin - destination_free)
+        };
+
+        Ok(SpaceCheckResult {
+            source_size: total_source_size,
+            transfer_size: total_transfer_size,
+            destination_free,
+            destination_total,
+            fits,
+            deficit,
+            sources: sources_info,
+        })
     }
 }
 

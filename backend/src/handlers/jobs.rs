@@ -11,7 +11,8 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
-use crate::models::{CreateJobRequest, Job, JobResponse, JobRunStatus, UpdateJobRequest};
+use crate::models::{CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, UpdateJobRequest};
+use crate::services::providers::{RsyncProvider, SpaceCheckResult};
 use crate::AppState;
 
 /// Validates rsync exclude patterns to prevent shell injection and unexpected behavior.
@@ -687,5 +688,59 @@ async fn generate_unique_clone_name(db: &sqlx::SqlitePool, base_name: &str) -> S
         if counter > 100 {
             return format!("{} (clone {})", base_name, chrono::Utc::now().timestamp());
         }
+    }
+}
+
+/// Check if the destination has enough space for a sync operation
+/// POST /api/jobs/:id/check-space
+pub async fn check_job_space(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    // Get job
+    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    let job = match job {
+        Some(j) => j,
+        None => {
+            return ApiError::job_not_found().into_response();
+        }
+    };
+
+    // Get destination config
+    let destination = job.get_destination_config();
+
+    // Only support local destinations for now
+    if !matches!(destination, DestinationConfig::Local { .. }) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "space_check_not_supported",
+                "message": "Space check is only supported for local destinations"
+            })),
+        )
+            .into_response();
+    }
+
+    // Get sync options and source dirs
+    let sync_options = job.get_sync_options();
+    let source_dirs = job.source_dirs_vec();
+
+    // Perform space check
+    let rsync = RsyncProvider::new();
+    match rsync.check_space(&source_dirs, &destination, &sync_options).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "space_check_failed",
+                "message": format!("{}", e)
+            })),
+        )
+            .into_response(),
     }
 }

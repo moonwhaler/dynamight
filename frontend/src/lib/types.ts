@@ -90,6 +90,26 @@ export type DestinationConfig =
   | SftpDestinationConfig
   | WebDavDestinationConfig;
 
+// Space check modes for local syncs
+export type SpaceCheckMode = 'fail' | 'warn' | 'none';
+
+// Space check response from API
+export interface SpaceCheckResponse {
+  source_size: number;
+  transfer_size: number;
+  destination_free: number;
+  destination_total: number;
+  fits: boolean;
+  deficit: number | null;
+  sources: SourceSizeInfo[];
+}
+
+export interface SourceSizeInfo {
+  path: string;
+  size: number;
+  transfer_size: number;
+}
+
 // Sync options (unified across all providers)
 export interface SyncOptions {
   delete_extraneous: boolean;
@@ -98,6 +118,7 @@ export interface SyncOptions {
   dry_run: boolean;
   verbosity: 'quiet' | 'normal' | 'verbose';
   provider_options?: Record<string, unknown> | null;
+  space_check?: SpaceCheckMode;
 }
 
 // Provider capabilities
@@ -365,5 +386,6 @@ export function createDefaultSyncOptions(): SyncOptions {
     dry_run: false,
     verbosity: 'normal',
     provider_options: null,
+    space_check: 'warn',
   };
 }

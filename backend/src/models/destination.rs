@@ -74,6 +74,10 @@ fn default_ssh_port() -> u16 {
     22
 }
 
+fn default_space_check() -> String {
+    "warn".to_string()
+}
+
 impl Default for DestinationConfig {
     fn default() -> Self {
         Self::Local {
@@ -148,6 +152,10 @@ pub struct SyncOptions {
     /// Provider-specific options as JSON
     #[serde(default)]
     pub provider_options: Option<serde_json::Value>,
+
+    /// Space check behavior before sync: "fail", "warn", or "none"
+    #[serde(default = "default_space_check")]
+    pub space_check: String,
 }
 
 impl Default for SyncOptions {
@@ -159,6 +167,7 @@ impl Default for SyncOptions {
             dry_run: false,
             verbosity: "normal".to_string(),
             provider_options: None,
+            space_check: "warn".to_string(),
         }
     }
 }
@@ -187,6 +196,7 @@ impl SyncOptions {
             dry_run,
             verbosity,
             provider_options: Some(provider_options),
+            space_check: "warn".to_string(),
         }
     }
 
@@ -215,5 +225,14 @@ impl SyncOptions {
             .and_then(|o| o.get("ignore_times"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    }
+
+    /// Get space check mode, defaulting to "warn" if empty
+    pub fn space_check_mode(&self) -> &str {
+        if self.space_check.is_empty() {
+            "warn"
+        } else {
+            &self.space_check
+        }
     }
 }

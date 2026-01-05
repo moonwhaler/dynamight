@@ -22,6 +22,7 @@ import type {
   ProviderCapabilities,
   CredentialProviderType,
   DestinationConfig,
+  SpaceCheckResponse,
 } from './types';
 import * as m from '$lib/paraglide/messages.js';
 
@@ -248,6 +249,8 @@ export const api = {
       ),
     clone: (id: number) =>
       request<Job>(`/jobs/${id}/clone`, { method: 'POST' }),
+    checkSpace: (id: number) =>
+      request<SpaceCheckResponse>(`/jobs/${id}/check-space`, { method: 'POST' }),
   },
 
   schedules: {

@@ -46,6 +46,7 @@
   let activeRunId = $state<number | null>(null);
   let running = $state(false);
   let cloning = $state(false);
+  let checkingSpace = $state(false);
   let capabilities = $state<ProviderCapabilities | null>(null);
 
   // Form state
@@ -285,6 +286,40 @@
       cloning = false;
     }
   }
+
+  function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  async function handleCheckSpace() {
+    if (checkingSpace || isNew) return;
+    checkingSpace = true;
+    try {
+      const result = await api.jobs.checkSpace(parseInt(params.id!));
+      if (result.fits) {
+        showToast({
+          message: `${m.space_check_fits()}: ${formatBytes(result.transfer_size)} to transfer, ${formatBytes(result.destination_free)} free`,
+          variant: 'success',
+        });
+      } else {
+        showToast({
+          message: `${m.space_check_insufficient()}: ${m.space_check_deficit()} ${formatBytes(result.deficit ?? 0)}`,
+          variant: 'error',
+        });
+      }
+    } catch (e) {
+      showToast({
+        message: m.space_check_error(),
+        variant: 'error',
+      });
+    } finally {
+      checkingSpace = false;
+    }
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -294,6 +329,11 @@
     </h1>
     {#if !isNew}
       <div class="flex gap-2">
+        {#if destinationType === 'local'}
+          <button onclick={handleCheckSpace} disabled={checkingSpace} class="btn btn-secondary flex-1 sm:flex-none">
+            {checkingSpace ? m.space_check_checking() : m.space_check_button()}
+          </button>
+        {/if}
         <button onclick={handleRun} disabled={running} class="btn btn-secondary flex-1 sm:flex-none">
           {running ? m.job_btn_starting() : m.job_btn_run_now()}
         </button>

@@ -232,6 +232,34 @@
     </label>
   {/if}
 
+  <!-- Space Check Mode (local only) -->
+  {#if destinationType === 'local'}
+    <div>
+      <label for="space_check" class="block font-medium text-gray-700 dark:text-gray-300">
+        {m.space_check_title()}
+        <HelpTooltip text={m.space_check_help()} />
+      </label>
+      <select
+        id="space_check"
+        bind:value={options.space_check}
+        class="input mt-1 w-64"
+      >
+        <option value="warn">{m.space_check_warn()}</option>
+        <option value="fail">{m.space_check_fail()}</option>
+        <option value="none">{m.space_check_none()}</option>
+      </select>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        {#if options.space_check === 'fail'}
+          {m.space_check_fail_desc()}
+        {:else if options.space_check === 'none'}
+          {m.space_check_none_desc()}
+        {:else}
+          {m.space_check_warn_desc()}
+        {/if}
+      </p>
+    </div>
+  {/if}
+
   <!-- Verbosity -->
   <div>
     <label for="verbosity" class="block font-medium text-gray-700 dark:text-gray-300">
