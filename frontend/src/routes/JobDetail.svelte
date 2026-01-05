@@ -249,6 +249,36 @@
       <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600"></div>
     </div>
   {:else}
+    <!-- Job Status Toggle -->
+    <label class="card flex items-center justify-between gap-4 p-4 cursor-pointer group transition-colors {enabled ? 'ring-1 ring-primary-500/50 bg-primary-50/30 dark:bg-primary-900/10' : 'bg-gray-50 dark:bg-gray-800/50'}">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center transition-colors {enabled ? 'bg-primary-100 dark:bg-primary-900/40' : 'bg-gray-200 dark:bg-gray-700'}">
+          {#if enabled}
+            <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          {:else}
+            <svg class="w-5 h-5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          {/if}
+        </div>
+        <div>
+          <div class="font-medium text-gray-900 dark:text-white">
+            {enabled ? 'Job Enabled' : 'Job Disabled'}
+          </div>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            {enabled ? 'This job will run on schedule' : 'Scheduled runs are paused'}
+          </p>
+        </div>
+      </div>
+      <div class="relative flex items-center">
+        <input type="checkbox" bind:checked={enabled} class="peer sr-only" />
+        <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+        <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+      </div>
+    </label>
+
     <form onsubmit={handleSubmit} class="space-y-6">
       <!-- Basic Info -->
       <div class="card p-6 space-y-4">
@@ -263,21 +293,6 @@
           <label for="description" class="label">Description</label>
           <textarea id="description" bind:value={description} rows="2" class="input"></textarea>
         </div>
-
-        <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
-          <div class="relative flex items-center">
-            <input type="checkbox" bind:checked={enabled} class="peer sr-only" />
-            <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
-            <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-              Job enabled
-              <HelpTooltip text="When disabled, scheduled runs won't execute and the job won't appear in the run options. Useful for temporarily pausing backups without deleting the configuration." />
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Enable or disable scheduled runs for this job.</p>
-          </div>
-        </label>
       </div>
 
       <!-- Mount Configuration -->
