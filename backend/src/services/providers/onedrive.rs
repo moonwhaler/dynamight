@@ -174,6 +174,7 @@ impl SyncProvider for OneDriveProvider {
                     success: true,
                     message: "Successfully connected to OneDrive".to_string(),
                     details: Some(format!("Drive: {}. Folder: /{}", drive_info, folder_path)),
+                    host_key_fingerprint: None,
                 })
             }
             401 => Err(ProviderError::CredentialError(

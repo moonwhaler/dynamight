@@ -131,6 +131,7 @@ impl SyncProvider for S3Provider {
                 success: true,
                 message: "Successfully connected to S3 bucket".to_string(),
                 details: Some(format!("Bucket: {}, Region: {}", bucket, region)),
+                host_key_fingerprint: None,
             }),
             Err(e) => {
                 let error_msg = format!("{}", e);

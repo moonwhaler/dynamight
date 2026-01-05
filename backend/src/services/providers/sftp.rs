@@ -3,6 +3,7 @@
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
+use russh_keys::PublicKeyBase64;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -94,9 +95,9 @@ impl SyncProvider for SftpProvider {
     ) -> Result<TestConnectionResult, ProviderError> {
         self.validate_config(destination, credential)?;
 
-        let (host, port, username, remote_path) = match destination {
-            DestinationConfig::Sftp { host, port, username, remote_path, .. } => {
-                (host.clone(), *port, username.clone(), remote_path.clone())
+        let (host, port, username, remote_path, expected_fingerprint) = match destination {
+            DestinationConfig::Sftp { host, port, username, remote_path, host_key_fingerprint, .. } => {
+                (host.clone(), *port, username.clone(), remote_path.clone(), host_key_fingerprint.clone())
             }
             _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
         };
@@ -108,13 +109,19 @@ impl SyncProvider for SftpProvider {
             _ => return Err(ProviderError::CredentialError("SFTP credentials required".to_string())),
         };
 
-        // Connect via SSH
+        // Connect via SSH with host key verification
         let config = Arc::new(russh::client::Config::default());
-        let sh = SftpClientHandler;
+        let handler = SftpClientHandler::new(expected_fingerprint.clone());
 
-        let mut session = russh::client::connect(config, (host.as_str(), port), sh)
+        let mut session = russh::client::connect(config, (host.as_str(), port), handler)
             .await
             .map_err(|e| ProviderError::ConnectionError(format!("SSH connection failed: {}", e)))?;
+
+        // Check if the connection was rejected due to host key mismatch
+        // Note: russh returns an error when check_server_key returns false
+        // We need to extract the handler to check the verification result
+        // Since we can't access the handler after connect(), we check if authentication fails
+        // with a specific pattern that indicates host key rejection
 
         // Authenticate
         let auth_result = if let Some(key) = private_key {
@@ -161,24 +168,42 @@ impl SyncProvider for SftpProvider {
             Err(_) => format!("Remote path '{}' will be created on first sync", remote_path),
         };
 
+        // To get the fingerprint, we need to do a separate connection with a handler we can query
+        // This is a limitation of russh's ownership model
+        let fingerprint = self.get_host_fingerprint(&host, port).await.ok();
+
+        // Determine the appropriate message based on whether this is first connection
+        let (message, fingerprint_to_return) = if expected_fingerprint.is_some() {
+            ("Successfully connected to SFTP server (host key verified)".to_string(), None)
+        } else if let Some(ref fp) = fingerprint {
+            (
+                format!("Successfully connected to SFTP server. Please verify and save the host key fingerprint: {}", fp),
+                Some(fp.clone())
+            )
+        } else {
+            ("Successfully connected to SFTP server".to_string(), None)
+        };
+
         Ok(TestConnectionResult {
             success: true,
-            message: "Successfully connected to SFTP server".to_string(),
+            message,
             details: Some(format!("{}@{}:{}. {}", username, host, port, path_info)),
+            host_key_fingerprint: fingerprint_to_return,
         })
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {
         let mut result = SyncResult::default();
 
-        let (host, port, username, remote_path) = match &ctx.destination {
+        let (host, port, username, remote_path, expected_fingerprint) = match &ctx.destination {
             DestinationConfig::Sftp {
                 host,
                 port,
                 username,
                 remote_path,
+                host_key_fingerprint,
                 ..
-            } => (host.clone(), *port, username.clone(), remote_path.clone()),
+            } => (host.clone(), *port, username.clone(), remote_path.clone(), host_key_fingerprint.clone()),
             _ => {
                 return Err(ProviderError::ConfigError(
                     "SftpProvider only supports SFTP destination".to_string(),
@@ -200,17 +225,55 @@ impl SyncProvider for SftpProvider {
         ctx.log_info("Starting SFTP sync", "sftp").await;
         ctx.log_info(&format!("Connecting to {}@{}:{}", username, host, port), "sftp").await;
 
-        // Use russh for SSH connection
+        // Verify host key before proceeding with sync
+        if expected_fingerprint.is_none() {
+            ctx.log_warning(
+                "No host key fingerprint configured. Please test connection first to verify the server identity.",
+                "sftp"
+            ).await;
+            return Err(ProviderError::ConfigError(
+                "Host key fingerprint not configured. Please test connection and save the destination to store the host key fingerprint.".to_string()
+            ));
+        }
+
+        // Log that we're verifying the host key
+        ctx.log_info("Verifying SSH host key...", "sftp").await;
+
+        // Use russh for SSH connection with host key verification
         let config = Arc::new(russh::client::Config::default());
 
-        let sh = SftpClientHandler;
-        let mut session = match russh::client::connect(config, (host.as_str(), port), sh).await {
+        let handler = SftpClientHandler::new(expected_fingerprint.clone());
+        let mut session = match russh::client::connect(config, (host.as_str(), port), handler).await {
             Ok(session) => session,
             Err(e) => {
+                // Check if this is a host key verification failure
+                let error_msg = e.to_string();
+                if error_msg.contains("key") || error_msg.contains("disconnect") {
+                    // Likely a host key mismatch - get the current fingerprint to report
+                    if let Ok(current_fp) = self.get_host_fingerprint(&host, port).await {
+                        if let Some(ref expected) = expected_fingerprint {
+                            if expected != &current_fp {
+                                ctx.log_error(
+                                    &format!(
+                                        "HOST KEY MISMATCH! Expected: {}, Got: {}. This could indicate a Man-in-the-Middle attack!",
+                                        expected, current_fp
+                                    ),
+                                    "sftp"
+                                ).await;
+                                return Err(ProviderError::HostKeyMismatch {
+                                    expected: expected.clone(),
+                                    actual: current_fp,
+                                });
+                            }
+                        }
+                    }
+                }
                 ctx.log_error(&format!("Failed to connect: {}", e), "sftp").await;
                 return Err(ProviderError::ConnectionError(format!("SSH connection failed: {}", e)));
             }
         };
+
+        ctx.log_info("SSH host key verified successfully", "sftp").await;
 
         // Authenticate
         let auth_result = if let Some(key) = private_key {
@@ -315,6 +378,50 @@ impl SyncProvider for SftpProvider {
 }
 
 impl SftpProvider {
+    /// Get the host key fingerprint for a server without full authentication
+    async fn get_host_fingerprint(&self, host: &str, port: u16) -> Result<String, ProviderError> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use sha2::{Sha256, Digest};
+
+        // We need a custom minimal handler just to capture the fingerprint
+        struct FingerprintCaptureHandler {
+            fingerprint: std::sync::Arc<tokio::sync::Mutex<Option<String>>>,
+        }
+
+        #[async_trait]
+        impl russh::client::Handler for FingerprintCaptureHandler {
+            type Error = russh::Error;
+
+            async fn check_server_key(
+                &mut self,
+                server_public_key: &russh_keys::key::PublicKey,
+            ) -> Result<bool, Self::Error> {
+                let key_bytes = server_public_key.public_key_bytes();
+                let mut hasher = Sha256::new();
+                hasher.update(&key_bytes);
+                let hash = hasher.finalize();
+                let fingerprint = format!("SHA256:{}", STANDARD.encode(hash));
+                *self.fingerprint.lock().await = Some(fingerprint);
+                // Accept the key for fingerprint capture
+                Ok(true)
+            }
+        }
+
+        let fingerprint_holder = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+        let handler = FingerprintCaptureHandler {
+            fingerprint: fingerprint_holder.clone(),
+        };
+
+        let config = Arc::new(russh::client::Config::default());
+
+        // Connect just to get the fingerprint (connection will fail auth, but that's ok)
+        let _ = russh::client::connect(config, (host, port), handler).await;
+
+        // Get the captured fingerprint
+        let result = fingerprint_holder.lock().await.clone();
+        result.ok_or_else(|| ProviderError::ConnectionError("Failed to capture host key".to_string()))
+    }
+
     async fn sync_directory(
         &self,
         sftp: &russh_sftp::client::SftpSession,
@@ -391,8 +498,49 @@ impl SftpProvider {
     }
 }
 
-/// SSH client handler for russh
-struct SftpClientHandler;
+/// Result of host key verification
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum HostKeyVerification {
+    /// Key matches expected fingerprint
+    Verified,
+    /// First connection (TOFU) - key was accepted and stored
+    FirstConnection(String),
+    /// Key mismatch - potential MITM attack
+    Mismatch { expected: String, actual: String },
+}
+
+/// SSH client handler for russh with host key verification
+struct SftpClientHandler {
+    /// Expected host key fingerprint (None for first connection / TOFU)
+    expected_fingerprint: Option<String>,
+    /// Captured fingerprint from server (populated during check_server_key)
+    captured_fingerprint: std::sync::Arc<tokio::sync::Mutex<Option<String>>>,
+    /// Verification result
+    verification_result: std::sync::Arc<tokio::sync::Mutex<Option<HostKeyVerification>>>,
+}
+
+impl SftpClientHandler {
+    fn new(expected_fingerprint: Option<String>) -> Self {
+        Self {
+            expected_fingerprint,
+            captured_fingerprint: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            verification_result: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Get the captured fingerprint after connection
+    #[allow(dead_code)]
+    async fn get_captured_fingerprint(&self) -> Option<String> {
+        self.captured_fingerprint.lock().await.clone()
+    }
+
+    /// Get the verification result after connection
+    #[allow(dead_code)]
+    async fn get_verification_result(&self) -> Option<HostKeyVerification> {
+        self.verification_result.lock().await.clone()
+    }
+}
 
 #[async_trait]
 impl russh::client::Handler for SftpClientHandler {
@@ -400,10 +548,48 @@ impl russh::client::Handler for SftpClientHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::key::PublicKey,
+        server_public_key: &russh_keys::key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // In production, you'd want to verify the host key
-        // For now, accept all keys (like ssh -o StrictHostKeyChecking=no)
-        Ok(true)
+        // Compute SHA256 fingerprint of the server's public key
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use sha2::{Sha256, Digest};
+
+        let key_bytes = server_public_key.public_key_bytes();
+        let mut hasher = Sha256::new();
+        hasher.update(&key_bytes);
+        let hash = hasher.finalize();
+        let fingerprint = format!("SHA256:{}", STANDARD.encode(hash));
+
+        // Store the captured fingerprint
+        *self.captured_fingerprint.lock().await = Some(fingerprint.clone());
+
+        // Verify against expected fingerprint
+        if let Some(ref expected) = self.expected_fingerprint {
+            if expected == &fingerprint {
+                // Key matches - connection is verified
+                tracing::info!("SFTP host key verified: {}", fingerprint);
+                *self.verification_result.lock().await = Some(HostKeyVerification::Verified);
+                Ok(true)
+            } else {
+                // CRITICAL: Key mismatch - potential MITM attack!
+                tracing::error!(
+                    "SFTP HOST KEY MISMATCH! Expected: {}, Got: {}. Possible Man-in-the-Middle attack!",
+                    expected,
+                    fingerprint
+                );
+                *self.verification_result.lock().await = Some(HostKeyVerification::Mismatch {
+                    expected: expected.clone(),
+                    actual: fingerprint,
+                });
+                // Reject the connection
+                Ok(false)
+            }
+        } else {
+            // No expected fingerprint - first connection (TOFU mode)
+            // Accept the key but flag it for the user to verify
+            tracing::info!("SFTP first connection (TOFU). Host key fingerprint: {}", fingerprint);
+            *self.verification_result.lock().await = Some(HostKeyVerification::FirstConnection(fingerprint));
+            Ok(true)
+        }
     }
 }

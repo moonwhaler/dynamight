@@ -178,6 +178,7 @@ impl SyncProvider for GoogleDriveProvider {
                     success: true,
                     message: "Successfully connected to Google Drive".to_string(),
                     details: Some(format!("Account: {}. {}", user_info, folder_info)),
+                    host_key_fingerprint: None,
                 })
             }
             401 => Err(ProviderError::CredentialError(

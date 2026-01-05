@@ -53,6 +53,10 @@ pub enum DestinationConfig {
         remote_path: String,
         #[serde(default)]
         key_based_auth: bool,
+        /// SSH host key fingerprint for MITM protection (TOFU model)
+        /// Format: "SHA256:base64encodedfingerprint"
+        #[serde(default)]
+        host_key_fingerprint: Option<String>,
     },
 
     /// WebDAV destination (Nextcloud, ownCloud, etc.)

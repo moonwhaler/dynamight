@@ -89,6 +89,10 @@ pub struct TestConnectionResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// SSH host key fingerprint (for SFTP TOFU verification)
+    /// Returned on first connection so the user can verify and save it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_key_fingerprint: Option<String>,
 }
 
 impl From<TestConnectionResult> for TestConnectionResponse {
@@ -97,6 +101,7 @@ impl From<TestConnectionResult> for TestConnectionResponse {
             success: result.success,
             message: result.message,
             details: result.details,
+            host_key_fingerprint: result.host_key_fingerprint,
         }
     }
 }
@@ -122,6 +127,7 @@ pub async fn test_connection(
                         success: false,
                         message: "Credential not found".to_string(),
                         details: None,
+                        host_key_fingerprint: None,
                     }),
                 )
                     .into_response()
@@ -134,6 +140,7 @@ pub async fn test_connection(
                         success: false,
                         message: "Failed to retrieve credential".to_string(),
                         details: None,
+                        host_key_fingerprint: None,
                     }),
                 )
                     .into_response()
@@ -153,15 +160,22 @@ pub async fn test_connection(
     {
         Ok(result) => Json(TestConnectionResponse::from(result)).into_response(),
         Err(e) => {
-            let (status, message) = match &e {
-                providers::ProviderError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            let (status, message, details) = match &e {
+                providers::ProviderError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg.clone(), None),
                 providers::ProviderError::CredentialError(msg) => {
-                    (StatusCode::UNAUTHORIZED, msg.clone())
+                    (StatusCode::UNAUTHORIZED, msg.clone(), None)
                 }
                 providers::ProviderError::ConnectionError(msg) => {
-                    (StatusCode::BAD_GATEWAY, msg.clone())
+                    (StatusCode::BAD_GATEWAY, msg.clone(), None)
                 }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+                providers::ProviderError::HostKeyMismatch { expected, actual } => {
+                    (
+                        StatusCode::CONFLICT,
+                        format!("SSH host key mismatch! This could indicate a Man-in-the-Middle attack."),
+                        Some(format!("Expected: {}\nReceived: {}\n\nIf you're certain this is legitimate (e.g., the server was reinstalled), update the destination with the new fingerprint.", expected, actual))
+                    )
+                }
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string(), None),
             };
 
             (
@@ -169,7 +183,8 @@ pub async fn test_connection(
                 Json(TestConnectionResponse {
                     success: false,
                     message,
-                    details: None,
+                    details,
+                    host_key_fingerprint: None,
                 }),
             )
                 .into_response()

@@ -149,6 +149,10 @@ pub struct TestConnectionResult {
     /// Additional details (e.g., user info, bucket name, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// SSH host key fingerprint (for SFTP TOFU verification)
+    /// Returned on first connection so the user can verify and save it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_key_fingerprint: Option<String>,
 }
 
 /// Trait that all sync providers must implement
@@ -184,6 +188,7 @@ pub trait SyncProvider: Send + Sync {
             success: true,
             message: "Configuration is valid".to_string(),
             details: None,
+            host_key_fingerprint: None,
         })
     }
 
@@ -216,6 +221,12 @@ pub enum ProviderError {
 
     #[error("Operation cancelled")]
     Cancelled,
+
+    #[error("Host key mismatch: expected {expected}, got {actual}. This could indicate a Man-in-the-Middle attack!")]
+    HostKeyMismatch {
+        expected: String,
+        actual: String,
+    },
 
     #[error("Provider error: {0}")]
     #[allow(dead_code)]

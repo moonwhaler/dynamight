@@ -132,6 +132,7 @@ impl SyncProvider for WebDavProvider {
                 success: true,
                 message: "Successfully connected to WebDAV server".to_string(),
                 details: Some(format!("URL: {}", test_url)),
+                host_key_fingerprint: None,
             }),
             401 => Err(ProviderError::CredentialError(
                 "Authentication failed. Check your username and password.".to_string(),
@@ -143,6 +144,7 @@ impl SyncProvider for WebDavProvider {
                 success: true,
                 message: "Connected to WebDAV server".to_string(),
                 details: Some(format!("Remote path '{}' will be created on first sync", remote_path)),
+                host_key_fingerprint: None,
             }),
             status => Err(ProviderError::ConnectionError(format!(
                 "Server returned status {}: {}",
