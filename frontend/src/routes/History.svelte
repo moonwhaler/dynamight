@@ -362,29 +362,19 @@
 
         <!-- Desktop: Date range inputs -->
         <div class="hidden lg:flex items-center gap-2">
-          <div class="relative">
-            <input
-              type="date"
-              bind:value={dateFrom}
-              class="input w-40 text-sm"
-              aria-label={m.history_filter_from()}
-            />
-            {#if !dateFrom}
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">{m.history_filter_from()}</span>
-            {/if}
-          </div>
+          <input
+            type="date"
+            bind:value={dateFrom}
+            class="input w-40 text-sm"
+            aria-label={m.history_filter_from()}
+          />
           <span class="text-gray-400">-</span>
-          <div class="relative">
-            <input
-              type="date"
-              bind:value={dateTo}
-              class="input w-40 text-sm"
-              aria-label={m.history_filter_to()}
-            />
-            {#if !dateTo}
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">{m.history_filter_to()}</span>
-            {/if}
-          </div>
+          <input
+            type="date"
+            bind:value={dateTo}
+            class="input w-40 text-sm"
+            aria-label={m.history_filter_to()}
+          />
         </div>
       </div>
 
