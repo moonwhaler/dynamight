@@ -219,6 +219,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/browse", get(handlers::system::browse_path))
         .route("/system/mkdir", post(handlers::system::create_directory))
         .route("/system/allowed-paths", get(handlers::system::allowed_paths))
+        .route("/system/download", get(handlers::system::download_file))
+        .route("/system/generate-mount-point", post(handlers::system::generate_mount_point))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
         // Credentials

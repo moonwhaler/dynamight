@@ -245,16 +245,36 @@ impl MountService {
                 Err(_) => continue,
             };
             let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = metadata.is_dir();
+
+            // Get modified time as Unix timestamp
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+
+            // Extract file extension for files only
+            let extension = if !is_dir {
+                std::path::Path::new(&name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|s| s.to_lowercase())
+            } else {
+                None
+            };
 
             result.push(DirectoryEntry {
                 name,
                 path: entry.path().to_string_lossy().to_string(),
-                is_dir: metadata.is_dir(),
+                is_dir,
                 size: if metadata.is_file() {
                     Some(metadata.len())
                 } else {
                     None
                 },
+                modified,
+                extension,
             });
         }
 
@@ -267,6 +287,28 @@ impl MountService {
 
         Ok(result)
     }
+
+    /// Generate a safe mount point path from a drive label
+    pub fn generate_mount_point(&self, label: Option<&str>, uuid: &str) -> String {
+        let base = label
+            .filter(|l| !l.is_empty())
+            .unwrap_or(uuid);
+
+        // Sanitize the name: keep only alphanumeric, dash, underscore
+        let sanitized: String = base
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+
+        // Limit length and ensure non-empty
+        let name = if sanitized.is_empty() {
+            uuid[..8.min(uuid.len())].to_string()
+        } else {
+            sanitized.chars().take(32).collect()
+        };
+
+        format!("/mnt/{}", name)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -275,6 +317,8 @@ pub struct DirectoryEntry {
     pub path: String,
     pub is_dir: bool,
     pub size: Option<u64>,
+    pub modified: Option<i64>,
+    pub extension: Option<String>,
 }
 
 impl Default for MountService {

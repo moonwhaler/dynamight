@@ -265,6 +265,8 @@ export interface DirectoryEntry {
   path: string;
   is_dir: boolean;
   size: number | null;
+  modified: number | null;
+  extension: string | null;
 }
 
 export interface CreateJobRequest {

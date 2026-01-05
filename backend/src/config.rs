@@ -19,6 +19,8 @@ pub struct Config {
     pub rate_limit_max_lockout_secs: u64,
     // Cookie security
     pub secure_cookies: bool,
+    // File browser max download size (default: 2GB)
+    pub max_download_size: u64,
 }
 
 impl Config {
@@ -88,6 +90,11 @@ impl Config {
             secure_cookies: env::var("SECURE_COOKIES")
                 .map(|v| v.to_lowercase() != "false" && v != "0")
                 .unwrap_or(true),
+            // Max download size: default 2GB (2_147_483_648 bytes)
+            max_download_size: env::var("MAX_DOWNLOAD_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2_147_483_648),
         }
     }
 

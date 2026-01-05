@@ -62,6 +62,8 @@
           path: p,
           is_dir: true,
           size: null,
+          modified: null,
+          extension: null,
         }));
         loading = false;
       } else {
@@ -148,6 +150,8 @@
         path: p,
         is_dir: true,
         size: null,
+        modified: null,
+        extension: null,
       }));
     } else if (isAtRoot) {
       // Only one allowed path, can't go higher
@@ -168,6 +172,8 @@
           path: p,
           is_dir: true,
           size: null,
+          modified: null,
+          extension: null,
         }));
       }
     }

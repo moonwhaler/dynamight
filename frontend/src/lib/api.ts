@@ -100,6 +100,13 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
 
     // System errors
     PATH_NOT_ALLOWED: () => m.error_path_not_allowed(),
+    PATH_TRAVERSAL_NOT_ALLOWED: () => m.error_path_not_allowed(),
+
+    // File Browser errors
+    FILE_NOT_FOUND: () => m.error_file_not_found(),
+    NOT_A_FILE: () => m.error_not_a_file(),
+    FILE_TOO_LARGE: () => m.error_file_too_large(),
+    DOWNLOAD_FAILED: () => m.error_download_failed(),
 
     // Run errors
     RUN_NOT_FOUND: () => m.error_generic(),
@@ -294,6 +301,24 @@ export const api = {
         body: JSON.stringify({ path }),
       }),
     allowedPaths: () => request<{ paths: string[] }>('/system/allowed-paths'),
+    mount: (uuid: string, mountPoint: string) =>
+      request<{ success: boolean }>('/system/mount', {
+        method: 'POST',
+        body: JSON.stringify({ uuid, mount_point: mountPoint }),
+      }),
+    unmount: (mountPoint: string) =>
+      request<{ success: boolean }>('/system/unmount', {
+        method: 'POST',
+        body: JSON.stringify({ mount_point: mountPoint }),
+      }),
+    generateMountPoint: (uuid: string, label?: string) =>
+      request<{ mount_point: string }>('/system/generate-mount-point', {
+        method: 'POST',
+        body: JSON.stringify({ uuid, label }),
+      }),
+    // Direct URL for browser-native file download
+    downloadUrl: (path: string) =>
+      `${API_BASE}/system/download?path=${encodeURIComponent(path)}`,
   },
 
   credentials: {

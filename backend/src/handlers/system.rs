@@ -1,12 +1,15 @@
 use axum::{
+    body::Body,
     extract::{Query, State},
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
+use tokio_util::io::ReaderStream;
 
 use crate::errors::{ApiError, ErrorCode};
 use crate::AppState;
@@ -196,5 +199,146 @@ pub async fn allowed_paths(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
     Json(json!({
         "paths": existing_paths
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct DownloadQuery {
+    pub path: String,
+}
+
+/// GET /system/download - Download a file securely
+/// Security measures:
+/// - Two-stage path validation (before and after canonicalization)
+/// - Symlink attack prevention via canonicalization
+/// - File size limit enforcement
+/// - Path traversal prevention
+/// - Content-Disposition: attachment to prevent inline execution
+pub async fn download_file(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DownloadQuery>,
+) -> Response {
+    let path_str = &query.path;
+
+    // 1. Basic validation
+    if path_str.is_empty() {
+        return ApiError::field_required("path").into_response();
+    }
+
+    // 2. Reject obvious traversal attempts
+    if path_str.contains("..") {
+        return ApiError::new(ErrorCode::PathTraversalNotAllowed).into_response();
+    }
+
+    let path = Path::new(path_str);
+
+    // 3. Pre-canonicalization check
+    if !is_path_allowed(path, &state.config.allowed_browse_paths) {
+        tracing::debug!("Download denied for path '{}' - not in allowed paths", path_str);
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // 4. Canonicalize to resolve symlinks
+    let canonical = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!("Failed to canonicalize download path '{}': {}", path_str, e);
+            return ApiError::file_not_found().into_response();
+        }
+    };
+
+    // 5. Post-canonicalization check (prevents symlink attacks)
+    if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
+        tracing::debug!(
+            "Download denied for canonical path '{}' - not in allowed paths",
+            canonical.display()
+        );
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // 6. Get metadata and verify it's a file
+    let metadata = match std::fs::metadata(&canonical) {
+        Ok(m) => m,
+        Err(_) => return ApiError::file_not_found().into_response(),
+    };
+
+    if !metadata.is_file() {
+        return ApiError::not_a_file().into_response();
+    }
+
+    // 7. Check file size limit
+    if metadata.len() > state.config.max_download_size {
+        return ApiError::file_too_large(state.config.max_download_size).into_response();
+    }
+
+    // 8. Get filename and sanitize for Content-Disposition header
+    let filename = canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download");
+
+    // Sanitize filename: keep only safe characters
+    let safe_filename: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    // 9. Detect MIME type
+    let content_type = mime_guess::from_path(&canonical)
+        .first_or_octet_stream()
+        .to_string();
+
+    // 10. Open file and stream
+    let file = match tokio::fs::File::open(&canonical).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("Failed to open file for download '{}': {}", canonical.display(), e);
+            return ApiError::download_failed().into_response();
+        }
+    };
+
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    // 11. Build response with security headers
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", safe_filename),
+        )
+        .header(header::CONTENT_LENGTH, metadata.len())
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CACHE_CONTROL, "private, no-cache")
+        .body(body)
+        .unwrap_or_else(|_| {
+            ApiError::download_failed().into_response()
+        })
+}
+
+/// POST /system/generate-mount-point - Generate a mount point for a USB drive
+#[derive(Deserialize)]
+pub struct GenerateMountPointRequest {
+    pub label: Option<String>,
+    pub uuid: String,
+}
+
+pub async fn generate_mount_point(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<GenerateMountPointRequest>,
+) -> impl IntoResponse {
+    let mount_point = state
+        .mount_service
+        .generate_mount_point(req.label.as_deref(), &req.uuid);
+
+    Json(json!({
+        "mount_point": mount_point
     }))
 }

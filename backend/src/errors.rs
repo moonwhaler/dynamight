@@ -78,6 +78,12 @@ pub enum ErrorCode {
     DrivesListFailed,
     MountsListFailed,
 
+    // File Browser errors
+    FileNotFound,
+    NotAFile,
+    FileTooLarge,
+    DownloadFailed,
+
     // Run errors
     RunNotFound,
     RunCreateFailed,
@@ -222,6 +228,22 @@ impl ApiError {
         Self::new(ErrorCode::PathNotAllowed)
     }
 
+    pub fn file_not_found() -> Self {
+        Self::new(ErrorCode::FileNotFound)
+    }
+
+    pub fn not_a_file() -> Self {
+        Self::new(ErrorCode::NotAFile)
+    }
+
+    pub fn file_too_large(max_bytes: u64) -> Self {
+        Self::with_params(ErrorCode::FileTooLarge, json!({ "max_bytes": max_bytes }))
+    }
+
+    pub fn download_failed() -> Self {
+        Self::new(ErrorCode::DownloadFailed)
+    }
+
     pub fn internal_error() -> Self {
         Self::new(ErrorCode::InternalError)
     }
@@ -250,7 +272,8 @@ impl IntoResponse for ApiError {
             | ErrorCode::ScheduleNotFound
             | ErrorCode::CredentialNotFound
             | ErrorCode::RunNotFound
-            | ErrorCode::NoRunningJob => StatusCode::NOT_FOUND,
+            | ErrorCode::NoRunningJob
+            | ErrorCode::FileNotFound => StatusCode::NOT_FOUND,
 
             // 429 Too Many Requests
             ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
@@ -277,7 +300,9 @@ impl IntoResponse for ApiError {
             | ErrorCode::CredentialsRequired
             | ErrorCode::InvalidCron
             | ErrorCode::TotpInvalidCode
-            | ErrorCode::TotpNotEnabled => StatusCode::BAD_REQUEST,
+            | ErrorCode::TotpNotEnabled
+            | ErrorCode::NotAFile
+            | ErrorCode::FileTooLarge => StatusCode::BAD_REQUEST,
 
             // 500 Internal Server Error - everything else
             _ => StatusCode::INTERNAL_SERVER_ERROR,

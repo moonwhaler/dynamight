@@ -39,6 +39,8 @@
           path: p,
           is_dir: true,
           size: null,
+          modified: null,
+          extension: null,
         }));
         browseError = m.path_selector_error_not_accessible({ path: targetPath });
       } else if (allowedPaths.length === 1) {
@@ -88,6 +90,8 @@
           path: p,
           is_dir: true,
           size: null,
+          modified: null,
+          extension: null,
         }));
         loading = false;
       } else {
@@ -129,6 +133,8 @@
         path: p,
         is_dir: true,
         size: null,
+        modified: null,
+        extension: null,
       }));
       browseError = null;
     } else if (isAtRoot) {
@@ -150,6 +156,8 @@
           path: p,
           is_dir: true,
           size: null,
+          modified: null,
+          extension: null,
         }));
         browseError = null;
       }

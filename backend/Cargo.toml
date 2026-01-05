@@ -51,6 +51,10 @@ dotenvy = "0.15"
 # Async utilities
 futures = "0.3"
 async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# File type detection
+mime_guess = "2"
 
 # Encryption for credentials
 aes-gcm = "0.10"

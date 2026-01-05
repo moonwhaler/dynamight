@@ -1,0 +1,185 @@
+<script lang="ts">
+  import type { DirectoryEntry } from '$lib/types';
+  import { getFileIcon, formatFileSize, formatDate } from '$lib/utils/fileIcons';
+  import * as m from '$lib/paraglide/messages.js';
+
+  interface Props {
+    entry: DirectoryEntry;
+    viewMode: 'list' | 'grid';
+    onNavigate: (path: string) => void;
+    onDownload: (path: string) => void;
+    downloading?: string | null;
+    selectable?: boolean;
+    selected?: boolean;
+    onSelect?: (path: string) => void;
+  }
+
+  let {
+    entry,
+    viewMode,
+    onNavigate,
+    onDownload,
+    downloading = null,
+    selectable = false,
+    selected = false,
+    onSelect,
+  }: Props = $props();
+
+  const iconInfo = $derived(getFileIcon(entry.extension, entry.is_dir));
+  const isDownloading = $derived(downloading === entry.path);
+
+  function handleClick() {
+    if (entry.is_dir) {
+      onNavigate(entry.path);
+    } else if (selectable && onSelect) {
+      onSelect(entry.path);
+    }
+  }
+
+  function handleDownload(e: Event) {
+    e.stopPropagation();
+    onDownload(entry.path);
+  }
+</script>
+
+{#if viewMode === 'list'}
+  <!-- List view row -->
+  <tr
+    class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors {entry.is_dir ? 'cursor-pointer' : ''} {selected ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
+    onclick={handleClick}
+    role={entry.is_dir ? 'button' : undefined}
+    tabindex={entry.is_dir ? 0 : undefined}
+    onkeydown={(e) => e.key === 'Enter' && handleClick()}
+  >
+    <td class="px-4 py-2.5">
+      <div class="flex items-center gap-3">
+        <!-- Icon -->
+        <div class="flex-shrink-0">
+          {#if iconInfo.icon === 'folder'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+            </svg>
+          {:else if iconInfo.icon === 'image'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          {:else if iconInfo.icon === 'document'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          {:else if iconInfo.icon === 'archive'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
+          {:else if iconInfo.icon === 'code'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+          {:else if iconInfo.icon === 'video'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          {:else if iconInfo.icon === 'audio'}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            </svg>
+          {:else}
+            <svg class="w-5 h-5 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+          {/if}
+        </div>
+
+        <!-- Name -->
+        <span class="truncate text-gray-900 dark:text-white {entry.is_dir ? 'font-medium' : ''}">
+          {entry.name}
+        </span>
+      </div>
+    </td>
+
+    <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm hidden sm:table-cell">
+      {entry.is_dir ? '-' : formatFileSize(entry.size)}
+    </td>
+
+    <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm hidden md:table-cell">
+      {formatDate(entry.modified)}
+    </td>
+
+    <td class="px-4 py-2.5 text-right">
+      {#if !entry.is_dir}
+        <button
+          type="button"
+          onclick={handleDownload}
+          disabled={isDownloading}
+          class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
+          title={m.filebrowser_download()}
+        >
+          {#if isDownloading}
+            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          {:else}
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          {/if}
+        </button>
+      {/if}
+    </td>
+  </tr>
+{:else}
+  <!-- Grid view card -->
+  {#if entry.is_dir}
+    <button
+      type="button"
+      onclick={handleClick}
+      class="card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-shadow text-center cursor-pointer {selected ? 'ring-2 ring-primary-500' : ''}"
+    >
+      <!-- Icon -->
+      <div class="w-12 h-12 flex items-center justify-center">
+        <svg class="w-10 h-10 {iconInfo.color}" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+        </svg>
+      </div>
+
+      <!-- Name -->
+      <span class="text-sm text-gray-900 dark:text-white truncate w-full font-medium">
+        {entry.name}
+      </span>
+    </button>
+  {:else}
+    <div class="card p-4 flex flex-col items-center gap-2 text-center {selected ? 'ring-2 ring-primary-500' : ''}">
+      <!-- Icon -->
+      <div class="w-12 h-12 flex items-center justify-center">
+        <svg class="w-10 h-10 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        </svg>
+      </div>
+
+      <!-- Name -->
+      <span class="text-sm text-gray-900 dark:text-white truncate w-full">
+        {entry.name}
+      </span>
+
+      <!-- Size -->
+      <span class="text-xs text-gray-500 dark:text-gray-400">
+        {formatFileSize(entry.size)}
+      </span>
+
+      <!-- Download button -->
+      <button
+        type="button"
+        onclick={handleDownload}
+        disabled={isDownloading}
+        class="mt-1 px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
+      >
+        {#if isDownloading}
+          {m.filebrowser_downloading()}
+        {:else}
+          {m.filebrowser_download()}
+        {/if}
+      </button>
+    </div>
+  {/if}
+{/if}
