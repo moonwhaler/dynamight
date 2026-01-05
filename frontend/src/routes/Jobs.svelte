@@ -70,6 +70,32 @@
   }
 
   let unsubscribeStatus: (() => void) | null = null;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  const POLL_INTERVAL_MS = 3000;
+
+  const hasRunningJobs = $derived($jobsStore.jobs.some((j) => j.last_run_status === 'running'));
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(() => {
+      jobsStore.refresh();
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
+
+  $effect(() => {
+    if (hasRunningJobs) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
 
   onMount(() => {
     jobsStore.load();
@@ -79,9 +105,14 @@
     unsubscribeStatus = statusStore.subscribe(() => {
       jobsStore.refresh();
     });
+
+    return () => {
+      statusStore.disconnect();
+    };
   });
 
   onDestroy(() => {
+    stopPolling();
     if (unsubscribeStatus) {
       unsubscribeStatus();
     }

@@ -11,12 +11,15 @@ interface StatusUpdate {
 function createStatusStore() {
   const { subscribe, update } = writable<StatusUpdate[]>([]);
   let ws: WebSocket | null = null;
+  let intentionalDisconnect = false;
 
   return {
     subscribe,
 
     async connect() {
       if (ws) return;
+
+      intentionalDisconnect = false;
 
       // Get token for WebSocket authentication
       let token: string;
@@ -43,12 +46,15 @@ function createStatusStore() {
 
       ws.onclose = () => {
         ws = null;
-        // Reconnect after delay
-        setTimeout(() => this.connect(), 5000);
+        // Only reconnect if not intentionally disconnected
+        if (!intentionalDisconnect) {
+          setTimeout(() => this.connect(), 5000);
+        }
       };
     },
 
     disconnect() {
+      intentionalDisconnect = true;
       if (ws) {
         ws.close();
         ws = null;

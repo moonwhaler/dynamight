@@ -11,6 +11,52 @@
   let recentRuns = $state<JobRun[]>([]);
   let loadingRuns = $state(true);
   let unsubscribeStatus: (() => void) | null = null;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  const POLL_INTERVAL_MS = 3000;
+
+  const hasRunningJobs = $derived($jobsStore.jobs.some((j) => j.last_run_status === 'running'));
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(() => {
+      jobsStore.refresh();
+      loadRecentRuns(true);
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
+
+  $effect(() => {
+    if (hasRunningJobs) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
+
+  async function loadRecentRuns(silent = false) {
+    if (!silent) loadingRuns = true;
+    try {
+      const jobs = await api.jobs.list();
+      const allRuns: JobRun[] = [];
+      for (const job of jobs.slice(0, 5)) {
+        const runs = await api.runs.list(job.id, 3);
+        allRuns.push(...runs);
+      }
+      recentRuns = allRuns.sort(
+        (a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime()
+      ).slice(0, 10);
+    } catch {
+      // Ignore
+    } finally {
+      if (!silent) loadingRuns = false;
+    }
+  }
 
   onMount(() => {
     jobsStore.load();
@@ -22,23 +68,7 @@
     });
 
     // Load recent runs from all jobs
-    (async () => {
-      try {
-        const jobs = await api.jobs.list();
-        const allRuns: JobRun[] = [];
-        for (const job of jobs.slice(0, 5)) {
-          const runs = await api.runs.list(job.id, 3);
-          allRuns.push(...runs);
-        }
-        recentRuns = allRuns.sort(
-          (a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime()
-        ).slice(0, 10);
-      } catch {
-        // Ignore
-      } finally {
-        loadingRuns = false;
-      }
-    })();
+    loadRecentRuns();
 
     return () => {
       statusStore.disconnect();
@@ -46,6 +76,7 @@
   });
 
   onDestroy(() => {
+    stopPolling();
     if (unsubscribeStatus) {
       unsubscribeStatus();
     }
