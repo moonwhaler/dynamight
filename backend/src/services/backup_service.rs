@@ -1,12 +1,9 @@
 use crate::models::{Job, JobRunStatus, LogLevel, LogMessage};
+use crate::services::credential_service::CredentialService;
+use crate::services::providers::{self, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
-use std::path::Path;
-use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, RwLock, Mutex};
 
 #[derive(Debug, Default)]
@@ -17,34 +14,33 @@ pub struct JobResult {
     pub error_count: i32,
 }
 
-/// Holds information about a running process for cancellation
-struct RunningProcess {
-    child: Child,
-    pid: u32,
-}
-
 pub struct BackupService {
     db: SqlitePool,
     logs_db: SqlitePool,
     log_tx: broadcast::Sender<LogMessage>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
-    /// Maps run_id to the currently running child process
-    running_processes: Arc<Mutex<HashMap<i64, RunningProcess>>>,
-    /// Tracks cancelled run_ids (separate from running_processes so it persists after process removal)
+    /// Tracks cancelled run_ids
     cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
     max_runs_per_job: Arc<RwLock<Option<u32>>>,
+    credential_service: Arc<CredentialService>,
 }
 
 impl BackupService {
-    pub fn new(db: SqlitePool, logs_db: SqlitePool, log_tx: broadcast::Sender<LogMessage>, max_runs_per_job: Option<u32>) -> Self {
+    pub fn new(
+        db: SqlitePool,
+        logs_db: SqlitePool,
+        log_tx: broadcast::Sender<LogMessage>,
+        max_runs_per_job: Option<u32>,
+        credential_service: Arc<CredentialService>,
+    ) -> Self {
         Self {
             db,
             logs_db,
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            running_processes: Arc::new(Mutex::new(HashMap::new())),
             cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
             max_runs_per_job: Arc::new(RwLock::new(max_runs_per_job)),
+            credential_service,
         }
     }
 
@@ -135,32 +131,12 @@ impl BackupService {
         self.running_jobs.read().await.contains(&job_id)
     }
 
-    /// Cancel a running job by immediately killing the process with SIGKILL.
+    /// Cancel a running job by marking it as cancelled.
+    /// The provider will check this flag and stop execution.
     pub async fn cancel_job(&self, run_id: i64) -> anyhow::Result<bool> {
         tracing::info!("cancel_job called for run_id: {}", run_id);
 
-        // Extract PID and kill FIRST, before marking as cancelled
-        // (otherwise is_cancelled() triggers cleanup which removes the process from the map)
-        let pid = {
-            let mut processes = self.running_processes.lock().await;
-            tracing::info!("running_processes map has {} entries", processes.len());
-            tracing::info!("looking for run_id {} in map keys: {:?}", run_id, processes.keys().collect::<Vec<_>>());
-
-            if let Some(running) = processes.get_mut(&run_id) {
-                let pid = running.pid;
-                tracing::info!("Found process with PID {} for run_id {}", pid, run_id);
-                // Try tokio's kill while we have the child
-                let kill_result = running.child.start_kill();
-                tracing::info!("start_kill result: {:?}", kill_result);
-                Some(pid)
-            } else {
-                tracing::warn!("No process found in map for run_id {}", run_id);
-                None
-            }
-        };
-        // Lock is released here
-
-        // Now mark as cancelled (after we've extracted the PID and started killing)
+        // Mark as cancelled in memory (providers will check this)
         self.cancelled_runs.lock().await.insert(run_id);
 
         // Mark as cancelled in database
@@ -171,52 +147,17 @@ impl BackupService {
             .execute(&self.db)
             .await?;
 
-        let Some(pid) = pid else {
-            self.log(run_id, LogLevel::Warning, "No process found in tracking map", "system").await;
-            return Ok(false);
-        };
-
-        self.log(run_id, LogLevel::Warning, &format!("Killing process (pid: {})", pid), "system").await;
-
-        #[cfg(unix)]
-        {
-            let pid_str = pid.to_string();
-
-            // Use kill command directly - most reliable method
-            let result = Command::new("kill")
-                .args(["-9", &pid_str])
-                .output()
-                .await;
-            tracing::info!("kill -9 {} result: {:?}", pid_str, result);
-
-            // Kill the entire process group (negative PID)
-            let result = Command::new("kill")
-                .args(["-9", &format!("-{}", pid_str)])
-                .output()
-                .await;
-            tracing::info!("kill -9 -{} result: {:?}", pid_str, result);
-
-            // Kill any child processes
-            let result = Command::new("pkill")
-                .args(["-9", "-P", &pid_str])
-                .output()
-                .await;
-            tracing::info!("pkill -9 -P {} result: {:?}", pid_str, result);
-
-            // Also use nix as backup
-            use nix::sys::signal::{killpg, kill, Signal};
-            use nix::unistd::Pid;
-            let result = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
-            tracing::info!("nix kill result: {:?}", result);
-            let result = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
-            tracing::info!("nix killpg result: {:?}", result);
-        }
-
-        self.log(run_id, LogLevel::Warning, "Kill signals sent", "system").await;
+        self.log(run_id, LogLevel::Warning, "Job cancellation requested", "system").await;
         Ok(true)
     }
 
     /// Check if a job run has been cancelled
+    pub fn is_cancelled_sync(&self, run_id: i64) -> bool {
+        // Use try_lock to avoid blocking - if we can't get the lock, assume not cancelled
+        self.cancelled_runs.try_lock().map(|guard| guard.contains(&run_id)).unwrap_or(false)
+    }
+
+    /// Check if a job run has been cancelled (async version)
     pub async fn is_cancelled(&self, run_id: i64) -> bool {
         self.cancelled_runs.lock().await.contains(&run_id)
     }
@@ -247,437 +188,86 @@ impl BackupService {
         run_id: i64,
         _schedule_id: Option<i64>,
     ) -> anyhow::Result<JobResult> {
-        let mut result = JobResult::default();
-
-        // Log start
-        self.log(run_id, LogLevel::Info, "Starting backup job", "system")
-            .await;
-
-        // Mount if needed
-        if job.auto_mount {
-            if let Some(uuid) = &job.usb_uuid {
-                self.log(
-                    run_id,
-                    LogLevel::Info,
-                    &format!("Mounting UUID {} to {}", uuid, job.mount_point),
-                    "mount",
-                )
-                .await;
-
-                // Create mount point if needed
-                if let Err(e) = tokio::fs::create_dir_all(&job.mount_point).await {
-                    self.log(
-                        run_id,
-                        LogLevel::Warning,
-                        &format!("Could not create mount point: {}", e),
-                        "mount",
-                    )
-                    .await;
-                }
-
-                // Mount
-                let mount_result = Command::new("mount")
-                    .args(["-U", uuid, &job.mount_point])
-                    .output()
-                    .await;
-
-                match mount_result {
-                    Ok(output) if output.status.success() => {
-                        self.log(run_id, LogLevel::Info, "Mount successful", "mount")
-                            .await;
-                    }
-                    Ok(output) => {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        // Check if already mounted
-                        if !stderr.contains("already mounted") {
-                            self.log(
-                                run_id,
-                                LogLevel::Error,
-                                &format!("Mount failed: {}", stderr),
-                                "mount",
-                            )
-                            .await;
-                            result.error_count += 1;
-                        }
-                    }
-                    Err(e) => {
-                        self.log(
-                            run_id,
-                            LogLevel::Error,
-                            &format!("Mount error: {}", e),
-                            "mount",
-                        )
-                        .await;
-                        result.error_count += 1;
-                    }
-                }
-            }
-        }
-
-        // Detect filesystem type
-        let fstype = self.detect_filesystem(&job.mount_point).await;
-        self.log(
-            run_id,
-            LogLevel::Info,
-            &format!("Filesystem type: {}", fstype),
-            "system",
-        )
-        .await;
-
-        // Build rsync args
-        let rsync_args = self.build_rsync_args(job, &fstype);
-        self.log(
-            run_id,
-            LogLevel::Debug,
-            &format!("Rsync args: {:?}", rsync_args),
-            "rsync",
-        )
-        .await;
-
-        // Execute rsync for each source directory
+        // Get destination config and sync options from job
+        let destination = job.get_destination_config();
+        let sync_options = job.get_sync_options();
         let source_dirs = job.source_dirs_vec();
-        for source_dir in &source_dirs {
-            if !Path::new(source_dir).exists() {
-                self.log(
-                    run_id,
-                    LogLevel::Warning,
-                    &format!("Source directory does not exist: {}", source_dir),
-                    "rsync",
-                )
-                .await;
-                result.error_count += 1;
-                continue;
-            }
 
-            let dest_name = Path::new(source_dir)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "backup".to_string());
-
-            let dest = format!("{}/{}/{}", job.mount_point, job.backup_subdir, dest_name);
-
-            self.log(
-                run_id,
-                LogLevel::Info,
-                &format!("Syncing {} -> {}", source_dir, dest),
-                "rsync",
-            )
-            .await;
-
-            // Create destination directory
-            if let Err(e) = tokio::fs::create_dir_all(&dest).await {
-                self.log(
-                    run_id,
-                    LogLevel::Warning,
-                    &format!("Could not create destination: {}", e),
-                    "rsync",
-                )
-                .await;
-            }
-
-            // Check for cancellation before starting
-            if self.is_cancelled(run_id).await {
-                self.log(run_id, LogLevel::Warning, "Job cancelled, skipping remaining sources", "system").await;
-                break;
-            }
-
-            // Run rsync
-            let mut cmd = Command::new("rsync");
-            cmd.args(&rsync_args)
-                .arg(format!("{}/", source_dir))
-                .arg(format!("{}/", dest))
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .process_group(0); // Make rsync a process group leader for proper cleanup
-
-            let mut child = match cmd.spawn() {
-                Ok(c) => c,
+        // Load credentials if needed
+        let credential = if let Some(cred_id) = job.credential_id {
+            match self.credential_service.get_decrypted(cred_id).await {
+                Ok(cred) => Some(cred),
                 Err(e) => {
-                    self.log(
-                        run_id,
-                        LogLevel::Error,
-                        &format!("Failed to spawn rsync: {}", e),
-                        "rsync",
-                    )
-                    .await;
-                    result.error_count += 1;
-                    continue;
-                }
-            };
-
-            // Get PID immediately after spawn - this is reliable
-            let pid = child.id().expect("newly spawned process must have a PID");
-
-            // Take stdout/stderr before registering
-            let stdout = child.stdout.take();
-            let stderr = child.stderr.take();
-
-            // Register the child process for cancellation tracking
-            {
-                let mut processes = self.running_processes.lock().await;
-                tracing::info!("ADDING process to map: run_id={}, pid={}", run_id, pid);
-                processes.insert(run_id, RunningProcess {
-                    child,
-                    pid,
-                });
-                tracing::info!("Map now has {} entries: {:?}", processes.len(), processes.keys().collect::<Vec<_>>());
-            }
-
-            self.log(run_id, LogLevel::Info, &format!("Spawned rsync with PID {}", pid), "rsync").await;
-
-            // Stream stdout with proper cancellation support
-            if let Some(stdout) = stdout {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-
-                loop {
-                    // Use select! to race between reading a line and checking cancellation
-                    let line = tokio::select! {
-                        result = lines.next_line() => {
-                            match result {
-                                Ok(Some(line)) => line,
-                                Ok(None) => break, // EOF
-                                Err(_) => break,   // Error
-                            }
-                        }
-                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                            // Check for cancellation every 100ms even if no output
-                            if self.is_cancelled(run_id).await {
-                                break;
-                            }
-                            continue;
-                        }
-                    };
-
-                    // Check for cancellation after receiving a line
-                    if self.is_cancelled(run_id).await {
-                        break;
-                    }
-
-                    // Parse rsync output for stats
-                    if line.contains("Number of files transferred") {
-                        if let Some(num) = line.split(':').nth(1) {
-                            if let Ok(n) = num.trim().replace(',', "").parse::<i64>() {
-                                result.files_transferred += n;
-                            }
-                        }
-                    } else if line.contains("Total transferred file size") {
-                        if let Some(size_str) = line.split(':').nth(1) {
-                            if let Some(bytes) = size_str.split_whitespace().next() {
-                                if let Ok(b) = bytes.replace(',', "").parse::<i64>() {
-                                    result.bytes_transferred += b;
-                                }
-                            }
-                        }
-                    }
-
-                    self.log(run_id, LogLevel::Info, &line, "rsync").await;
+                    self.log(run_id, LogLevel::Error, &format!("Failed to load credentials: {}", e), "system").await;
+                    return Ok(JobResult {
+                        exit_code: 1,
+                        error_count: 1,
+                        ..Default::default()
+                    });
                 }
             }
+        } else {
+            None
+        };
 
-            // Stream stderr with cancellation support
-            if !self.is_cancelled(run_id).await {
-                if let Some(stderr) = stderr {
-                    let reader = BufReader::new(stderr);
-                    let mut lines = reader.lines();
+        // Create provider based on destination type
+        let provider = providers::create_provider(&destination);
 
-                    loop {
-                        let line = tokio::select! {
-                            result = lines.next_line() => {
-                                match result {
-                                    Ok(Some(line)) => line,
-                                    Ok(None) => break, // EOF
-                                    Err(_) => break,   // Error
-                                }
-                            }
-                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                                if self.is_cancelled(run_id).await {
-                                    break;
-                                }
-                                continue;
-                            }
-                        };
-
-                        if self.is_cancelled(run_id).await {
-                            break;
-                        }
-
-                        self.log(run_id, LogLevel::Warning, &line, "rsync").await;
-                    }
-                }
-            }
-
-            // Wait for process to finish and remove from tracking
-            let status = {
-                let mut processes = self.running_processes.lock().await;
-                tracing::info!("REMOVING process from map: run_id={}", run_id);
-                if let Some(mut running) = processes.remove(&run_id) {
-                    tracing::info!("Map now has {} entries after removal", processes.len());
-                    drop(processes); // Release lock before waiting
-                    running.child.wait().await.ok()
-                } else {
-                    tracing::info!("Process already removed from map for run_id={}", run_id);
-                    None
-                }
-            };
-
-            if let Some(status) = status {
-                if !status.success() {
-                    // Check if it was killed by signal (cancelled)
-                    let was_cancelled = self.is_cancelled(run_id).await;
-                    if was_cancelled {
-                        self.log(run_id, LogLevel::Info, "rsync terminated by cancellation", "rsync").await;
-                    } else {
-                        self.log(
-                            run_id,
-                            LogLevel::Error,
-                            &format!("rsync failed with exit code: {:?}", status.code()),
-                            "rsync",
-                        )
-                        .await;
-                        result.exit_code = status.code().unwrap_or(1);
-                        result.error_count += 1;
-                    }
-                }
-            }
-
-            // Break out of loop if cancelled
-            if self.is_cancelled(run_id).await {
-                break;
-            }
+        // Validate configuration
+        if let Err(e) = provider.validate_config(&destination, credential.as_ref()) {
+            self.log(run_id, LogLevel::Error, &format!("Configuration error: {}", e), "system").await;
+            return Ok(JobResult {
+                exit_code: 1,
+                error_count: 1,
+                ..Default::default()
+            });
         }
 
-        // Unmount if needed
-        if job.auto_unmount && job.usb_uuid.is_some() {
-            self.log(
-                run_id,
-                LogLevel::Info,
-                &format!("Unmounting {}", job.mount_point),
-                "mount",
-            )
-            .await;
+        // Create cancellation checker closure
+        let cancelled_runs = Arc::clone(&self.cancelled_runs);
+        let is_cancelled: providers::CancellationChecker = Arc::new(move |rid: i64| {
+            cancelled_runs.try_lock().map(|guard| guard.contains(&rid)).unwrap_or(false)
+        });
 
-            // Sync first
-            let _ = Command::new("sync").output().await;
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-            let unmount_result = Command::new("umount")
-                .arg(&job.mount_point)
-                .output()
-                .await;
-
-            match unmount_result {
-                Ok(output) if output.status.success() => {
-                    self.log(run_id, LogLevel::Info, "Unmount successful", "mount")
-                        .await;
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    self.log(
-                        run_id,
-                        LogLevel::Warning,
-                        &format!("Unmount warning: {}", stderr),
-                        "mount",
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    self.log(
-                        run_id,
-                        LogLevel::Warning,
-                        &format!("Unmount error: {}", e),
-                        "mount",
-                    )
-                    .await;
-                }
-            }
-        }
-
-        self.log(
+        // Build sync context
+        let ctx = Arc::new(SyncContext {
             run_id,
-            LogLevel::Info,
-            &format!(
-                "Backup complete. Files: {}, Bytes: {}, Errors: {}",
-                result.files_transferred, result.bytes_transferred, result.error_count
-            ),
-            "system",
-        )
-        .await;
+            source_dirs,
+            destination,
+            options: sync_options,
+            credential,
+            log_sender: self.log_tx.clone(),
+            logs_db: self.logs_db.clone(),
+            is_cancelled,
+        });
 
-        Ok(result)
-    }
+        // Execute sync via provider
+        let sync_result = provider.sync(ctx).await;
 
-    fn build_rsync_args(&self, job: &Job, fstype: &str) -> Vec<String> {
-        let mut args = vec![];
-
-        // Verbosity options: "quiet", "normal", "verbose"
-        match job.verbosity.as_str() {
-            "quiet" => {
-                // Only show errors
-                args.push("-q".to_string());
+        // Convert provider result to JobResult
+        match sync_result {
+            Ok(result) => Ok(JobResult {
+                exit_code: if result.success { 0 } else { 1 },
+                files_transferred: result.files_transferred,
+                bytes_transferred: result.bytes_transferred,
+                error_count: result.error_count,
+            }),
+            Err(ProviderError::Cancelled) => {
+                self.log(run_id, LogLevel::Warning, "Job was cancelled", "system").await;
+                Ok(JobResult {
+                    exit_code: 130, // Standard cancelled exit code
+                    error_count: 0,
+                    ..Default::default()
+                })
             }
-            "verbose" => {
-                // Full progress with per-file bars
-                args.extend(["-vh".to_string(), "--stats".to_string(), "--progress".to_string()]);
+            Err(e) => {
+                self.log(run_id, LogLevel::Error, &format!("Provider error: {}", e), "system").await;
+                Ok(JobResult {
+                    exit_code: 1,
+                    error_count: 1,
+                    ..Default::default()
+                })
             }
-            _ => {
-                // "normal" (default) - files transferred + summary stats
-                args.extend(["-v".to_string(), "--stats".to_string()]);
-            }
-        }
-
-        // Filesystem-aware options
-        match fstype {
-            "exfat" | "ntfs" | "vfat" | "msdos" | "ntfs3" => {
-                // Non-POSIX filesystems - avoid permission errors
-                args.extend(["-r", "-l", "-t", "-D"].iter().map(|s| s.to_string()));
-            }
-            _ => {
-                // POSIX-compliant filesystems
-                args.push("-a".to_string());
-            }
-        }
-
-        // Configurable options
-        if job.sync_deletes {
-            args.push("--delete".to_string());
-        }
-
-        if job.checksum_mode {
-            args.push("--checksum".to_string());
-        }
-
-        if job.compress {
-            args.push("-z".to_string());
-        }
-
-        if job.dry_run {
-            args.push("--dry-run".to_string());
-        }
-
-        if let Some(limit) = job.bandwidth_limit {
-            args.push(format!("--bwlimit={}", limit));
-        }
-
-        // Excludes
-        for exclude in job.excludes_vec() {
-            args.push(format!("--exclude={}", exclude));
-        }
-
-        args
-    }
-
-    async fn detect_filesystem(&self, mount_point: &str) -> String {
-        let output = Command::new("findmnt")
-            .args(["-n", "-o", "FSTYPE", "--target", mount_point])
-            .output()
-            .await;
-
-        match output {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
-            }
-            _ => "unknown".to_string(),
         }
     }
 

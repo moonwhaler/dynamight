@@ -4,15 +4,32 @@
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
   import { preferencesStore } from '../lib/stores/preferences';
-  import type { Job, Schedule, UsbDrive, CreateJobRequest } from '../lib/types';
-  import RsyncOptions from '../components/jobs/RsyncOptions.svelte';
+  import type {
+    Job,
+    Schedule,
+    UsbDrive,
+    CreateJobRequest,
+    DestinationType,
+    DestinationConfig,
+    SyncOptions,
+    Credential,
+    ProviderCapabilities,
+  } from '../lib/types';
+  import { createDefaultDestination, createDefaultSyncOptions } from '../lib/types';
+  import ProviderSelector from '../components/jobs/ProviderSelector.svelte';
+  import SyncOptionsComponent from '../components/jobs/SyncOptions.svelte';
   import SchedulePicker from '../components/jobs/SchedulePicker.svelte';
   import PathSelector from '../components/jobs/PathSelector.svelte';
-  import SinglePathSelector from '../components/jobs/SinglePathSelector.svelte';
   import HelpTooltip from '../components/ui/HelpTooltip.svelte';
   import RunLogModal from '../components/logs/RunLogModal.svelte';
   import { confirm } from '../components/ui/ConfirmDialog.svelte';
   import { showToast } from '../components/ui/Toast.svelte';
+
+  // Provider destination components
+  import LocalDestination from '../components/jobs/providers/LocalDestination.svelte';
+  import S3Destination from '../components/jobs/providers/S3Destination.svelte';
+  import SftpDestination from '../components/jobs/providers/SftpDestination.svelte';
+  import WebDavDestination from '../components/jobs/providers/WebDavDestination.svelte';
 
   let { params = {} }: { params?: { id?: string } } = $props();
 
@@ -20,53 +37,47 @@
   let loading = $state(true);
   let saving = $state(false);
   let drives = $state<UsbDrive[]>([]);
+  let credentials = $state<Credential[]>([]);
   let schedules = $state<Schedule[]>([]);
   let loadedJobId = $state<string | null>(null);
   let activeRunId = $state<number | null>(null);
   let running = $state(false);
   let cloning = $state(false);
+  let capabilities = $state<ProviderCapabilities | null>(null);
 
   // Form state
   let name = $state('');
   let description = $state('');
   let enabled = $state(true);
-  let usbUuid = $state<string | null>(null);
-  let mountPoint = $state('/mnt/backup');
-  let autoMount = $state(true);
-  let autoUnmount = $state(true);
   let sourceDirs = $state<string[]>([]);
-  let backupSubdir = $state('backups');
-  let syncDeletes = $state(false);
-  let rsyncExcludes = $state<string[]>([]);
-  let checksumMode = $state(false);
-  let compress = $state(false);
-  let dryRun = $state(false);
-  let bandwidthLimit = $state<number | null>(null);
-  let verbosity = $state<'quiet' | 'normal' | 'verbose'>('normal');
+
+  // Provider-based state
+  let destinationType = $state<DestinationType>('local');
+  let destination = $state<DestinationConfig>(createDefaultDestination('local'));
+  let syncOptions = $state<SyncOptions>(createDefaultSyncOptions());
+  let credentialId = $state<number | null>(null);
 
   async function loadData() {
-    console.log('[JobDetail] loadData, params:', params, 'isNew:', isNew);
     loading = true;
 
     try {
-      // Load USB drives if not already loaded
-      if (drives.length === 0) {
-        console.log('[JobDetail] Loading drives...');
-        drives = await api.system.drives();
-        console.log('[JobDetail] Drives loaded:', drives.length);
-      }
+      // Load USB drives and credentials in parallel
+      const [drivesResult, credentialsResult] = await Promise.all([
+        api.system.drives(),
+        api.credentials.list(),
+      ]);
+      drives = drivesResult;
+      credentials = credentialsResult;
 
       if (!isNew && params.id && params.id !== loadedJobId) {
-        console.log('[JobDetail] Loading job:', params.id);
-        // Set loadedJobId immediately to prevent re-entry from $effect
         loadedJobId = params.id;
         const job = await api.jobs.get(parseInt(params.id));
-        console.log('[JobDetail] Job loaded:', job.name);
         loadJob(job);
-        console.log('[JobDetail] Loading schedules...');
         schedules = await api.schedules.list(job.id);
-        console.log('[JobDetail] Schedules loaded:', schedules.length);
       }
+
+      // Load capabilities for the current provider
+      await loadCapabilities(destinationType);
     } catch (e) {
       console.error('[JobDetail] Error:', e);
       showToast({ message: e instanceof Error ? e.message : 'Failed to load job', variant: 'error' });
@@ -75,36 +86,56 @@
     }
   }
 
+  async function loadCapabilities(type: DestinationType) {
+    try {
+      capabilities = await api.providers.capabilities(type);
+    } catch {
+      capabilities = null;
+    }
+  }
+
+  async function loadCredentials() {
+    try {
+      credentials = await api.credentials.list();
+    } catch (e) {
+      console.error('Failed to reload credentials:', e);
+    }
+  }
+
   onMount(() => {
     loadData();
   });
 
-  // Reload when params change (handles navigation from /jobs/new to /jobs/:id)
+  // Reload when params change
   $effect(() => {
     const currentId = params.id;
     if (currentId && currentId !== 'new' && currentId !== loadedJobId) {
-      console.log('[JobDetail] params changed, reloading:', currentId);
       loadData();
     }
+  });
+
+  // Update destination config when type changes
+  $effect(() => {
+    const type = destinationType;
+    // Only reset if the type doesn't match
+    if (destination.type !== type) {
+      destination = createDefaultDestination(type);
+      credentialId = null;
+    }
+    loadCapabilities(type);
   });
 
   function loadJob(job: Job) {
     name = job.name;
     description = job.description || '';
     enabled = job.enabled;
-    usbUuid = job.usb_uuid;
-    mountPoint = job.mount_point;
-    autoMount = job.auto_mount;
-    autoUnmount = job.auto_unmount;
     sourceDirs = job.source_dirs;
-    backupSubdir = job.backup_subdir;
-    syncDeletes = job.sync_deletes;
-    rsyncExcludes = job.rsync_excludes;
-    checksumMode = job.checksum_mode;
-    compress = job.compress;
-    dryRun = job.dry_run;
-    bandwidthLimit = job.bandwidth_limit;
-    verbosity = job.verbosity;
+
+    // Load provider-based fields
+    destinationType = job.destination_type || 'local';
+    destination = job.destination || createDefaultDestination(destinationType);
+    syncOptions = job.sync_options || createDefaultSyncOptions();
+    credentialId = job.credential_id;
   }
 
   async function handleSubmit(e: Event) {
@@ -116,11 +147,18 @@
       return;
     }
 
+    // Validate credentials for providers that require them
+    if (destinationType !== 'local' && !credentialId) {
+      showToast({ message: 'Please select credentials for this provider', variant: 'error' });
+      return;
+    }
+
     // Warn about Mirror Mode
-    if (syncDeletes) {
+    if (syncOptions.delete_extraneous) {
       const confirmed = await confirm({
         title: 'Mirror Mode Enabled',
-        message: 'Mirror Mode will delete files from the backup destination that no longer exist in the source. This can result in permanent data loss if files are accidentally deleted from the source. Are you sure you want to continue?',
+        message:
+          'Mirror Mode will delete files from the backup destination that no longer exist in the source. This can result in permanent data loss if files are accidentally deleted from the source. Are you sure you want to continue?',
         confirmText: 'Yes, enable Mirror Mode',
         variant: 'danger',
       });
@@ -129,42 +167,48 @@
 
     saving = true;
 
+    // Build job data with both legacy and new formats for compatibility
     const jobData: CreateJobRequest = {
       name,
       description: description || undefined,
       enabled,
-      usb_uuid: usbUuid || undefined,
-      mount_point: mountPoint,
-      auto_mount: autoMount,
-      auto_unmount: autoUnmount,
       source_dirs: sourceDirs,
-      backup_subdir: backupSubdir,
-      sync_deletes: syncDeletes,
-      rsync_excludes: rsyncExcludes.length > 0 ? rsyncExcludes : undefined,
-      checksum_mode: checksumMode,
-      compress,
-      dry_run: dryRun,
-      bandwidth_limit: bandwidthLimit || undefined,
-      verbosity,
-    };
 
-    console.log('[JobDetail] Submitting job:', jobData);
+      // New provider-based fields
+      destination_type: destinationType,
+      destination,
+      sync_options: syncOptions,
+      credential_id: credentialId || undefined,
+
+      // Legacy fields for local destinations (backwards compatibility)
+      ...(destinationType === 'local' && destination.type === 'local'
+        ? {
+            mount_point: destination.mount_point,
+            backup_subdir: destination.backup_subdir,
+            usb_uuid: destination.usb_uuid || undefined,
+            auto_mount: destination.auto_mount,
+            auto_unmount: destination.auto_unmount,
+            sync_deletes: syncOptions.delete_extraneous,
+            rsync_excludes: syncOptions.exclude_patterns.length > 0 ? syncOptions.exclude_patterns : undefined,
+            checksum_mode: (syncOptions.provider_options?.checksum_mode as boolean) || false,
+            compress: (syncOptions.provider_options?.compress as boolean) || false,
+            dry_run: syncOptions.dry_run,
+            bandwidth_limit: syncOptions.bandwidth_limit_kbps || undefined,
+            verbosity: syncOptions.verbosity,
+          }
+        : {}),
+    };
 
     try {
       if (isNew) {
-        console.log('[JobDetail] Creating new job...');
         const job = await api.jobs.create(jobData);
-        console.log('[JobDetail] Job created:', job);
         jobsStore.addJob(job);
         showToast({ message: 'Job created successfully', variant: 'success' });
       } else {
-        console.log('[JobDetail] Updating job:', params.id);
         const job = await api.jobs.update(parseInt(params.id!), jobData);
-        console.log('[JobDetail] Job updated:', job);
         jobsStore.updateJob(job);
         showToast({ message: 'Job saved successfully', variant: 'success' });
       }
-      console.log('[JobDetail] Navigating to jobs list');
       push('/jobs');
     } catch (e) {
       console.error('[JobDetail] Submit error:', e);
@@ -250,9 +294,17 @@
     </div>
   {:else}
     <!-- Job Status Toggle -->
-    <label class="card flex items-center justify-between gap-4 p-4 cursor-pointer group transition-colors {enabled ? 'ring-1 ring-primary-500/50 bg-primary-50/30 dark:bg-primary-900/10' : 'bg-gray-50 dark:bg-gray-800/50'}">
+    <label
+      class="card flex items-center justify-between gap-4 p-4 cursor-pointer group transition-colors {enabled
+        ? 'ring-1 ring-primary-500/50 bg-primary-50/30 dark:bg-primary-900/10'
+        : 'bg-gray-50 dark:bg-gray-800/50'}"
+    >
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl flex items-center justify-center transition-colors {enabled ? 'bg-primary-100 dark:bg-primary-900/40' : 'bg-gray-200 dark:bg-gray-700'}">
+        <div
+          class="w-10 h-10 rounded-xl flex items-center justify-center transition-colors {enabled
+            ? 'bg-primary-100 dark:bg-primary-900/40'
+            : 'bg-gray-200 dark:bg-gray-700'}"
+        >
           {#if enabled}
             <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -295,100 +347,68 @@
         </div>
       </div>
 
-      <!-- Mount Configuration -->
+      <!-- Destination Type Selection -->
+      <div class="card p-6">
+        <ProviderSelector bind:selected={destinationType} />
+      </div>
+
+      <!-- Provider-specific Destination Configuration -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Mount Configuration</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+          {#if destinationType === 'local'}
+            Mount Configuration
+          {:else if destinationType === 's3'}
+            S3 Configuration
+          {:else if destinationType === 'sftp'}
+            SFTP Configuration
+          {:else if destinationType === 'webdav'}
+            WebDAV Configuration
+          {:else}
+            Destination Configuration
+          {/if}
+        </h2>
 
-        <div>
-          <label for="usb" class="label">
-            USB Drive (Optional)
-            <HelpTooltip text="Select a USB drive to automatically mount before backup. The drive is identified by its unique UUID, so it will work regardless of which USB port you use. Leave as 'No USB mount' if backing up to a local folder or network drive." />
-          </label>
-          <select id="usb" bind:value={usbUuid} class="input">
-            <option value={null}>No USB mount</option>
-            {#each drives as drive}
-              <option value={drive.uuid}>
-                {drive.label || drive.name} ({drive.uuid.slice(0, 8)}...) - {drive.size}
-              </option>
-            {/each}
-          </select>
-        </div>
-
-        <div>
-          <label for="mount" class="label">
-            Mount Point
-            <HelpTooltip text="The directory path where your backup destination will be accessible. For USB drives, this is where the drive gets mounted (e.g., /mnt/backup). For local backups, this is simply the target folder path." />
-          </label>
-          <SinglePathSelector bind:path={mountPoint} placeholder="/mnt/backup" />
-        </div>
-
-        <div class="space-y-3">
-          <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
-            <div class="relative flex items-center">
-              <input type="checkbox" bind:checked={autoMount} class="peer sr-only" />
-              <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
-              <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-                Auto-mount before backup
-                <HelpTooltip text="Automatically mount the selected USB drive before the backup starts. The system will create the mount point directory if it doesn't exist. Only applies when a USB drive is selected above." />
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Mount the USB drive automatically when the job runs.</p>
-            </div>
-          </label>
-          <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
-            <div class="relative flex items-center">
-              <input type="checkbox" bind:checked={autoUnmount} class="peer sr-only" />
-              <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
-              <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-                Auto-unmount after backup
-                <HelpTooltip text="Safely unmount the USB drive after backup completes. This ensures all data is written to disk before the drive is disconnected, preventing data corruption." />
-              </div>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Safely unmount the drive when the backup completes.</p>
-            </div>
-          </label>
-        </div>
+        {#if destinationType === 'local' && destination.type === 'local'}
+          <LocalDestination bind:config={destination} {drives} />
+        {:else if destinationType === 's3' && destination.type === 's3'}
+          <S3Destination
+            bind:config={destination}
+            bind:credentialId
+            credentials={credentials.filter((c) => c.provider_type === 's3')}
+          />
+        {:else if destinationType === 'sftp' && destination.type === 'sftp'}
+          <SftpDestination
+            bind:config={destination}
+            bind:credentialId
+            credentials={credentials.filter((c) => c.provider_type === 'sftp')}
+          />
+        {:else if destinationType === 'webdav' && destination.type === 'webdav'}
+          <WebDavDestination
+            bind:config={destination}
+            bind:credentialId
+            credentials={credentials.filter((c) => c.provider_type === 'webdav')}
+          />
+        {:else}
+          <p class="text-gray-500 dark:text-gray-400">
+            This destination type is not yet supported.
+          </p>
+        {/if}
       </div>
 
       <!-- Source Directories -->
       <div class="card p-6 space-y-4">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
           Source Directories
-          <HelpTooltip text="The folders on your system that you want to back up. You can add multiple directories, and each will be synced to a matching subfolder in the destination. Use the browser to navigate and select folders." />
+          <HelpTooltip
+            text="The folders on your system that you want to back up. You can add multiple directories, and each will be synced to a matching subfolder in the destination."
+          />
         </h2>
         <PathSelector bind:paths={sourceDirs} />
       </div>
 
-      <!-- Destination -->
-      <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Destination</h2>
-        <div>
-          <label for="subdir" class="label">
-            Backup Subdirectory
-            <HelpTooltip text="A subfolder within the mount point where backups will be stored. This helps organize your backup drive, especially if you use it for multiple purposes. Each source directory will create its own folder inside this subdirectory." />
-          </label>
-          <input type="text" id="subdir" bind:value={backupSubdir} class="input" />
-          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Files will be backed up to: {mountPoint}/{backupSubdir}/
-          </p>
-        </div>
-      </div>
-
-      <!-- Rsync Options -->
+      <!-- Sync Options -->
       <div class="card p-6">
-        <RsyncOptions
-          bind:syncDeletes
-          bind:checksumMode
-          bind:compress
-          bind:dryRun
-          bind:bandwidthLimit
-          bind:excludes={rsyncExcludes}
-          bind:verbosity
-        />
+        <SyncOptionsComponent bind:options={syncOptions} {destinationType} {capabilities} />
       </div>
 
       <!-- Schedule -->
@@ -411,9 +431,5 @@
 
 <!-- Run Log Modal -->
 {#if activeRunId !== null}
-  <RunLogModal
-    runId={activeRunId}
-    jobId={parseInt(params.id!)}
-    onClose={closeRunModal}
-  />
+  <RunLogModal runId={activeRunId} jobId={parseInt(params.id!)} onClose={closeRunModal} />
 {/if}

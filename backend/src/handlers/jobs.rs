@@ -217,14 +217,24 @@ pub async fn create_job(
         .as_ref()
         .map(|e| serde_json::to_string(e).unwrap_or_default());
 
+    // Serialize new provider-based fields
+    let destination_type = req.destination_type.as_deref()
+        .or_else(|| req.destination.as_ref().map(|d| d.destination_type()))
+        .unwrap_or("local");
+    let destination_config_json = req.destination.as_ref()
+        .map(|d| serde_json::to_string(d).unwrap_or_default());
+    let sync_options_json = req.sync_options.as_ref()
+        .map(|o| serde_json::to_string(o).unwrap_or_default());
+
     let result = sqlx::query(
         r#"
         INSERT INTO jobs (
             name, description, enabled,
             usb_uuid, mount_point, auto_mount, auto_unmount,
             source_dirs, backup_subdir,
-            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity,
+            destination_type, destination_config, sync_options, credential_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&req.name)
@@ -243,6 +253,10 @@ pub async fn create_job(
     .bind(req.dry_run.unwrap_or(false))
     .bind(req.bandwidth_limit)
     .bind(req.verbosity.as_deref().unwrap_or("normal"))
+    .bind(destination_type)
+    .bind(&destination_config_json)
+    .bind(&sync_options_json)
+    .bind(req.credential_id)
     .execute(&state.db)
     .await;
 
@@ -377,6 +391,18 @@ pub async fn update_job(
     let bandwidth_limit = req.bandwidth_limit.or(existing.bandwidth_limit);
     let verbosity = req.verbosity.unwrap_or(existing.verbosity);
 
+    // Provider-based fields
+    let destination_type = req.destination_type
+        .or_else(|| req.destination.as_ref().map(|d| d.destination_type().to_string()))
+        .or(existing.destination_type);
+    let destination_config = req.destination
+        .map(|d| serde_json::to_string(&d).unwrap_or_default())
+        .or(existing.destination_config);
+    let sync_options = req.sync_options
+        .map(|o| serde_json::to_string(&o).unwrap_or_default())
+        .or(existing.sync_options);
+    let credential_id = req.credential_id.or(existing.credential_id);
+
     let result = sqlx::query(
         r#"
         UPDATE jobs SET
@@ -384,6 +410,7 @@ pub async fn update_job(
             usb_uuid = ?, mount_point = ?, auto_mount = ?, auto_unmount = ?,
             source_dirs = ?, backup_subdir = ?,
             sync_deletes = ?, rsync_excludes = ?, checksum_mode = ?, compress = ?, dry_run = ?, bandwidth_limit = ?, verbosity = ?,
+            destination_type = ?, destination_config = ?, sync_options = ?, credential_id = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         "#,
@@ -404,6 +431,10 @@ pub async fn update_job(
     .bind(dry_run)
     .bind(bandwidth_limit)
     .bind(&verbosity)
+    .bind(&destination_type)
+    .bind(&destination_config)
+    .bind(&sync_options)
+    .bind(credential_id)
     .bind(id)
     .execute(&state.db)
     .await;
@@ -656,8 +687,9 @@ pub async fn clone_job(
             name, description, enabled,
             usb_uuid, mount_point, auto_mount, auto_unmount,
             source_dirs, backup_subdir,
-            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity,
+            destination_type, destination_config, sync_options, credential_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&clone_name)
@@ -676,6 +708,10 @@ pub async fn clone_job(
     .bind(job.dry_run)
     .bind(job.bandwidth_limit)
     .bind(&job.verbosity)
+    .bind(&job.destination_type)
+    .bind(&job.destination_config)
+    .bind(&job.sync_options)
+    .bind(job.credential_id)
     .execute(&state.db)
     .await;
 

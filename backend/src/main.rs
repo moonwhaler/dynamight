@@ -20,7 +20,7 @@ use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
-use crate::services::{AuthService, BackupService, MountService, RateLimitConfig, RateLimitService, SchedulerService};
+use crate::services::{AuthService, BackupService, CredentialService, MountService, RateLimitConfig, RateLimitService, SchedulerService};
 
 pub struct AppState {
     pub db: sqlx::SqlitePool,
@@ -30,6 +30,7 @@ pub struct AppState {
     pub backup_service: Arc<BackupService>,
     pub mount_service: MountService,
     pub rate_limit_service: Arc<RateLimitService>,
+    pub credential_service: Arc<CredentialService>,
     pub log_tx: broadcast::Sender<models::LogMessage>,
 }
 
@@ -135,7 +136,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
-    let backup_service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx.clone(), max_runs_per_job));
+    let credential_service = Arc::new(CredentialService::new(&config.jwt_secret, db.clone()));
+    let backup_service = Arc::new(BackupService::new(
+        db.clone(),
+        logs_db.clone(),
+        log_tx.clone(),
+        max_runs_per_job,
+        Arc::clone(&credential_service),
+    ));
 
     // Initialize rate limiting service
     let rate_limit_config = RateLimitConfig {
@@ -155,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
         backup_service: backup_service.clone(),
         mount_service,
         rate_limit_service,
+        credential_service,
         log_tx,
     });
 
@@ -211,6 +220,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/allowed-paths", get(handlers::system::allowed_paths))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
+        // Credentials
+        .route("/credentials", get(handlers::credentials::list_credentials).post(handlers::credentials::create_credential))
+        .route("/credentials/:id", get(handlers::credentials::get_credential).put(handlers::credentials::update_credential).delete(handlers::credentials::delete_credential))
+        // Providers
+        .route("/providers", get(handlers::providers::list_providers))
+        .route("/providers/:type/capabilities", get(handlers::providers::get_provider_capabilities))
         // Apply auth middleware to all protected routes
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::require_auth));
 

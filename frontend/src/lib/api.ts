@@ -14,6 +14,11 @@ import type {
   TotpEnableResponse,
   TotpStatusResponse,
   TotpRecoveryResponse,
+  Credential,
+  CreateCredentialRequest,
+  ProviderInfo,
+  ProviderCapabilities,
+  CredentialProviderType,
 } from './types';
 
 const API_BASE = '/api';
@@ -192,6 +197,29 @@ export const api = {
         body: JSON.stringify({ path }),
       }),
     allowedPaths: () => request<{ paths: string[] }>('/system/allowed-paths'),
+  },
+
+  credentials: {
+    list: (provider?: CredentialProviderType) =>
+      request<Credential[]>(provider ? `/credentials?provider=${provider}` : '/credentials'),
+    get: (id: number) => request<Credential>(`/credentials/${id}`),
+    create: (credential: CreateCredentialRequest) =>
+      request<Credential>('/credentials', {
+        method: 'POST',
+        body: JSON.stringify(credential),
+      }),
+    update: (id: number, credential: Partial<CreateCredentialRequest>) =>
+      request<Credential>(`/credentials/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(credential),
+      }),
+    delete: (id: number) =>
+      request<{ success: boolean }>(`/credentials/${id}`, { method: 'DELETE' }),
+  },
+
+  providers: {
+    list: () => request<ProviderInfo[]>('/providers'),
+    capabilities: (type: string) => request<ProviderCapabilities>(`/providers/${type}/capabilities`),
   },
 };
 

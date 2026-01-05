@@ -1,6 +1,8 @@
 pub mod auth;
+pub mod credentials;
 pub mod jobs;
 pub mod logs;
+pub mod providers;
 pub mod schedules;
 pub mod settings;
 pub mod system;

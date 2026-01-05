@@ -73,6 +73,48 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await;
 
+    // Provider migrations (003_providers.sql)
+    // Credentials table for multi-provider support
+    let _ = sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            provider_type TEXT NOT NULL,
+            encrypted_data BLOB NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await;
+
+    // Add provider columns to jobs table
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN destination_type TEXT DEFAULT 'local'")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN destination_config TEXT DEFAULT NULL")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN sync_options TEXT DEFAULT NULL")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN credential_id INTEGER REFERENCES credentials(id) ON DELETE SET NULL")
+        .execute(pool)
+        .await;
+
+    // Indexes for provider tables
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_credentials_provider_type ON credentials(provider_type)")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_jobs_credential_id ON jobs(credential_id)")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_jobs_destination_type ON jobs(destination_type)")
+        .execute(pool)
+        .await;
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }
