@@ -4,6 +4,7 @@
   import { jobsStore } from '../../lib/stores/jobs';
   import { preferencesStore } from '../../lib/stores/preferences';
   import RunLogModal from '../logs/RunLogModal.svelte';
+  import { showToast } from '../ui/Toast.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   let { job }: { job: Job } = $props();
@@ -55,8 +56,8 @@
       if ($preferencesStore.showLogViewerAfterManualRun) {
         activeRunId = result.runId;
       }
-    } catch {
-      // Ignore
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : m.job_error_start(), variant: 'error' });
     } finally {
       running = false;
     }
