@@ -45,81 +45,77 @@
   <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Rsync Options</h2>
 
   <!-- Delete Mode -->
-  <div class="flex items-start gap-3">
-    <input
-      type="checkbox"
-      bind:checked={syncDeletes}
-      id="syncDeletes"
-      class="mt-1 rounded text-primary-600"
-    />
-    <div>
-      <label for="syncDeletes" class="font-medium text-gray-700 dark:text-gray-300">
+  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+    <div class="relative flex items-center">
+      <input type="checkbox" bind:checked={syncDeletes} class="peer sr-only" />
+      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
         Mirror Mode (--delete)
         <HelpTooltip text="Creates an exact mirror of the source. If you delete a file from your source, it will also be deleted from the backup on the next run. This keeps your backup clean but means accidentally deleted files won't be recoverable from the backup." />
-      </label>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         Delete files from destination that no longer exist in source.
         <span class="text-amber-600 dark:text-amber-500 font-medium">Use with caution!</span>
       </p>
     </div>
-  </div>
+  </label>
 
   <!-- Checksum Mode -->
-  <div class="flex items-start gap-3">
-    <input
-      type="checkbox"
-      bind:checked={checksumMode}
-      id="checksumMode"
-      class="mt-1 rounded text-primary-600"
-    />
-    <div>
-      <label for="checksumMode" class="font-medium text-gray-700 dark:text-gray-300">
+  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+    <div class="relative flex items-center">
+      <input type="checkbox" bind:checked={checksumMode} class="peer sr-only" />
+      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
         Checksum Mode (--checksum)
         <HelpTooltip text="Normally rsync checks if files changed by comparing size and modification time (fast). Checksum mode reads the entire file content to calculate a hash (slower but catches every change). Useful if file timestamps are unreliable or you need 100% verification." />
-      </label>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         Compare files by checksum instead of modification time and size. Slower but more accurate.
       </p>
     </div>
-  </div>
+  </label>
 
   <!-- Compression -->
-  <div class="flex items-start gap-3">
-    <input
-      type="checkbox"
-      bind:checked={compress}
-      id="compress"
-      class="mt-1 rounded text-primary-600"
-    />
-    <div>
-      <label for="compress" class="font-medium text-gray-700 dark:text-gray-300">
+  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+    <div class="relative flex items-center">
+      <input type="checkbox" bind:checked={compress} class="peer sr-only" />
+      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
         Compression (-z)
         <HelpTooltip text="Compresses data before sending it over the wire. Great for network backups over slow connections, but not needed for local USB drives. Already-compressed files (videos, images, archives) won't benefit much." />
-      </label>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         Compress data during transfer. Useful for slow connections, but adds CPU overhead.
       </p>
     </div>
-  </div>
+  </label>
 
   <!-- Dry Run -->
-  <div class="flex items-start gap-3">
-    <input
-      type="checkbox"
-      bind:checked={dryRun}
-      id="dryRun"
-      class="mt-1 rounded text-primary-600"
-    />
-    <div>
-      <label for="dryRun" class="font-medium text-gray-700 dark:text-gray-300">
+  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+    <div class="relative flex items-center">
+      <input type="checkbox" bind:checked={dryRun} class="peer sr-only" />
+      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
         Dry Run (--dry-run)
         <HelpTooltip text="Simulates the backup without actually copying any files. The logs will show exactly what would happen. Perfect for testing a new job configuration or checking what would be deleted with Mirror Mode enabled." />
-      </label>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         Show what would be transferred without actually doing it. Good for testing.
       </p>
     </div>
-  </div>
+  </label>
 
   <!-- Verbosity -->
   <div>

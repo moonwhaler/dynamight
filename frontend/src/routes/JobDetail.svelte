@@ -253,10 +253,19 @@
           <textarea id="description" bind:value={description} rows="2" class="input"></textarea>
         </div>
 
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={enabled} class="rounded text-primary-600" />
-          <span class="text-sm text-gray-700 dark:text-gray-300">Job enabled</span>
-          <HelpTooltip text="When disabled, scheduled runs won't execute and the job won't appear in the run options. Useful for temporarily pausing backups without deleting the configuration." />
+        <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+          <div class="relative flex items-center">
+            <input type="checkbox" bind:checked={enabled} class="peer sr-only" />
+            <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+            <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
+              Job enabled
+              <HelpTooltip text="When disabled, scheduled runs won't execute and the job won't appear in the run options. Useful for temporarily pausing backups without deleting the configuration." />
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Enable or disable scheduled runs for this job.</p>
+          </div>
         </label>
       </div>
 
@@ -287,16 +296,34 @@
           <SinglePathSelector bind:path={mountPoint} placeholder="/mnt/backup" />
         </div>
 
-        <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
-          <label class="flex items-center gap-2">
-            <input type="checkbox" bind:checked={autoMount} class="rounded text-primary-600" />
-            <span class="text-sm text-gray-700 dark:text-gray-300">Auto-mount before backup</span>
-            <HelpTooltip text="Automatically mount the selected USB drive before the backup starts. The system will create the mount point directory if it doesn't exist. Only applies when a USB drive is selected above." />
+        <div class="space-y-3">
+          <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+            <div class="relative flex items-center">
+              <input type="checkbox" bind:checked={autoMount} class="peer sr-only" />
+              <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+              <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
+                Auto-mount before backup
+                <HelpTooltip text="Automatically mount the selected USB drive before the backup starts. The system will create the mount point directory if it doesn't exist. Only applies when a USB drive is selected above." />
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Mount the USB drive automatically when the job runs.</p>
+            </div>
           </label>
-          <label class="flex items-center gap-2">
-            <input type="checkbox" bind:checked={autoUnmount} class="rounded text-primary-600" />
-            <span class="text-sm text-gray-700 dark:text-gray-300">Auto-unmount after backup</span>
-            <HelpTooltip text="Safely unmount the USB drive after backup completes. This ensures all data is written to disk before the drive is disconnected, preventing data corruption." />
+          <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+            <div class="relative flex items-center">
+              <input type="checkbox" bind:checked={autoUnmount} class="peer sr-only" />
+              <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+              <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
+                Auto-unmount after backup
+                <HelpTooltip text="Safely unmount the USB drive after backup completes. This ensures all data is written to disk before the drive is disconnected, preventing data corruption." />
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Safely unmount the drive when the backup completes.</p>
+            </div>
           </label>
         </div>
       </div>
