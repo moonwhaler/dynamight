@@ -149,6 +149,13 @@ pub enum CredentialDataRequest {
         username: String,
         password: String,
     },
+
+    /// OAuth credentials (OneDrive, Google Drive)
+    OAuth {
+        access_token: String,
+        refresh_token: String,
+        expires_at: i64,
+    },
 }
 
 impl From<CredentialDataRequest> for CredentialData {
@@ -162,6 +169,9 @@ impl From<CredentialDataRequest> for CredentialData {
             }
             CredentialDataRequest::WebDav { username, password } => {
                 Self::WebDav { username, password }
+            }
+            CredentialDataRequest::OAuth { access_token, refresh_token, expires_at } => {
+                Self::OAuth { access_token, refresh_token, expires_at }
             }
         }
     }

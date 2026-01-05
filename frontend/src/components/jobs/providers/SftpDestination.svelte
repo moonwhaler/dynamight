@@ -98,7 +98,7 @@
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
         Use SSH Key Authentication
-        <HelpTooltip text="Use an SSH private key instead of a password for authentication. More secure and recommended for automated backups." />
+        <HelpTooltip text="Authenticate using an SSH key pair. First, add your PUBLIC key to ~/.ssh/authorized_keys on the server, then store your PRIVATE key in the credentials here. More secure than passwords." />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         {config.key_based_auth

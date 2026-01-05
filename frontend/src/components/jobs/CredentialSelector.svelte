@@ -35,6 +35,10 @@
   let webdavUsername = $state('');
   let webdavPassword = $state('');
 
+  // OAuth fields (OneDrive, Google Drive)
+  let oauthAccessToken = $state('');
+  let oauthRefreshToken = $state('');
+
   function resetForm() {
     credentialName = '';
     accessKeyId = '';
@@ -45,6 +49,8 @@
     usePrivateKey = false;
     webdavUsername = '';
     webdavPassword = '';
+    oauthAccessToken = '';
+    oauthRefreshToken = '';
   }
 
   async function handleSave() {
@@ -107,6 +113,21 @@
             type: 'webdav',
             username: webdavUsername,
             password: webdavPassword,
+          };
+          break;
+
+        case 'onedrive':
+        case 'google_drive':
+          if (!oauthAccessToken || !oauthRefreshToken) {
+            showToast({ message: 'Please fill in all OAuth credential fields', variant: 'error' });
+            saving = false;
+            return;
+          }
+          data = {
+            type: 'oauth',
+            access_token: oauthAccessToken,
+            refresh_token: oauthRefreshToken,
+            expires_at: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
           };
           break;
 
@@ -261,6 +282,11 @@
           </div>
 
           {#if usePrivateKey}
+            <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg mb-4">
+              <p class="text-sm text-blue-800 dark:text-blue-300">
+                <strong>Setup:</strong> Add your public key to <code class="bg-blue-100 dark:bg-blue-800 px-1 rounded">~/.ssh/authorized_keys</code> on the server, then paste your private key below.
+              </p>
+            </div>
             <div>
               <label for="private-key" class="label">Private Key (PEM format)</label>
               <textarea
@@ -313,6 +339,41 @@
               placeholder="password"
               class="input"
             />
+          </div>
+        {:else if providerType === 'onedrive' || providerType === 'google_drive'}
+          <div class="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg mb-4">
+            <p class="text-sm text-amber-800 dark:text-amber-300">
+              {#if providerType === 'onedrive'}
+                To get OAuth tokens, you'll need to register an app in the Azure Portal
+                and complete the OAuth flow to obtain access and refresh tokens.
+              {:else}
+                To get OAuth tokens, you'll need to set up OAuth credentials in the
+                Google Cloud Console and complete the OAuth flow.
+              {/if}
+            </p>
+          </div>
+          <div>
+            <label for="access-token" class="label">Access Token</label>
+            <textarea
+              id="access-token"
+              bind:value={oauthAccessToken}
+              placeholder="eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIs..."
+              rows="3"
+              class="input font-mono text-xs"
+            ></textarea>
+          </div>
+          <div>
+            <label for="refresh-token" class="label">Refresh Token</label>
+            <textarea
+              id="refresh-token"
+              bind:value={oauthRefreshToken}
+              placeholder="0.AAAA..."
+              rows="2"
+              class="input font-mono text-xs"
+            ></textarea>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              The refresh token is used to automatically renew access tokens when they expire.
+            </p>
           </div>
         {/if}
       </div>

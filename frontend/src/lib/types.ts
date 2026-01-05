@@ -150,7 +150,14 @@ export interface WebDavCredentialData {
   password: string;
 }
 
-export type CredentialData = S3CredentialData | SftpCredentialData | WebDavCredentialData;
+export interface OAuthCredentialData {
+  type: 'oauth';
+  access_token: string;
+  refresh_token: string;
+  expires_at: number;
+}
+
+export type CredentialData = S3CredentialData | SftpCredentialData | WebDavCredentialData | OAuthCredentialData;
 
 export interface CreateCredentialRequest {
   name: string;

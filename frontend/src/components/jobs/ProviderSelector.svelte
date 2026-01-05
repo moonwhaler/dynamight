@@ -48,15 +48,15 @@
       type: 'google_drive',
       name: 'Google Drive',
       icon: 'cloud',
-      description: 'Coming soon',
-      available: false,
+      description: 'Google Drive & Shared Drives',
+      available: true,
     },
     {
       type: 'onedrive',
       name: 'OneDrive',
       icon: 'cloud',
-      description: 'Coming soon',
-      available: false,
+      description: 'Microsoft OneDrive & SharePoint',
+      available: true,
     },
   ];
 

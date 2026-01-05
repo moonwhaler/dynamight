@@ -3,11 +3,15 @@
 //! This module provides a trait-based abstraction for different sync backends
 //! (rsync, S3, SFTP, WebDAV, Google Drive, OneDrive).
 
+mod googledrive;
+mod onedrive;
 mod rsync;
 mod s3;
 mod sftp;
 mod webdav;
 
+pub use googledrive::GoogleDriveProvider;
+pub use onedrive::OneDriveProvider;
 pub use rsync::RsyncProvider;
 pub use s3::S3Provider;
 pub use sftp::SftpProvider;
@@ -199,15 +203,8 @@ pub fn create_provider(destination: &DestinationConfig) -> Box<dyn SyncProvider>
         DestinationConfig::S3 { .. } => Box::new(S3Provider::new()),
         DestinationConfig::Sftp { .. } => Box::new(SftpProvider::new()),
         DestinationConfig::WebDav { .. } => Box::new(WebDavProvider::new()),
-        // OAuth providers - for now return placeholder
-        DestinationConfig::GoogleDrive { .. } => {
-            // TODO: Implement GoogleDriveProvider
-            Box::new(RsyncProvider::new()) // Placeholder
-        }
-        DestinationConfig::OneDrive { .. } => {
-            // TODO: Implement OneDriveProvider
-            Box::new(RsyncProvider::new()) // Placeholder
-        }
+        DestinationConfig::GoogleDrive { .. } => Box::new(GoogleDriveProvider::new()),
+        DestinationConfig::OneDrive { .. } => Box::new(OneDriveProvider::new()),
     }
 }
 
@@ -218,26 +215,8 @@ pub fn get_capabilities(provider_type: &str) -> Option<ProviderCapabilities> {
         "s3" => Some(S3Provider::new().capabilities()),
         "sftp" => Some(SftpProvider::new().capabilities()),
         "webdav" => Some(WebDavProvider::new().capabilities()),
-        "google_drive" => Some(ProviderCapabilities {
-            supports_delete: true,
-            supports_compression: false,
-            supports_checksum: false,
-            supports_bandwidth_limit: false,
-            supports_exclude_patterns: true,
-            supports_incremental: true,
-            supports_dry_run: true,
-            requires_credentials: true,
-        }),
-        "onedrive" => Some(ProviderCapabilities {
-            supports_delete: true,
-            supports_compression: false,
-            supports_checksum: false,
-            supports_bandwidth_limit: false,
-            supports_exclude_patterns: true,
-            supports_incremental: true,
-            supports_dry_run: true,
-            requires_credentials: true,
-        }),
+        "google_drive" => Some(GoogleDriveProvider::new().capabilities()),
+        "onedrive" => Some(OneDriveProvider::new().capabilities()),
         _ => None,
     }
 }

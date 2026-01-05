@@ -26,7 +26,9 @@
   import { showToast } from '../components/ui/Toast.svelte';
 
   // Provider destination components
+  import GoogleDriveDestination from '../components/jobs/providers/GoogleDriveDestination.svelte';
   import LocalDestination from '../components/jobs/providers/LocalDestination.svelte';
+  import OneDriveDestination from '../components/jobs/providers/OneDriveDestination.svelte';
   import S3Destination from '../components/jobs/providers/S3Destination.svelte';
   import SftpDestination from '../components/jobs/providers/SftpDestination.svelte';
   import WebDavDestination from '../components/jobs/providers/WebDavDestination.svelte';
@@ -387,6 +389,18 @@
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 'webdav')}
+          />
+        {:else if destinationType === 'google_drive' && destination.type === 'google_drive'}
+          <GoogleDriveDestination
+            bind:config={destination}
+            bind:credentialId
+            credentials={credentials.filter((c) => c.provider_type === 'google_drive')}
+          />
+        {:else if destinationType === 'onedrive' && destination.type === 'onedrive'}
+          <OneDriveDestination
+            bind:config={destination}
+            bind:credentialId
+            credentials={credentials.filter((c) => c.provider_type === 'onedrive')}
           />
         {:else}
           <p class="text-gray-500 dark:text-gray-400">
