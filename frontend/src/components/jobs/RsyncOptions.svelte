@@ -45,10 +45,10 @@
   <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Rsync Options</h2>
 
   <!-- Delete Mode -->
-  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+  <label class="flex items-start gap-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl cursor-pointer hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">
     <div class="relative flex items-center">
       <input type="checkbox" bind:checked={syncDeletes} class="peer sr-only" />
-      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-red-600 transition-colors"></div>
       <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
     </div>
     <div class="flex-1 min-w-0">

@@ -116,6 +116,17 @@
       return;
     }
 
+    // Warn about Mirror Mode
+    if (syncDeletes) {
+      const confirmed = await confirm({
+        title: 'Mirror Mode Enabled',
+        message: 'Mirror Mode will delete files from the backup destination that no longer exist in the source. This can result in permanent data loss if files are accidentally deleted from the source. Are you sure you want to continue?',
+        confirmText: 'Yes, enable Mirror Mode',
+        variant: 'danger',
+      });
+      if (!confirmed) return;
+    }
+
     saving = true;
 
     const jobData: CreateJobRequest = {
