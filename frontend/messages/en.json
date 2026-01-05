@@ -580,6 +580,7 @@
   "filebrowser_mounted_at": "Mounted at {path}",
   "filebrowser_select_location": "Select a Location",
   "filebrowser_select_location_desc": "Choose a USB drive or local path above to start browsing.",
+  "filebrowser_refresh_drives": "Refresh drives",
 
   "error_file_not_found": "File not found",
   "error_not_a_file": "Cannot download a directory",

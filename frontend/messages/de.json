@@ -573,6 +573,7 @@
   "filebrowser_mounted_at": "Eingebunden unter {path}",
   "filebrowser_select_location": "Speicherort auswählen",
   "filebrowser_select_location_desc": "Wählen Sie oben ein USB-Laufwerk oder einen lokalen Pfad aus.",
+  "filebrowser_refresh_drives": "Laufwerke aktualisieren",
 
   "error_file_not_found": "Datei nicht gefunden",
   "error_not_a_file": "Verzeichnisse können nicht heruntergeladen werden",
