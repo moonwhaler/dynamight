@@ -150,7 +150,7 @@ run_frontend() {
     log_info "Starting frontend dev server..."
     (
         cd "$PROJECT_DIR/frontend"
-        exec npm run dev 2>&1 | sed -u "s/^/$(printf "${GREEN}[frontend]${NC} ")/"
+        exec npm run dev -- --host 2>&1 | sed -u "s/^/$(printf "${GREEN}[frontend]${NC} ")/"
     ) &
     FRONTEND_PID=$!
     log_info "Frontend started with PID: $FRONTEND_PID"
@@ -182,6 +182,7 @@ main() {
     echo ""
     echo "  Backend:  http://${HOST:-127.0.0.1}:${PORT:-3000}"
     echo "  Frontend: http://localhost:5173 (with hot-reload)"
+    echo "            Also available on local network via --host"
     echo ""
     echo "Press Ctrl+C to stop all services"
     echo ""

@@ -301,15 +301,18 @@
         <div class="mt-3 flex flex-wrap gap-2">
           {#each options.exclude_patterns as pattern}
             <span
-              class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm bg-gray-100 dark:bg-gray-700"
+              class="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-sm bg-gray-100 dark:bg-gray-700"
             >
               <code class="text-gray-800 dark:text-gray-200">{pattern}</code>
               <button
                 type="button"
                 onclick={() => removeExclude(pattern)}
-                class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                class="p-0.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                aria-label={m.common_delete()}
               >
-                &times;
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </span>
           {/each}

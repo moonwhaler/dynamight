@@ -6,6 +6,7 @@
   import JobCard from '../components/jobs/JobCard.svelte';
   import JobListRow from '../components/jobs/JobListRow.svelte';
   import * as m from '$lib/paraglide/messages.js';
+  import { formatStatus } from '$lib/i18n/status';
 
   // Filter state
   let searchQuery = $state('');
@@ -212,7 +213,7 @@
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                   }"
               >
-                {status}
+                {formatStatus(status)}
               </button>
             {/each}
           </div>
@@ -283,7 +284,7 @@
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                       }"
                   >
-                    {status}
+                    {formatStatus(status)}
                   </button>
                 {/each}
               </div>

@@ -6,6 +6,7 @@
   import type { JobRun } from '../lib/types';
   import JobCard from '../components/jobs/JobCard.svelte';
   import * as m from '$lib/paraglide/messages.js';
+  import { formatStatus } from '$lib/i18n/status';
 
   let recentRuns = $state<JobRun[]>([]);
   let loadingRuns = $state(true);
@@ -156,7 +157,7 @@
                     {$jobsStore.jobs.find((j) => j.id === run.job_id)?.name || `Job #${run.job_id}`}
                   </td>
                   <td class="px-4 py-3">
-                    <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
+                    <span class="badge {getStatusBadge(run.status)}">{formatStatus(run.status)}</span>
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
                   <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>

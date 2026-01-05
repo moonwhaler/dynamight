@@ -5,6 +5,7 @@
   import type { Job, JobRun, LogEntry } from '../lib/types';
   import LogViewer from '../components/logs/LogViewer.svelte';
   import * as m from '$lib/paraglide/messages.js';
+  import { formatStatus } from '$lib/i18n/status';
 
   let runs = $state<JobRun[]>([]);
   let loading = $state(true);
@@ -289,16 +290,6 @@
     return '';
   }
 
-  function getStatusLabel(status: string): string {
-    switch (status) {
-      case 'completed': return m.history_status_completed();
-      case 'running': return m.history_status_running();
-      case 'failed': return m.history_status_failed();
-      case 'cancelled': return m.history_status_cancelled();
-      case 'pending': return m.history_status_pending();
-      default: return status;
-    }
-  }
 </script>
 
 <div class="space-y-6">
@@ -418,7 +409,7 @@
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                 }"
             >
-              {getStatusLabel(status)}
+              {formatStatus(status)}
             </button>
           {/each}
         </div>
@@ -480,7 +471,7 @@
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                     }"
                 >
-                  {getStatusLabel(status)}
+                  {formatStatus(status)}
                 </button>
               {/each}
             </div>
@@ -577,7 +568,7 @@
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
                 <td class="px-4 py-3">
-                  <span class="badge {getStatusBadge(run.status)}">{getStatusLabel(run.status)}</span>
+                  <span class="badge {getStatusBadge(run.status)}">{formatStatus(run.status)}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
