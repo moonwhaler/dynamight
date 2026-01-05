@@ -165,6 +165,11 @@ export interface CreateCredentialRequest {
   data: CredentialData;
 }
 
+export interface CredentialUsage {
+  jobs: { id: number; name: string }[];
+  count: number;
+}
+
 // Job types
 export interface Job {
   id: number;

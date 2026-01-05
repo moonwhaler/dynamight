@@ -224,6 +224,7 @@ async fn main() -> anyhow::Result<()> {
         // Credentials
         .route("/credentials", get(handlers::credentials::list_credentials).post(handlers::credentials::create_credential))
         .route("/credentials/:id", get(handlers::credentials::get_credential).put(handlers::credentials::update_credential).delete(handlers::credentials::delete_credential))
+        .route("/credentials/:id/usage", get(handlers::credentials::get_credential_usage))
         // Providers
         .route("/providers", get(handlers::providers::list_providers))
         .route("/providers/:type/capabilities", get(handlers::providers::get_provider_capabilities))

@@ -104,7 +104,31 @@ pub async fn delete_credential(
         Ok(false) => ApiError::credential_not_found().into_response(),
         Err(e) => {
             tracing::error!("Failed to delete credential: {}", e);
-            ApiError::new(ErrorCode::CredentialDeleteFailed).into_response()
+            ApiError::internal_error().into_response()
+        }
+    }
+}
+
+/// Get credential usage (which jobs use this credential)
+pub async fn get_credential_usage(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    // First check if credential exists
+    match state.credential_service.get(&state.db, id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiError::credential_not_found().into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get credential: {}", e);
+            return ApiError::internal_error().into_response();
+        }
+    }
+
+    match state.credential_service.get_usage(&state.db, id).await {
+        Ok(usage) => Json(usage).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get credential usage: {}", e);
+            ApiError::internal_error().into_response()
         }
     }
 }

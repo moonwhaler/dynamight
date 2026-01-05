@@ -1,6 +1,6 @@
 //! Handlers for provider information and capabilities
 
-use crate::models::DestinationConfig;
+use crate::models::{CredentialData, CredentialDataRequest, DestinationConfig};
 use crate::services::providers::{self, create_provider, TestConnectionResult};
 use crate::AppState;
 use axum::{
@@ -76,7 +76,10 @@ pub async fn get_provider_capabilities(Path(provider_type): Path<String>) -> imp
 #[derive(Debug, Deserialize)]
 pub struct TestConnectionRequest {
     pub destination: DestinationConfig,
+    /// Use existing saved credential by ID
     pub credential_id: Option<i64>,
+    /// Or provide credential data directly (for testing before saving)
+    pub credential_data: Option<CredentialDataRequest>,
 }
 
 /// Response for test connection
@@ -103,8 +106,9 @@ pub async fn test_connection(
     State(state): State<Arc<AppState>>,
     Json(request): Json<TestConnectionRequest>,
 ) -> impl IntoResponse {
-    // Get credential if provided
-    let credential = if let Some(credential_id) = request.credential_id {
+    // Get credential - either from ID or from provided data
+    let credential: Option<CredentialData> = if let Some(credential_id) = request.credential_id {
+        // Use existing saved credential
         match state
             .credential_service
             .get_decrypted_with_db(&state.db, credential_id)
@@ -135,6 +139,9 @@ pub async fn test_connection(
                     .into_response()
             }
         }
+    } else if let Some(data) = request.credential_data {
+        // Use provided credential data directly (for testing before saving)
+        Some(data.into())
     } else {
         None
     };

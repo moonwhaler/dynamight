@@ -16,6 +16,8 @@ import type {
   TotpRecoveryResponse,
   Credential,
   CreateCredentialRequest,
+  CredentialData,
+  CredentialUsage,
   ProviderInfo,
   ProviderCapabilities,
   CredentialProviderType,
@@ -310,15 +312,25 @@ export const api = {
       }),
     delete: (id: number) =>
       request<{ success: boolean }>(`/credentials/${id}`, { method: 'DELETE' }),
+    getUsage: (id: number) =>
+      request<CredentialUsage>(`/credentials/${id}/usage`),
   },
 
   providers: {
     list: () => request<ProviderInfo[]>('/providers'),
     capabilities: (type: string) => request<ProviderCapabilities>(`/providers/${type}/capabilities`),
-    testConnection: (destination: DestinationConfig, credentialId: number | null) =>
+    testConnection: (
+      destination: DestinationConfig,
+      credentialId: number | null,
+      credentialData?: CredentialData
+    ) =>
       request<{ success: boolean; message: string; details?: string }>('/providers/test', {
         method: 'POST',
-        body: JSON.stringify({ destination, credential_id: credentialId }),
+        body: JSON.stringify({
+          destination,
+          credential_id: credentialId,
+          credential_data: credentialData,
+        }),
       }),
   },
 };

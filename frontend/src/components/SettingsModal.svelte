@@ -2,6 +2,7 @@
   import { api } from '../lib/api';
   import PasswordStrength from './PasswordStrength.svelte';
   import TotpSetup from './TotpSetup.svelte';
+  import CredentialsManager from './settings/CredentialsManager.svelte';
   import type { TotpStatusResponse } from '../lib/types';
   import { preferencesStore } from '../lib/stores/preferences';
   import { showToast } from './ui/Toast.svelte';
@@ -10,7 +11,7 @@
 
   let { open = $bindable(false) } = $props();
 
-  type Tab = 'general' | 'account' | 'security' | 'logs';
+  type Tab = 'general' | 'account' | 'security' | 'credentials' | 'logs';
   let activeTab = $state<Tab>('general');
 
   // 2FA state
@@ -191,6 +192,12 @@
       labelKey: () => m.settings_tab_security(),
       descriptionKey: () => m.settings_tab_security_desc(),
       icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'
+    },
+    {
+      id: 'credentials' as Tab,
+      labelKey: () => m.settings_tab_credentials(),
+      descriptionKey: () => m.settings_tab_credentials_desc(),
+      icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'
     },
     {
       id: 'logs' as Tab,
@@ -541,6 +548,10 @@
                 <!-- 2FA is not enabled - show setup -->
                 <TotpSetup onEnabled={handleTotpEnabled} />
               {/if}
+
+            {:else if activeTab === 'credentials'}
+              <!-- Credentials Tab -->
+              <CredentialsManager />
 
             {:else if activeTab === 'logs'}
               <!-- History Tab -->

@@ -260,4 +260,31 @@ impl CredentialService {
 
         Ok(count.0 > 0)
     }
+
+    /// Get list of jobs using this credential
+    pub async fn get_usage(&self, db: &SqlitePool, id: i64) -> Result<CredentialUsage> {
+        let jobs: Vec<JobSummary> = sqlx::query_as(
+            "SELECT id, name FROM jobs WHERE credential_id = ? ORDER BY name"
+        )
+        .bind(id)
+        .fetch_all(db)
+        .await?;
+
+        let count = jobs.len();
+        Ok(CredentialUsage { jobs, count })
+    }
+}
+
+/// Summary of a job for credential usage info
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct JobSummary {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Credential usage information
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CredentialUsage {
+    pub jobs: Vec<JobSummary>,
+    pub count: usize,
 }

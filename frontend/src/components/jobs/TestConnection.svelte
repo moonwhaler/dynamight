@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '../../lib/api';
-  import type { DestinationConfig } from '../../lib/types';
+  import type { DestinationConfig, CredentialData } from '../../lib/types';
   import * as m from '$lib/paraglide/messages.js';
 
   type TestState = 'idle' | 'testing' | 'success' | 'error';
@@ -8,10 +8,12 @@
   let {
     destination,
     credentialId = null,
+    credentialData = undefined,
     disabled = false,
   }: {
     destination: DestinationConfig;
     credentialId: number | null;
+    credentialData?: CredentialData;
     disabled?: boolean;
   } = $props();
 
@@ -25,7 +27,7 @@
     resultDetails = null;
 
     try {
-      const result = await api.providers.testConnection(destination, credentialId);
+      const result = await api.providers.testConnection(destination, credentialId, credentialData);
       if (result.success) {
         testState = 'success';
         resultMessage = result.message;
