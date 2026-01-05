@@ -310,6 +310,28 @@
                     </div>
                   </label>
                 </div>
+
+                <!-- Log Viewer Section -->
+                <div class="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Log Viewer</h4>
+
+                  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+                    <div class="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={$preferencesStore.autoScrollLogs}
+                        onchange={(e) => preferencesStore.setAutoScrollLogs(e.currentTarget.checked)}
+                        class="peer sr-only"
+                      />
+                      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+                      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium text-gray-900 dark:text-white text-sm">Auto-scroll logs</div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Automatically scroll to the latest entries when viewing live logs.</p>
+                    </div>
+                  </label>
+                </div>
               </div>
 
             {:else if activeTab === 'account'}

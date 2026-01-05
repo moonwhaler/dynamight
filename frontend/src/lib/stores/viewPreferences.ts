@@ -16,7 +16,7 @@ function getInitialViewMode(): ViewMode {
 }
 
 function createViewPreferencesStore() {
-  const { subscribe, set, update } = writable<ViewMode>(getInitialViewMode());
+  const { subscribe, set } = writable<ViewMode>(getInitialViewMode());
 
   return {
     subscribe,
@@ -25,15 +25,6 @@ function createViewPreferencesStore() {
       if (typeof window !== 'undefined') {
         localStorage.setItem(VIEW_MODE_KEY, mode);
       }
-    },
-    toggle: () => {
-      update(current => {
-        const next = current === 'grid' ? 'list' : 'grid';
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(VIEW_MODE_KEY, next);
-        }
-        return next;
-      });
     }
   };
 }

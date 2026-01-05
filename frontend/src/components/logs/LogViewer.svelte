@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { LogEntry } from '../../lib/types';
   import { tick } from 'svelte';
+  import { get } from 'svelte/store';
+  import { preferencesStore } from '../../lib/stores/preferences';
 
   interface Props {
     logs: LogEntry[];
@@ -26,8 +28,13 @@
   }: Props = $props();
 
   let container: HTMLDivElement;
-  let autoScroll = $state(true);
+  let autoScroll = $state(get(preferencesStore).autoScrollLogs);
   let jumpToPage = $state('');
+
+  function toggleAutoScroll(checked: boolean) {
+    autoScroll = checked;
+    preferencesStore.setAutoScrollLogs(checked);
+  }
 
   // Auto-scroll for streaming mode only
   $effect(() => {
@@ -101,7 +108,7 @@
 
   {#if isStreaming}
     <label class="flex items-center gap-2 text-sm cursor-pointer text-gray-700 dark:text-gray-300">
-      <input type="checkbox" bind:checked={autoScroll} class="rounded text-primary-600" />
+      <input type="checkbox" checked={autoScroll} onchange={(e) => toggleAutoScroll(e.currentTarget.checked)} class="rounded text-primary-600" />
       Auto-scroll
     </label>
   {:else if totalPages > 1}

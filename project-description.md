@@ -168,7 +168,10 @@ dynamight-web/
         │   └── stores/        # Svelte stores (global state)
         │       ├── auth.ts    # Authentication state + actions
         │       ├── jobs.ts    # Jobs list state + CRUD actions
-        │       └── logs.ts    # WebSocket log streaming + status updates
+        │       ├── logs.ts    # WebSocket status store for job updates
+        │       ├── theme.ts   # Dark/light theme toggle
+        │       ├── viewPreferences.ts  # Jobs view mode (grid/list)
+        │       └── preferences.ts      # User preferences
         │
         ├── components/
         │   ├── layout/        # Page structure components
@@ -292,8 +295,12 @@ Uses Svelte 5 runes (`$state`, `$derived`, `$effect`, `$bindable`) for local com
 
 - **authStore**: Manages user session, login/logout actions
 - **jobsStore**: Cached job list with CRUD operations
-- **logStore**: WebSocket connection for live log streaming
-- **statusStore**: WebSocket for global job status updates
+- **statusStore**: WebSocket for global job status updates (Dashboard real-time updates)
+- **themeStore**: Light/dark theme management with localStorage persistence
+- **viewPreferencesStore**: Jobs view mode (grid/list) preference
+- **preferencesStore**: User preferences (e.g., auto-show log viewer after manual run)
+
+*Note: Live log streaming is handled component-locally in `RunLogModal.svelte` via WebSocket.*
 
 ### Routing
 
@@ -570,7 +577,10 @@ The systemd service includes:
 | `lib/api.ts` | Fetch wrapper with all API endpoints |
 | `lib/stores/auth.ts` | Auth state store with login/logout actions |
 | `lib/stores/jobs.ts` | Jobs list store with CRUD actions |
-| `lib/stores/logs.ts` | WebSocket stores for logs and status |
+| `lib/stores/logs.ts` | WebSocket status store for global job updates |
+| `lib/stores/theme.ts` | Dark/light theme management |
+| `lib/stores/viewPreferences.ts` | Jobs view mode preference (grid/list) |
+| `lib/stores/preferences.ts` | User preferences (log viewer behavior) |
 | `components/layout/Layout.svelte` | Page wrapper with navbar and sidebar |
 | `components/layout/Navbar.svelte` | Top bar with logo and logout |
 | `components/layout/Sidebar.svelte` | Navigation menu |

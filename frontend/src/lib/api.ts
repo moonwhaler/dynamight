@@ -182,27 +182,15 @@ export const api = {
 
   system: {
     drives: () => request<UsbDrive[]>('/system/drives'),
-    mounts: () => request<{ path: string; device: string; fstype: string }[]>('/system/mounts'),
     browse: (path: string) =>
       request<{ path: string; entries: DirectoryEntry[] }>(
         `/system/browse?path=${encodeURIComponent(path)}`
       ),
-    mount: (uuid: string, mountPoint: string) =>
-      request<{ success: boolean }>('/system/mount', {
-        method: 'POST',
-        body: JSON.stringify({ uuid, mount_point: mountPoint }),
-      }),
-    unmount: (mountPoint: string) =>
-      request<{ success: boolean }>('/system/unmount', {
-        method: 'POST',
-        body: JSON.stringify({ mount_point: mountPoint }),
-      }),
     mkdir: (path: string) =>
       request<{ success: boolean; path: string }>('/system/mkdir', {
         method: 'POST',
         body: JSON.stringify({ path }),
       }),
-    health: () => request<{ status: string; version: string }>('/system/health'),
     allowedPaths: () => request<{ paths: string[] }>('/system/allowed-paths'),
   },
 };

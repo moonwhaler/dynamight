@@ -2,12 +2,14 @@ import { writable } from 'svelte/store';
 
 interface Preferences {
   showLogViewerAfterManualRun: boolean;
+  autoScrollLogs: boolean;
 }
 
 const STORAGE_KEY = 'dynamight-preferences';
 
 const defaultPreferences: Preferences = {
   showLogViewerAfterManualRun: true,
+  autoScrollLogs: true,
 };
 
 function loadPreferences(): Preferences {
@@ -32,7 +34,7 @@ function savePreferences(prefs: Preferences): void {
 }
 
 function createPreferencesStore() {
-  const { subscribe, set, update } = writable<Preferences>(loadPreferences());
+  const { subscribe, update } = writable<Preferences>(loadPreferences());
 
   return {
     subscribe,
@@ -43,9 +45,12 @@ function createPreferencesStore() {
         return updated;
       });
     },
-    reset: () => {
-      set(defaultPreferences);
-      savePreferences(defaultPreferences);
+    setAutoScrollLogs: (value: boolean) => {
+      update(prefs => {
+        const updated = { ...prefs, autoScrollLogs: value };
+        savePreferences(updated);
+        return updated;
+      });
     }
   };
 }

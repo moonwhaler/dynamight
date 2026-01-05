@@ -21,7 +21,7 @@ function getInitialTheme(): Theme {
 }
 
 function createThemeStore() {
-  const { subscribe, set, update } = writable<Theme>(getInitialTheme());
+  const { subscribe, update } = writable<Theme>(getInitialTheme());
 
   // Apply theme to document
   function applyTheme(theme: Theme) {
@@ -43,10 +43,6 @@ function createThemeStore() {
 
   return {
     subscribe,
-    setTheme: (theme: Theme) => {
-      set(theme);
-      applyTheme(theme);
-    },
     toggle: () => {
       update(current => {
         const next = current === 'light' ? 'dark' : 'light';
