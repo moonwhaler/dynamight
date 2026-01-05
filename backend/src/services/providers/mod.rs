@@ -12,7 +12,7 @@ mod webdav;
 
 pub use googledrive::GoogleDriveProvider;
 pub use onedrive::OneDriveProvider;
-pub use rsync::{RsyncProvider, SpaceCheckResult, SourceSizeInfo};
+pub use rsync::RsyncProvider;
 pub use s3::S3Provider;
 pub use sftp::SftpProvider;
 pub use webdav::WebDavProvider;

@@ -604,17 +604,33 @@ impl SyncProvider for RsyncProvider {
                     }
 
                     // Parse rsync output for stats
-                    if line.contains("Number of files transferred") {
+                    // Handle both "Number of files transferred" (old rsync) and
+                    // "Number of regular files transferred" (rsync 3.1+)
+                    if line.contains("files transferred") {
                         if let Some(num) = line.split(':').nth(1) {
-                            if let Ok(n) = num.trim().replace(',', "").parse::<i64>() {
+                            // Handle both comma (US) and dot (EU) thousand separators
+                            let cleaned = num.trim().replace([',', '.'], "");
+                            if let Ok(n) = cleaned.parse::<i64>() {
                                 result.files_transferred += n;
                             }
                         }
                     } else if line.contains("Total transferred file size") {
                         if let Some(size_str) = line.split(':').nth(1) {
                             if let Some(bytes) = size_str.split_whitespace().next() {
-                                if let Ok(b) = bytes.replace(',', "").parse::<i64>() {
+                                let cleaned = bytes.replace([',', '.'], "");
+                                if let Ok(b) = cleaned.parse::<i64>() {
                                     result.bytes_transferred += b;
+                                }
+                            }
+                        }
+                    } else if line.starts_with("sent ") && line.contains(" bytes") && result.bytes_transferred == 0 {
+                        // Fallback: parse "sent X bytes  received Y bytes" line
+                        // This always appears and serves as backup if detailed stats are missing
+                        if let Some(bytes_str) = line.strip_prefix("sent ") {
+                            if let Some(bytes) = bytes_str.split_whitespace().next() {
+                                let cleaned = bytes.replace([',', '.'], "");
+                                if let Ok(b) = cleaned.parse::<i64>() {
+                                    result.bytes_transferred = b;
                                 }
                             }
                         }

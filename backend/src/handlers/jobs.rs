@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
 use crate::models::{CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, UpdateJobRequest};
-use crate::services::providers::{RsyncProvider, SpaceCheckResult};
+use crate::services::providers::RsyncProvider;
 use crate::AppState;
 
 /// Validates rsync exclude patterns to prevent shell injection and unexpected behavior.
