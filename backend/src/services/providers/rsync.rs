@@ -123,7 +123,12 @@ impl RsyncProvider {
 
         match output {
             Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
+                // Take only the first line in case of multiple mounts (bind mounts, submounts)
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string()
             }
             _ => "unknown".to_string(),
         }

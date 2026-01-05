@@ -136,7 +136,12 @@ impl MountService {
             .output()?;
 
         if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            // Take only the first line in case of multiple mounts (bind mounts, submounts)
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("unknown")
+                .to_string())
         } else {
             Ok("unknown".to_string())
         }
