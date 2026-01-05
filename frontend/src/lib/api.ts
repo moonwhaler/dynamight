@@ -19,6 +19,7 @@ import type {
   ProviderInfo,
   ProviderCapabilities,
   CredentialProviderType,
+  DestinationConfig,
 } from './types';
 import * as m from '$lib/paraglide/messages.js';
 
@@ -85,6 +86,9 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     // Credential errors
     CREDENTIAL_NOT_FOUND: () => m.error_credential_not_found(),
     CREDENTIAL_IN_USE: () => m.error_credential_in_use(),
+    CREDENTIAL_CREATE_FAILED: () => m.error_credential_create_failed(),
+    CREDENTIAL_UPDATE_FAILED: () => m.error_credential_update_failed(),
+    CREDENTIAL_DELETE_FAILED: () => m.error_credential_delete_failed(),
 
     // Validation errors
     VALIDATION_FIELD_REQUIRED: () => m.error_field_required({ field: String(params?.field ?? 'Field') }),
@@ -311,6 +315,11 @@ export const api = {
   providers: {
     list: () => request<ProviderInfo[]>('/providers'),
     capabilities: (type: string) => request<ProviderCapabilities>(`/providers/${type}/capabilities`),
+    testConnection: (destination: DestinationConfig, credentialId: number | null) =>
+      request<{ success: boolean; message: string; details?: string }>('/providers/test', {
+        method: 'POST',
+        body: JSON.stringify({ destination, credential_id: credentialId }),
+      }),
   },
 };
 

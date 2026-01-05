@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { GoogleDriveDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
+  import TestConnection from '../TestConnection.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -8,10 +9,12 @@
     config = $bindable<GoogleDriveDestinationConfig>(),
     credentialId = $bindable<number | null>(null),
     credentials = [],
+    onCredentialsChange = () => {},
   }: {
     config: GoogleDriveDestinationConfig;
     credentialId: number | null;
     credentials: Credential[];
+    onCredentialsChange?: () => void;
   } = $props();
 </script>
 
@@ -20,6 +23,7 @@
     providerType="google_drive"
     bind:selected={credentialId}
     {credentials}
+    {onCredentialsChange}
   />
 
   <div>
@@ -76,4 +80,10 @@
       <li>{m.google_drive_setup_step4()}</li>
     </ol>
   </div>
+
+  <TestConnection
+    destination={config}
+    {credentialId}
+    disabled={!credentialId}
+  />
 </div>

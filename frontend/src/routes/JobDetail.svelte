@@ -396,30 +396,35 @@
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 's3')}
+            onCredentialsChange={loadCredentials}
           />
         {:else if destinationType === 'sftp' && destination.type === 'sftp'}
           <SftpDestination
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 'sftp')}
+            onCredentialsChange={loadCredentials}
           />
         {:else if destinationType === 'webdav' && destination.type === 'webdav'}
           <WebDavDestination
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 'webdav')}
+            onCredentialsChange={loadCredentials}
           />
         {:else if destinationType === 'google_drive' && destination.type === 'google_drive'}
           <GoogleDriveDestination
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 'google_drive')}
+            onCredentialsChange={loadCredentials}
           />
         {:else if destinationType === 'onedrive' && destination.type === 'onedrive'}
           <OneDriveDestination
             bind:config={destination}
             bind:credentialId
             credentials={credentials.filter((c) => c.provider_type === 'onedrive')}
+            onCredentialsChange={loadCredentials}
           />
         {:else}
           <p class="text-gray-500 dark:text-gray-400">

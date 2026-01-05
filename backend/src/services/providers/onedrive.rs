@@ -1,6 +1,6 @@
 //! OneDrive sync provider using Microsoft Graph API
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -98,6 +98,95 @@ impl SyncProvider for OneDriveProvider {
         }
 
         Ok(())
+    }
+
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        self.validate_config(destination, credential)?;
+
+        let (folder_path, drive_id) = match destination {
+            DestinationConfig::OneDrive { folder_path, drive_id } => {
+                (folder_path.clone(), drive_id.clone())
+            }
+            _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
+        };
+
+        let access_token = match credential {
+            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
+            _ => return Err(ProviderError::CredentialError("OAuth credentials required".to_string())),
+        };
+
+        // Test connection using the drive endpoint
+        let test_url = if let Some(ref id) = drive_id {
+            format!("{}/drives/{}", GRAPH_API_BASE, id)
+        } else {
+            format!("{}/me/drive", GRAPH_API_BASE)
+        };
+
+        let response = self
+            .client
+            .get(&test_url)
+            .bearer_auth(&access_token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Failed to connect: {}", e)))?;
+
+        match response.status().as_u16() {
+            200 => {
+                // Parse drive info from response
+                #[derive(Deserialize)]
+                struct DriveInfo {
+                    name: Option<String>,
+                    owner: Option<OwnerInfo>,
+                }
+                #[derive(Deserialize)]
+                struct OwnerInfo {
+                    user: Option<UserInfo>,
+                }
+                #[derive(Deserialize)]
+                struct UserInfo {
+                    #[serde(rename = "displayName")]
+                    display_name: Option<String>,
+                }
+
+                let drive_info = response
+                    .json::<DriveInfo>()
+                    .await
+                    .map(|r| {
+                        let drive_name = r.name.unwrap_or_else(|| "OneDrive".to_string());
+                        let owner = r
+                            .owner
+                            .and_then(|o| o.user)
+                            .and_then(|u| u.display_name)
+                            .unwrap_or_default();
+                        if !owner.is_empty() {
+                            format!("{} ({})", drive_name, owner)
+                        } else {
+                            drive_name
+                        }
+                    })
+                    .unwrap_or_else(|_| "OneDrive".to_string());
+
+                Ok(TestConnectionResult {
+                    success: true,
+                    message: "Successfully connected to OneDrive".to_string(),
+                    details: Some(format!("Drive: {}. Folder: /{}", drive_info, folder_path)),
+                })
+            }
+            401 => Err(ProviderError::CredentialError(
+                "Authentication failed. Your access token may have expired.".to_string(),
+            )),
+            403 => Err(ProviderError::CredentialError(
+                "Access forbidden. Check your OAuth scopes and permissions.".to_string(),
+            )),
+            status => Err(ProviderError::ConnectionError(format!(
+                "Microsoft Graph API returned status {}",
+                status
+            ))),
+        }
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {

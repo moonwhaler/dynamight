@@ -1,6 +1,6 @@
 //! WebDAV sync provider (Nextcloud, ownCloud, etc.)
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -91,6 +91,65 @@ impl SyncProvider for WebDavProvider {
         }
 
         Ok(())
+    }
+
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        self.validate_config(destination, credential)?;
+
+        let (base_url, remote_path) = match destination {
+            DestinationConfig::WebDav { url, remote_path } => (url.clone(), remote_path.clone()),
+            _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
+        };
+
+        let (username, password) = match credential {
+            Some(CredentialData::WebDav { username, password }) => (username.clone(), password.clone()),
+            _ => return Err(ProviderError::CredentialError("WebDAV credentials required".to_string())),
+        };
+
+        // Test URL - use base URL or append remote path
+        let test_url = if remote_path.is_empty() {
+            base_url.trim_end_matches('/').to_string()
+        } else {
+            format!("{}/{}", base_url.trim_end_matches('/'), remote_path.trim_start_matches('/'))
+        };
+
+        // Use PROPFIND to test connection (standard WebDAV method)
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &test_url)
+            .basic_auth(&username, Some(&password))
+            .header("Depth", "0")
+            .send()
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Failed to connect: {}", e)))?;
+
+        match response.status().as_u16() {
+            200..=299 => Ok(TestConnectionResult {
+                success: true,
+                message: "Successfully connected to WebDAV server".to_string(),
+                details: Some(format!("URL: {}", test_url)),
+            }),
+            401 => Err(ProviderError::CredentialError(
+                "Authentication failed. Check your username and password.".to_string(),
+            )),
+            403 => Err(ProviderError::CredentialError(
+                "Access forbidden. Check your permissions.".to_string(),
+            )),
+            404 => Ok(TestConnectionResult {
+                success: true,
+                message: "Connected to WebDAV server".to_string(),
+                details: Some(format!("Remote path '{}' will be created on first sync", remote_path)),
+            }),
+            status => Err(ProviderError::ConnectionError(format!(
+                "Server returned status {}: {}",
+                status,
+                response.text().await.unwrap_or_default()
+            ))),
+        }
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {

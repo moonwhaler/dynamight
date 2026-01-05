@@ -227,6 +227,7 @@ async fn main() -> anyhow::Result<()> {
         // Providers
         .route("/providers", get(handlers::providers::list_providers))
         .route("/providers/:type/capabilities", get(handlers::providers::get_provider_capabilities))
+        .route("/providers/test", post(handlers::providers::test_connection))
         // Apply auth middleware to all protected routes
         .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::require_auth));
 

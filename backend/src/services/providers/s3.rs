@@ -1,6 +1,6 @@
 //! S3 and S3-compatible storage provider (AWS, MinIO, Backblaze B2)
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use std::path::Path;
@@ -82,6 +82,74 @@ impl SyncProvider for S3Provider {
         }
 
         Ok(())
+    }
+
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        self.validate_config(destination, credential)?;
+
+        let (bucket, region, endpoint) = match destination {
+            DestinationConfig::S3 { bucket, region, endpoint, .. } => {
+                (bucket.clone(), region.clone(), endpoint.clone())
+            }
+            _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
+        };
+
+        let (access_key_id, secret_access_key) = match credential {
+            Some(CredentialData::S3 { access_key_id, secret_access_key }) => {
+                (access_key_id.clone(), secret_access_key.clone())
+            }
+            _ => return Err(ProviderError::CredentialError("S3 credentials required".to_string())),
+        };
+
+        // Build AWS config
+        let config_builder = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(region.clone()))
+            .credentials_provider(aws_credential_types::Credentials::new(
+                access_key_id,
+                secret_access_key,
+                None,
+                None,
+                "dynamight",
+            ));
+
+        let config = config_builder.load().await;
+        let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&config);
+
+        if let Some(ep) = &endpoint {
+            s3_config_builder = s3_config_builder.endpoint_url(ep).force_path_style(true);
+        }
+
+        let s3_client = aws_sdk_s3::Client::from_conf(s3_config_builder.build());
+
+        // Try to head the bucket to verify access
+        match s3_client.head_bucket().bucket(&bucket).send().await {
+            Ok(_) => Ok(TestConnectionResult {
+                success: true,
+                message: "Successfully connected to S3 bucket".to_string(),
+                details: Some(format!("Bucket: {}, Region: {}", bucket, region)),
+            }),
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                if error_msg.contains("403") || error_msg.contains("Access Denied") {
+                    Err(ProviderError::CredentialError(
+                        "Access denied. Check your credentials and bucket permissions.".to_string(),
+                    ))
+                } else if error_msg.contains("404") || error_msg.contains("NoSuchBucket") {
+                    Err(ProviderError::ConfigError(
+                        format!("Bucket '{}' does not exist or is not accessible.", bucket),
+                    ))
+                } else {
+                    Err(ProviderError::ConnectionError(format!(
+                        "Failed to connect to S3: {}",
+                        error_msg
+                    )))
+                }
+            }
+        }
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {

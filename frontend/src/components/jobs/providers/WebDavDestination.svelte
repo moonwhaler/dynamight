@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WebDavDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
+  import TestConnection from '../TestConnection.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -8,10 +9,12 @@
     config = $bindable<WebDavDestinationConfig>(),
     credentialId = $bindable<number | null>(null),
     credentials = [],
+    onCredentialsChange = () => {},
   }: {
     config: WebDavDestinationConfig;
     credentialId: number | null;
     credentials: Credential[];
+    onCredentialsChange?: () => void;
   } = $props();
 
   // Common WebDAV URL templates
@@ -27,6 +30,7 @@
     providerType="webdav"
     bind:selected={credentialId}
     {credentials}
+    {onCredentialsChange}
   />
 
   <div>
@@ -72,4 +76,10 @@
       {m.webdav_preview({ url: config.url || '', path: config.remote_path || '' })}
     </p>
   </div>
+
+  <TestConnection
+    destination={config}
+    {credentialId}
+    disabled={!config.url || !credentialId}
+  />
 </div>

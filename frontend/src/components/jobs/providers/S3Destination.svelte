@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { S3DestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
+  import TestConnection from '../TestConnection.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -8,10 +9,12 @@
     config = $bindable<S3DestinationConfig>(),
     credentialId = $bindable<number | null>(null),
     credentials = [],
+    onCredentialsChange = () => {},
   }: {
     config: S3DestinationConfig;
     credentialId: number | null;
     credentials: Credential[];
+    onCredentialsChange?: () => void;
   } = $props();
 
   const regions = [
@@ -46,6 +49,7 @@
     providerType="s3"
     bind:selected={credentialId}
     {credentials}
+    {onCredentialsChange}
   />
 
   <div>
@@ -121,4 +125,10 @@
       {/each}
     </select>
   </div>
+
+  <TestConnection
+    destination={config}
+    {credentialId}
+    disabled={!config.bucket || !config.region || !credentialId}
+  />
 </div>

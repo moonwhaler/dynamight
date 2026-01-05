@@ -1,6 +1,6 @@
 //! Google Drive sync provider using Google Drive API v3
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -104,6 +104,93 @@ impl SyncProvider for GoogleDriveProvider {
         }
 
         Ok(())
+    }
+
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        self.validate_config(destination, credential)?;
+
+        let (folder_id, shared_drive_id) = match destination {
+            DestinationConfig::GoogleDrive { folder_id, shared_drive_id } => {
+                (folder_id.clone(), shared_drive_id.clone())
+            }
+            _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
+        };
+
+        let access_token = match credential {
+            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
+            _ => return Err(ProviderError::CredentialError("OAuth credentials required".to_string())),
+        };
+
+        // Test connection using the about endpoint
+        let test_url = format!("{}/about?fields=user", DRIVE_API_BASE);
+        let response = self
+            .client
+            .get(&test_url)
+            .bearer_auth(&access_token)
+            .send()
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Failed to connect: {}", e)))?;
+
+        match response.status().as_u16() {
+            200 => {
+                // Parse user info from response
+                #[derive(Deserialize)]
+                struct AboutResponse {
+                    user: UserInfo,
+                }
+                #[derive(Deserialize)]
+                struct UserInfo {
+                    #[serde(rename = "displayName")]
+                    display_name: Option<String>,
+                    #[serde(rename = "emailAddress")]
+                    email_address: Option<String>,
+                }
+
+                let user_info = response
+                    .json::<AboutResponse>()
+                    .await
+                    .map(|r| {
+                        let name = r.user.display_name.unwrap_or_default();
+                        let email = r.user.email_address.unwrap_or_default();
+                        if !name.is_empty() && !email.is_empty() {
+                            format!("{} ({})", name, email)
+                        } else if !email.is_empty() {
+                            email
+                        } else {
+                            "Unknown user".to_string()
+                        }
+                    })
+                    .unwrap_or_else(|_| "Unknown user".to_string());
+
+                let folder_info = if folder_id.is_empty() {
+                    "Root folder".to_string()
+                } else if let Some(ref drive_id) = shared_drive_id {
+                    format!("Shared Drive: {}, Folder: {}", drive_id, folder_id)
+                } else {
+                    format!("Folder ID: {}", folder_id)
+                };
+
+                Ok(TestConnectionResult {
+                    success: true,
+                    message: "Successfully connected to Google Drive".to_string(),
+                    details: Some(format!("Account: {}. {}", user_info, folder_info)),
+                })
+            }
+            401 => Err(ProviderError::CredentialError(
+                "Authentication failed. Your access token may have expired.".to_string(),
+            )),
+            403 => Err(ProviderError::CredentialError(
+                "Access forbidden. Check your OAuth scopes and permissions.".to_string(),
+            )),
+            status => Err(ProviderError::ConnectionError(format!(
+                "Google Drive API returned status {}",
+                status
+            ))),
+        }
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {

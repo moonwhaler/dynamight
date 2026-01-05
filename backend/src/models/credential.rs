@@ -75,6 +75,7 @@ impl From<Credential> for CredentialResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CredentialData {
     /// OAuth2 credentials (Google Drive, OneDrive)
+    #[serde(rename = "oauth")]
     OAuth {
         access_token: String,
         refresh_token: String,
@@ -98,6 +99,7 @@ pub enum CredentialData {
     },
 
     /// WebDAV credentials
+    #[serde(rename = "webdav")]
     WebDav {
         username: String,
         password: String,
@@ -145,12 +147,14 @@ pub enum CredentialDataRequest {
     },
 
     /// WebDAV credentials
+    #[serde(rename = "webdav")]
     WebDav {
         username: String,
         password: String,
     },
 
     /// OAuth credentials (OneDrive, Google Drive)
+    #[serde(rename = "oauth")]
     OAuth {
         access_token: String,
         refresh_token: String,
@@ -184,4 +188,42 @@ pub struct UpdateCredentialRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub data: Option<CredentialDataRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oauth_deserialization() {
+        let json = r#"{
+            "name": "Test OAuth",
+            "provider_type": "google_drive",
+            "data": {
+                "type": "oauth",
+                "access_token": "test_access",
+                "refresh_token": "test_refresh",
+                "expires_at": 1234567890
+            }
+        }"#;
+
+        let result: Result<CreateCredentialRequest, _> = serde_json::from_str(json);
+        assert!(result.is_ok(), "Failed to deserialize: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_webdav_deserialization() {
+        let json = r#"{
+            "name": "Test WebDAV",
+            "provider_type": "webdav",
+            "data": {
+                "type": "webdav",
+                "username": "user",
+                "password": "pass"
+            }
+        }"#;
+
+        let result: Result<CreateCredentialRequest, _> = serde_json::from_str(json);
+        assert!(result.is_ok(), "Failed to deserialize: {:?}", result.err());
+    }
 }

@@ -141,6 +141,16 @@ impl SyncContext {
     }
 }
 
+/// Result of a connection test
+#[derive(Debug, Clone, Serialize)]
+pub struct TestConnectionResult {
+    pub success: bool,
+    pub message: String,
+    /// Additional details (e.g., user info, bucket name, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
 /// Trait that all sync providers must implement
 #[async_trait]
 pub trait SyncProvider: Send + Sync {
@@ -160,6 +170,22 @@ pub trait SyncProvider: Send + Sync {
 
     /// Execute the sync operation
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError>;
+
+    /// Test the connection to the destination
+    /// Returns Ok with success message, or Err with error details
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        // Default implementation just validates config
+        self.validate_config(destination, credential)?;
+        Ok(TestConnectionResult {
+            success: true,
+            message: "Configuration is valid".to_string(),
+            details: None,
+        })
+    }
 
     /// Check if a run has been cancelled (providers should check this periodically)
     /// Deprecated: Use ctx.check_cancelled() instead

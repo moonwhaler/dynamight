@@ -45,6 +45,9 @@
   "error_invalid_cron": "Invalid cron expression",
   "error_credential_in_use": "Credential is in use by one or more jobs",
   "error_credential_not_found": "Credential not found",
+  "error_credential_create_failed": "Failed to save credential. Please check your input and try again.",
+  "error_credential_update_failed": "Failed to update credential. Please check your input and try again.",
+  "error_credential_delete_failed": "Failed to delete credential",
   "error_totp_invalid_code": "Invalid verification code",
   "error_totp_not_enabled": "Two-factor authentication is not enabled",
   "error_password_too_short": "Password must be at least 8 characters",
@@ -690,5 +693,11 @@
   "day_wednesday": "Wednesday",
   "day_thursday": "Thursday",
   "day_friday": "Friday",
-  "day_saturday": "Saturday"
+  "day_saturday": "Saturday",
+
+  "test_connection_button": "Test Connection",
+  "test_connection_testing": "Testing...",
+  "test_connection_success": "Connected",
+  "test_connection_retry": "Retry Test",
+  "test_connection_error_generic": "Connection test failed"
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SftpDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
+  import TestConnection from '../TestConnection.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -8,10 +9,12 @@
     config = $bindable<SftpDestinationConfig>(),
     credentialId = $bindable<number | null>(null),
     credentials = [],
+    onCredentialsChange = () => {},
   }: {
     config: SftpDestinationConfig;
     credentialId: number | null;
     credentials: Credential[];
+    onCredentialsChange?: () => void;
   } = $props();
 </script>
 
@@ -20,6 +23,7 @@
     providerType="sftp"
     bind:selected={credentialId}
     {credentials}
+    {onCredentialsChange}
   />
 
   <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -108,4 +112,10 @@
       </p>
     </div>
   </label>
+
+  <TestConnection
+    destination={config}
+    {credentialId}
+    disabled={!config.host || !config.username || !config.remote_path || !credentialId}
+  />
 </div>

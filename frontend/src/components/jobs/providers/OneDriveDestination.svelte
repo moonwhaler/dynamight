@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { OneDriveDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
+  import TestConnection from '../TestConnection.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -8,10 +9,12 @@
     config = $bindable<OneDriveDestinationConfig>(),
     credentialId = $bindable<number | null>(null),
     credentials = [],
+    onCredentialsChange = () => {},
   }: {
     config: OneDriveDestinationConfig;
     credentialId: number | null;
     credentials: Credential[];
+    onCredentialsChange?: () => void;
   } = $props();
 </script>
 
@@ -20,6 +23,7 @@
     providerType="onedrive"
     bind:selected={credentialId}
     {credentials}
+    {onCredentialsChange}
   />
 
   <div>
@@ -66,4 +70,10 @@
       {m.onedrive_setup_desc()}
     </p>
   </div>
+
+  <TestConnection
+    destination={config}
+    {credentialId}
+    disabled={!config.folder_path || !credentialId}
+  />
 </div>

@@ -1,6 +1,6 @@
 //! SFTP sync provider for remote SSH servers
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use std::path::Path;
@@ -85,6 +85,87 @@ impl SyncProvider for SftpProvider {
         }
 
         Ok(())
+    }
+
+    async fn test_connection(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<TestConnectionResult, ProviderError> {
+        self.validate_config(destination, credential)?;
+
+        let (host, port, username, remote_path) = match destination {
+            DestinationConfig::Sftp { host, port, username, remote_path, .. } => {
+                (host.clone(), *port, username.clone(), remote_path.clone())
+            }
+            _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
+        };
+
+        let (password, private_key, passphrase) = match credential {
+            Some(CredentialData::Sftp { password, private_key, passphrase }) => {
+                (password.clone(), private_key.clone(), passphrase.clone())
+            }
+            _ => return Err(ProviderError::CredentialError("SFTP credentials required".to_string())),
+        };
+
+        // Connect via SSH
+        let config = Arc::new(russh::client::Config::default());
+        let sh = SftpClientHandler;
+
+        let mut session = russh::client::connect(config, (host.as_str(), port), sh)
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("SSH connection failed: {}", e)))?;
+
+        // Authenticate
+        let auth_result = if let Some(key) = private_key {
+            match russh_keys::decode_secret_key(&key, passphrase.as_deref()) {
+                Ok(key_pair) => session.authenticate_publickey(&username, Arc::new(key_pair)).await,
+                Err(e) => return Err(ProviderError::CredentialError(format!("Invalid private key: {}", e))),
+            }
+        } else if let Some(pw) = password {
+            session.authenticate_password(&username, &pw).await
+        } else {
+            return Err(ProviderError::CredentialError("No authentication method".to_string()));
+        };
+
+        match auth_result {
+            Ok(true) => {}
+            Ok(false) => return Err(ProviderError::CredentialError("Authentication failed. Check your credentials.".to_string())),
+            Err(e) => return Err(ProviderError::CredentialError(format!("Authentication error: {}", e))),
+        }
+
+        // Open SFTP channel to verify full connectivity
+        let channel = session
+            .channel_open_session()
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Channel open failed: {}", e)))?;
+
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("SFTP subsystem failed: {}", e)))?;
+
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("SFTP session failed: {}", e)))?;
+
+        // Try to stat the remote path to verify it exists or is writable
+        let path_info = match sftp.metadata(&remote_path).await {
+            Ok(attrs) => {
+                if attrs.is_dir() {
+                    format!("Remote path '{}' exists and is accessible", remote_path)
+                } else {
+                    format!("Remote path '{}' exists (not a directory)", remote_path)
+                }
+            }
+            Err(_) => format!("Remote path '{}' will be created on first sync", remote_path),
+        };
+
+        Ok(TestConnectionResult {
+            success: true,
+            message: "Successfully connected to SFTP server".to_string(),
+            details: Some(format!("{}@{}:{}. {}", username, host, port, path_info)),
+        })
     }
 
     async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError> {
