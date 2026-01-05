@@ -122,7 +122,6 @@ export HOST="${HOST:-0.0.0.0}"
 export PORT="${PORT:-8080}"
 export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
 export TZ="${TZ:-UTC}"
-# MAX_RUNS_PER_JOB is optional, no default needed
 
 echo "Starting Dynamight on http://${HOST}:${PORT}"
 exec ./dynamight
@@ -136,17 +135,22 @@ Dynamight - Backup Management System
 
 Quick Start:
 1. Copy .env.example to .env
-2. Edit .env and set secure values for JWT_SECRET and ADMIN_PASSWORD
+2. Edit .env and set a secure value for JWT_SECRET (min 32 characters)
+   Generate one with: openssl rand -base64 32
 3. Run: ./run.sh
+4. Open http://localhost:8080 in your browser
+5. Complete the initial setup to create your admin account
 
 System Service Installation:
 1. Run: sudo ./scripts/install.sh
-2. Edit: /etc/dynamight/.env
-3. Start: sudo systemctl start dynamight
+2. Edit: /etc/dynamight/.env (set JWT_SECRET)
+3. Start: sudo systemctl enable --now dynamight
+4. Open http://your-server:3000 in your browser
+5. Complete the initial setup to create your admin account
 
-Default login:
-  Username: admin
-  Password: (value of ADMIN_PASSWORD in .env)
+First-Time Setup:
+  On first launch, Dynamight will prompt you to create an admin
+  account through the web interface. Choose a strong password!
 
 For more information, visit the project repository.
 EOF

@@ -114,9 +114,6 @@ setup_config() {
 # JWT secret for authentication (auto-generated, keep secure!)
 JWT_SECRET=${JWT_SECRET}
 
-# Default admin password (CHANGE THIS!)
-ADMIN_PASSWORD=changeme
-
 # Database location
 DATABASE_URL=sqlite:${DATA_DIR}/dynamight.db
 
@@ -133,7 +130,6 @@ EOF
 
         chmod 600 "$CONFIG_DIR/.env"
         log_success "Configuration created at $CONFIG_DIR/.env"
-        log_warn "IMPORTANT: Edit $CONFIG_DIR/.env and change ADMIN_PASSWORD!"
     else
         log_info "Configuration already exists, preserving..."
     fi
@@ -208,14 +204,11 @@ show_status() {
     echo "  Logs:       journalctl -u dynamight"
     echo ""
     echo "Next steps:"
-    echo "  1. Edit configuration:  sudo nano $CONFIG_DIR/.env"
-    echo "  2. Change ADMIN_PASSWORD to something secure!"
-    echo "  3. Enable service:      sudo systemctl enable dynamight"
-    echo "  4. Start service:       sudo systemctl start dynamight"
-    echo "  5. Check status:        sudo systemctl status dynamight"
-    echo ""
-    echo "Access the web interface at: http://your-server:3000"
-    echo "Default login: admin / (your ADMIN_PASSWORD)"
+    echo "  1. Enable service:      sudo systemctl enable dynamight"
+    echo "  2. Start service:       sudo systemctl start dynamight"
+    echo "  3. Check status:        sudo systemctl status dynamight"
+    echo "  4. Open http://your-server:3000 in your browser"
+    echo "  5. Complete the initial setup to create your admin account"
     echo ""
 }
 
