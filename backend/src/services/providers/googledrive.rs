@@ -619,6 +619,7 @@ impl GoogleDriveProvider {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resumable_upload(
         &self,
         data: &[u8],

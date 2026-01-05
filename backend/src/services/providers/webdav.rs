@@ -259,6 +259,7 @@ impl SyncProvider for WebDavProvider {
 }
 
 impl WebDavProvider {
+    #[allow(clippy::too_many_arguments)]
     async fn sync_directory(
         &self,
         base_url: &str,

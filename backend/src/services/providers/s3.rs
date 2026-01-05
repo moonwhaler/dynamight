@@ -260,6 +260,7 @@ impl SyncProvider for S3Provider {
 }
 
 impl S3Provider {
+    #[allow(clippy::too_many_arguments)]
     async fn sync_directory(
         &self,
         client: &aws_sdk_s3::Client,

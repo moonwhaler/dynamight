@@ -139,11 +139,9 @@ pub async fn test_connection(
                     .into_response()
             }
         }
-    } else if let Some(data) = request.credential_data {
-        // Use provided credential data directly (for testing before saving)
-        Some(data.into())
     } else {
-        None
+        // Use provided credential data directly (for testing before saving)
+        request.credential_data.map(|data| data.into())
     };
 
     // Create provider and test connection

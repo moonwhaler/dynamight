@@ -185,8 +185,16 @@ pub async fn health() -> impl IntoResponse {
 }
 
 /// GET /system/allowed-paths - Return the list of allowed browse paths
+/// Only returns paths that actually exist on the filesystem
 pub async fn allowed_paths(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let existing_paths: Vec<&String> = state
+        .config
+        .allowed_browse_paths
+        .iter()
+        .filter(|p| Path::new(p).exists())
+        .collect();
+
     Json(json!({
-        "paths": state.config.allowed_browse_paths
+        "paths": existing_paths
     }))
 }

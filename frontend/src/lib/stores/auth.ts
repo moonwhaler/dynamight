@@ -51,6 +51,7 @@ function createAuthStore() {
         const response = await api.auth.login(username, password);
         if (response.user) {
           set({ user: response.user, isAuthenticated: true, setupRequired: false, loading: false, error: null, pendingTotpSession: null });
+          window.location.hash = '#/';
         }
         return true;
       } catch (e) {
@@ -78,6 +79,7 @@ function createAuthStore() {
         // Normal login (no 2FA)
         if (response.user) {
           set({ user: response.user, isAuthenticated: true, setupRequired: false, loading: false, error: null, pendingTotpSession: null });
+          window.location.hash = '#/';
         }
         return 'success';
       } catch (e) {
@@ -96,6 +98,7 @@ function createAuthStore() {
         const response = await api.auth.totpValidate(state.pendingTotpSession, code);
         if (response.user) {
           set({ user: response.user, isAuthenticated: true, setupRequired: false, loading: false, error: null, pendingTotpSession: null });
+          window.location.hash = '#/';
           return true;
         }
         return false;
@@ -115,6 +118,7 @@ function createAuthStore() {
         const response = await api.auth.totpRecovery(state.pendingTotpSession, recoveryCode);
         if (response.user) {
           set({ user: response.user, isAuthenticated: true, setupRequired: false, loading: false, error: null, pendingTotpSession: null });
+          window.location.hash = '#/';
           return { success: true, codesRemaining: response.codes_remaining };
         }
         return { success: false };
