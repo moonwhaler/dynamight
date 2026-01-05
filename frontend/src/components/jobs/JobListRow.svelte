@@ -8,9 +8,12 @@
   import * as m from '$lib/paraglide/messages.js';
 
   let { job }: { job: Job } = $props();
-  let running = $state(false);
+  let starting = $state(false);
+  let stopping = $state(false);
   let toggling = $state(false);
   let activeRunId = $state<number | null>(null);
+
+  const isRunning = $derived(job.last_run_status === 'running' || job.last_run_status === 'pending');
 
   function getStatusIndicator(status: string | null | undefined): { color: string; label: string } {
     switch (status) {
@@ -49,8 +52,8 @@
   const timeAgo = $derived(formatRelativeTime(job.last_run_at));
 
   async function handleRun() {
-    if (running) return;
-    running = true;
+    if (starting || isRunning) return;
+    starting = true;
     try {
       const result = await api.jobs.run(job.id);
       if ($preferencesStore.showLogViewerAfterManualRun) {
@@ -59,7 +62,21 @@
     } catch (e) {
       showToast({ message: e instanceof Error ? e.message : m.job_error_start(), variant: 'error' });
     } finally {
-      running = false;
+      starting = false;
+    }
+  }
+
+  async function handleStop() {
+    if (stopping || !isRunning) return;
+    stopping = true;
+    try {
+      await api.jobs.cancel(job.id);
+      // Refresh jobs to get updated status
+      await jobsStore.refresh();
+    } catch {
+      // Ignore errors
+    } finally {
+      stopping = false;
     }
   }
 
@@ -99,15 +116,17 @@
       </span>
     </a>
   </td>
-  <td class="px-4 py-3">
-    <button
-      onclick={handleToggleEnabled}
-      disabled={toggling}
-      class="badge {job.enabled ? 'badge-success' : 'badge-gray'} cursor-pointer hover:opacity-80 transition-opacity"
-      title={job.enabled ? m.job_card_click_disable() : m.job_card_click_enable()}
-    >
-      {toggling ? '...' : job.enabled ? m.common_active() : m.common_disabled()}
-    </button>
+  <td class="px-4 py-3 whitespace-nowrap">
+    <div class="w-[4.5rem]">
+      <button
+        onclick={handleToggleEnabled}
+        disabled={toggling || isRunning}
+        class="badge {isRunning ? 'badge-info' : job.enabled ? 'badge-success' : 'badge-gray'} {isRunning ? '' : 'cursor-pointer hover:opacity-80'} transition-opacity"
+        title={isRunning ? m.job_card_currently_running() : job.enabled ? m.job_card_click_disable() : m.job_card_click_enable()}
+      >
+        {toggling ? '...' : isRunning ? m.common_running() : job.enabled ? m.common_active() : m.common_disabled()}
+      </button>
+    </div>
   </td>
   <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">
     {m.jobs_sources_count({ count: job.source_dirs.length })}
@@ -132,14 +151,43 @@
     </div>
   </td>
   <td class="px-4 py-3">
-    <button
-      onclick={handleRun}
-      disabled={running || !job.enabled}
-      class="btn btn-sm btn-secondary"
-      title={!job.enabled ? m.job_card_tooltip_enable() : m.job_card_tooltip_start()}
-    >
-      {running ? m.job_btn_starting() : m.common_run()}
-    </button>
+    {#if isRunning || stopping}
+      <button
+        onclick={handleStop}
+        disabled={stopping}
+        class="btn btn-sm btn-danger w-9 h-9 p-0 flex items-center justify-center"
+        title={m.job_card_tooltip_stop()}
+      >
+        {#if stopping}
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        {:else}
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="6" width="12" height="12" rx="1" />
+          </svg>
+        {/if}
+      </button>
+    {:else}
+      <button
+        onclick={handleRun}
+        disabled={starting || !job.enabled}
+        class="btn btn-sm btn-secondary w-9 h-9 p-0 flex items-center justify-center"
+        title={!job.enabled ? m.job_card_tooltip_enable() : m.job_card_tooltip_start()}
+      >
+        {#if starting}
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        {:else}
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        {/if}
+      </button>
+    {/if}
   </td>
 </tr>
 

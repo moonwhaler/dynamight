@@ -11,6 +11,7 @@
   "common_enabled": "Enabled",
   "common_disabled": "Disabled",
   "common_active": "Active",
+  "common_running": "Running",
   "common_never": "Never",
   "common_run": "Run",
   "common_clone": "Clone",
@@ -173,8 +174,10 @@
   "job_card_badge_dry_run": "Dry Run",
   "job_card_tooltip_enable": "Enable job to run",
   "job_card_tooltip_start": "Start backup job",
+  "job_card_tooltip_stop": "Stop running job",
   "job_card_click_disable": "Click to disable",
   "job_card_click_enable": "Click to enable",
+  "job_btn_stopping": "Stopping...",
 
   "provider_section_title": "Destination Type",
   "provider_local_name": "Local / USB",

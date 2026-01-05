@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { jobsStore } from '../lib/stores/jobs';
   import { viewPreferencesStore } from '../lib/stores/viewPreferences';
+  import { statusStore } from '../lib/stores/logs';
   import JobCard from '../components/jobs/JobCard.svelte';
   import JobListRow from '../components/jobs/JobListRow.svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -67,8 +68,22 @@
     enabledFilter = 'all';
   }
 
+  let unsubscribeStatus: (() => void) | null = null;
+
   onMount(() => {
     jobsStore.load();
+    statusStore.connect();
+
+    // Subscribe to status updates and refresh jobs when status changes
+    unsubscribeStatus = statusStore.subscribe(() => {
+      jobsStore.refresh();
+    });
+  });
+
+  onDestroy(() => {
+    if (unsubscribeStatus) {
+      unsubscribeStatus();
+    }
   });
 </script>
 
