@@ -153,6 +153,8 @@ EnvironmentFile=${CONFIG_DIR}/.env
 ExecStart=${INSTALL_DIR}/dynamight
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
 
 # Security hardening
 NoNewPrivileges=true

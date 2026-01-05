@@ -12,6 +12,8 @@ EnvironmentFile=/etc/dynamight/.env
 ExecStart=/opt/dynamight/dynamight
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
 
 # Security hardening
 NoNewPrivileges=true
