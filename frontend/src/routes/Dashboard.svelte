@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { jobsStore } from '../lib/stores/jobs';
   import { statusStore } from '../lib/stores/logs';
   import { api } from '../lib/api';
@@ -9,10 +9,16 @@
 
   let recentRuns = $state<JobRun[]>([]);
   let loadingRuns = $state(true);
+  let unsubscribeStatus: (() => void) | null = null;
 
   onMount(() => {
     jobsStore.load();
     statusStore.connect();
+
+    // Subscribe to status updates and refresh jobs when status changes
+    unsubscribeStatus = statusStore.subscribe(() => {
+      jobsStore.refresh();
+    });
 
     // Load recent runs from all jobs
     (async () => {
@@ -36,6 +42,12 @@
     return () => {
       statusStore.disconnect();
     };
+  });
+
+  onDestroy(() => {
+    if (unsubscribeStatus) {
+      unsubscribeStatus();
+    }
   });
 
   function formatDate(date: string | null): string {
