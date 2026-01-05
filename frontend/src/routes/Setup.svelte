@@ -1,6 +1,7 @@
 <script lang="ts">
   import { authStore } from '../lib/stores/auth';
   import PasswordStrength from '../components/PasswordStrength.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let username = $state('');
   let password = $state('');
@@ -12,17 +13,17 @@
     validationError = '';
 
     if (username.trim().length < 3) {
-      validationError = 'Username must be at least 3 characters';
+      validationError = m.error_field_required({ field: m.auth_username() });
       return false;
     }
 
     if (password.length < 8) {
-      validationError = 'Password must be at least 8 characters';
+      validationError = m.error_password_too_short();
       return false;
     }
 
     if (password !== confirmPassword) {
-      validationError = 'Passwords do not match';
+      validationError = m.error_passwords_mismatch();
       return false;
     }
 
@@ -59,8 +60,8 @@
           />
         </svg>
       </div>
-      <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Welcome to Dynamight</h2>
-      <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Create your administrator account to get started</p>
+      <h2 class="text-3xl font-bold text-gray-900 dark:text-white">{m.setup_title()}</h2>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{m.setup_description()}</p>
     </div>
 
     <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
@@ -72,7 +73,7 @@
 
       <div class="space-y-4">
         <div>
-          <label for="username" class="label">Username</label>
+          <label for="username" class="label">{m.setup_username()}</label>
           <input
             id="username"
             name="username"
@@ -80,14 +81,13 @@
             required
             bind:value={username}
             class="input"
-            placeholder="Choose a username"
+            placeholder={m.setup_username_placeholder()}
             autocomplete="username"
           />
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">At least 3 characters</p>
         </div>
 
         <div>
-          <label for="password" class="label">Password</label>
+          <label for="password" class="label">{m.setup_password()}</label>
           <input
             id="password"
             name="password"
@@ -95,17 +95,14 @@
             required
             bind:value={password}
             class="input"
-            placeholder="Choose a password"
+            placeholder={m.setup_password_placeholder()}
             autocomplete="new-password"
           />
           <PasswordStrength {password} />
-          {#if !password}
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">At least 8 characters</p>
-          {/if}
         </div>
 
         <div>
-          <label for="confirmPassword" class="label">Confirm Password</label>
+          <label for="confirmPassword" class="label">{m.setup_confirm_password()}</label>
           <input
             id="confirmPassword"
             name="confirmPassword"
@@ -113,7 +110,7 @@
             required
             bind:value={confirmPassword}
             class="input"
-            placeholder="Confirm your password"
+            placeholder={m.setup_confirm_password_placeholder()}
             autocomplete="new-password"
           />
         </div>
@@ -138,17 +135,17 @@
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               />
             </svg>
-            Creating account...
+            {m.setup_creating()}
           </span>
         {:else}
-          Create Account
+          {m.setup_create_account()}
         {/if}
       </button>
     </form>
 
     <div class="text-center">
       <p class="text-xs text-gray-500 dark:text-gray-400">
-        This will be the only administrator account. You can change the password later in settings.
+        {m.setup_admin_note()}
       </p>
     </div>
   </div>

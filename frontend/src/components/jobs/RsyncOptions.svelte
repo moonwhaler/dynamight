@@ -1,5 +1,6 @@
 <script lang="ts">
   import HelpTooltip from '../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     syncDeletes = $bindable(false),
@@ -42,7 +43,7 @@
 </script>
 
 <div class="space-y-4">
-  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Rsync Options</h2>
+  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{m.sync_options_title()}</h2>
 
   <!-- Delete Mode -->
   <label class="flex items-start gap-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl cursor-pointer hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">
@@ -53,12 +54,12 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        Mirror Mode (--delete)
-        <HelpTooltip text="Creates an exact mirror of the source. If you delete a file from your source, it will also be deleted from the backup on the next run. This keeps your backup clean but means accidentally deleted files won't be recoverable from the backup." />
+        {m.sync_mirror_mode()} (--delete)
+        <HelpTooltip text={m.sync_mirror_mode_description()} />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-        Delete files from destination that no longer exist in source.
-        <span class="text-amber-600 dark:text-amber-500 font-medium">Use with caution!</span>
+        {m.sync_mirror_desc()}
+        <span class="text-amber-600 dark:text-amber-500 font-medium">{m.sync_mirror_warning()}</span>
       </p>
     </div>
   </label>
@@ -72,11 +73,11 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        Checksum Mode (--checksum)
-        <HelpTooltip text="Normally rsync checks if files changed by comparing size and modification time (fast). Checksum mode reads the entire file content to calculate a hash (slower but catches every change). Useful if file timestamps are unreliable or you need 100% verification." />
+        {m.sync_checksum_title()} (--checksum)
+        <HelpTooltip text={m.sync_checksum_help()} />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-        Compare files by checksum instead of modification time and size. Slower but more accurate.
+        {m.sync_checksum_desc()}
       </p>
     </div>
   </label>
@@ -90,11 +91,11 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        Compression (-z)
-        <HelpTooltip text="Compresses data before sending it over the wire. Great for network backups over slow connections, but not needed for local USB drives. Already-compressed files (videos, images, archives) won't benefit much." />
+        {m.sync_compression_title()} (-z)
+        <HelpTooltip text={m.sync_compression_help()} />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-        Compress data during transfer. Useful for slow connections, but adds CPU overhead.
+        {m.sync_compression_desc()}
       </p>
     </div>
   </label>
@@ -108,11 +109,11 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        Dry Run (--dry-run)
-        <HelpTooltip text="Simulates the backup without actually copying any files. The logs will show exactly what would happen. Perfect for testing a new job configuration or checking what would be deleted with Mirror Mode enabled." />
+        {m.sync_dry_run_title()} (--dry-run)
+        <HelpTooltip text={m.sync_dry_run_help()} />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-        Show what would be transferred without actually doing it. Good for testing.
+        {m.sync_dry_run_desc()}
       </p>
     </div>
   </label>
@@ -120,21 +121,21 @@
   <!-- Verbosity -->
   <div>
     <label for="verbosity" class="block font-medium text-gray-700 dark:text-gray-300">
-      Output Verbosity
-      <HelpTooltip text="Controls how much information rsync outputs during backup. Quiet mode only shows errors. Normal shows files transferred and summary statistics. Verbose adds per-file progress bars and transfer speeds." />
+      {m.sync_verbosity_title()}
+      <HelpTooltip text={m.sync_verbosity_help()} />
     </label>
     <select id="verbosity" bind:value={verbosity} class="input mt-1 w-64">
-      <option value="quiet">Quiet (errors only)</option>
-      <option value="normal">Normal (files + stats)</option>
-      <option value="verbose">Verbose (full progress)</option>
+      <option value="quiet">{m.sync_verbosity_quiet_option()}</option>
+      <option value="normal">{m.sync_verbosity_normal_option()}</option>
+      <option value="verbose">{m.sync_verbosity_verbose_option()}</option>
     </select>
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
       {#if verbosity === 'quiet'}
-        Only errors will be shown in the logs.
+        {m.sync_verbosity_quiet_desc()}
       {:else if verbosity === 'normal'}
-        Shows which files are transferred and summary statistics.
+        {m.sync_verbosity_normal_desc()}
       {:else}
-        Shows per-file progress bars, speeds, and detailed statistics.
+        {m.sync_verbosity_verbose_desc()}
       {/if}
     </p>
   </div>
@@ -142,35 +143,35 @@
   <!-- Bandwidth Limit -->
   <div>
     <label for="bandwidth" class="block font-medium text-gray-700 dark:text-gray-300">
-      Bandwidth Limit (KB/s)
-      <HelpTooltip text="Limits how fast rsync transfers data. Useful if you're backing up over a network and don't want to saturate your connection. Value is in kilobytes per second (1000 KB/s = ~1 MB/s). Leave empty for maximum speed." />
+      {m.sync_bandwidth_title()}
+      <HelpTooltip text={m.sync_bandwidth_help()} />
     </label>
     <input
       type="number"
       id="bandwidth"
       bind:value={bandwidthLimit}
-      placeholder="Unlimited"
+      placeholder={m.sync_bandwidth_unlimited()}
       min="0"
       class="input mt-1 w-40"
     />
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Leave empty for unlimited.</p>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.sync_bandwidth_leave_empty()}</p>
   </div>
 
   <!-- Excludes -->
   <div>
     <label class="block font-medium text-gray-700 dark:text-gray-300">
-      Exclude Patterns
-      <HelpTooltip text="Files and folders matching these patterns will be skipped. Use wildcards like *.tmp (all .tmp files), node_modules (specific folder), or .* (all hidden files). Patterns are matched against the relative path from the source directory." />
+      {m.sync_exclude_title()}
+      <HelpTooltip text={m.sync_exclude_help()} />
     </label>
     <div class="mt-2 flex gap-2">
       <input
         type="text"
         bind:value={newExclude}
         onkeydown={handleKeydown}
-        placeholder="e.g., *.tmp, .cache, node_modules"
+        placeholder={m.sync_exclude_placeholder()}
         class="input flex-1"
       />
-      <button type="button" onclick={addExclude} class="btn btn-secondary"> Add </button>
+      <button type="button" onclick={addExclude} class="btn btn-secondary">{m.common_add()}</button>
     </div>
 
     {#if excludes.length > 0}

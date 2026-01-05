@@ -1,6 +1,6 @@
 use axum::{
     extract::{ConnectInfo, State},
-    http::{header::SET_COOKIE, HeaderMap, StatusCode},
+    http::{header::SET_COOKIE, HeaderMap},
     response::{AppendHeaders, IntoResponse},
     Json,
 };
@@ -10,6 +10,7 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::errors::ApiError;
 use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
 use crate::services::AuthService;
 use crate::AppState;
@@ -84,14 +85,7 @@ pub async fn login(
 
     // Check rate limit before processing
     if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
-                "retry_after": e.retry_after_secs
-            })),
-        )
-            .into_response();
+        return ApiError::rate_limited(e.retry_after_secs as u64).into_response();
     }
 
     // Find user
@@ -106,11 +100,7 @@ pub async fn login(
         Some(u) => u,
         None => {
             state.rate_limit_service.record_failure(&client_ip);
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Invalid credentials"})),
-            )
-                .into_response()
+            return ApiError::invalid_credentials().into_response();
         }
     };
 
@@ -119,11 +109,7 @@ pub async fn login(
 
     if !valid {
         state.rate_limit_service.record_failure(&client_ip);
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid credentials"})),
-        )
-            .into_response();
+        return ApiError::invalid_credentials().into_response();
     }
 
     // Check if 2FA is enabled
@@ -142,11 +128,7 @@ pub async fn login(
         .await;
 
         if result.is_err() {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to create 2FA session"})),
-            )
-                .into_response();
+            return ApiError::totp_setup_failed().into_response();
         }
 
         return Json(json!({
@@ -160,11 +142,7 @@ pub async fn login(
     let token = match state.auth_service.generate_token(user.id) {
         Ok(t) => t,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to generate token"})),
-            )
-                .into_response()
+            return ApiError::internal_error().into_response();
         }
     };
 
@@ -213,11 +191,7 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: axum::http::HeaderM
     let token = match token {
         Some(t) => t,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Not authenticated"})),
-            )
-                .into_response()
+            return ApiError::not_authenticated().into_response();
         }
     };
 
@@ -225,11 +199,7 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: axum::http::HeaderM
     let claims = match state.auth_service.validate_token(&token) {
         Ok(c) => c,
         Err(_) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Invalid token"})),
-            )
-                .into_response()
+            return ApiError::token_invalid().into_response();
         }
     };
 
@@ -242,11 +212,7 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: axum::http::HeaderM
 
     match user {
         Some(u) => Json(UserResponse::from(u)).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "User not found"})),
-        )
-            .into_response(),
+        None => ApiError::user_not_found().into_response(),
     }
 }
 
@@ -272,12 +238,12 @@ pub async fn change_password(
 
     let token = match token {
         Some(t) => t,
-        None => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Not authenticated"}))),
+        None => return ApiError::not_authenticated().into_response(),
     };
 
     let claims = match state.auth_service.validate_token(&token) {
         Ok(c) => c,
-        Err(_) => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid token"}))),
+        Err(_) => return ApiError::token_invalid().into_response(),
     };
 
     // Get user
@@ -289,7 +255,7 @@ pub async fn change_password(
 
     let user = match user {
         Some(u) => u,
-        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "User not found"}))),
+        None => return ApiError::user_not_found().into_response(),
     };
 
     // Verify current password
@@ -297,20 +263,14 @@ pub async fn change_password(
         AuthService::verify_password(&req.current_password, &user.password_hash).unwrap_or(false);
 
     if !valid {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Current password is incorrect"})),
-        );
+        return ApiError::password_incorrect().into_response();
     }
 
     // Hash new password
     let new_hash = match AuthService::hash_password(&req.new_password) {
         Ok(h) => h,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to hash password"})),
-            )
+            return ApiError::new(crate::errors::ErrorCode::PasswordHashFailed).into_response();
         }
     };
 
@@ -322,11 +282,8 @@ pub async fn change_password(
         .await;
 
     match result {
-        Ok(_) => (StatusCode::OK, Json(json!({"success": true}))),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to update password"})),
-        ),
+        Ok(_) => Json(json!({"success": true})).into_response(),
+        Err(_) => ApiError::internal_error().into_response(),
     }
 }
 
@@ -360,11 +317,7 @@ pub async fn get_token(headers: axum::http::HeaderMap) -> impl IntoResponse {
 
     match token {
         Some(t) => Json(json!({"token": t})).into_response(),
-        None => (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Not authenticated"})),
-        )
-            .into_response(),
+        None => ApiError::not_authenticated().into_response(),
     }
 }
 
@@ -379,40 +332,24 @@ pub async fn setup(
         .unwrap_or((0,));
 
     if user_count.0 > 0 {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "Setup has already been completed"})),
-        )
-            .into_response();
+        return ApiError::setup_already_done().into_response();
     }
 
     // Validate input
     let username = req.username.trim();
     if username.is_empty() || username.len() < 3 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Username must be at least 3 characters"})),
-        )
-            .into_response();
+        return ApiError::username_too_short().into_response();
     }
 
     if req.password.len() < 8 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Password must be at least 8 characters"})),
-        )
-            .into_response();
+        return ApiError::password_too_short().into_response();
     }
 
     // Hash password and create user
     let password_hash = match AuthService::hash_password(&req.password) {
         Ok(h) => h,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to hash password"})),
-            )
-                .into_response()
+            return ApiError::new(crate::errors::ErrorCode::PasswordHashFailed).into_response();
         }
     };
 
@@ -429,11 +366,7 @@ pub async fn setup(
         }
         Err(e) => {
             tracing::error!("Failed to create admin user: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to create user"})),
-            )
-                .into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }

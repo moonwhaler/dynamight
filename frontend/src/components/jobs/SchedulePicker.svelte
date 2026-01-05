@@ -2,6 +2,7 @@
   import { api } from '../../lib/api';
   import type { Schedule, CreateScheduleRequest } from '../../lib/types';
   import HelpTooltip from '../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     jobId,
@@ -23,8 +24,15 @@
   let intervalValue = $state(1);
   let intervalUnit = $state<'minutes' | 'hours'>('hours');
 
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const dayNamesFull = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function getDayName(index: number): string {
+    const names = [m.day_sun(), m.day_mon(), m.day_tue(), m.day_wed(), m.day_thu(), m.day_fri(), m.day_sat()];
+    return names[index];
+  }
+
+  function getDayNameFull(index: number): string {
+    const names = [m.day_sunday(), m.day_monday(), m.day_tuesday(), m.day_wednesday(), m.day_thursday(), m.day_friday(), m.day_saturday()];
+    return names[index];
+  }
 
   function toggleDay(day: number) {
     if (selectedDays.includes(day)) {
@@ -111,46 +119,46 @@
 
     if (parts.length !== 5) return cron;
 
-    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+    const [minute, hour, dom, month, dayOfWeek] = parts;
 
     // Interval: */N minutes
     if (minute.startsWith('*/') && hour === '*') {
       const mins = minute.slice(2);
-      return `Every ${mins} minute${mins === '1' ? '' : 's'}`;
+      return m.schedule_every_minutes({ count: mins });
     }
 
     // Interval: */N hours
     if (minute === '0' && hour.startsWith('*/')) {
       const hrs = hour.slice(2);
-      return `Every ${hrs} hour${hrs === '1' ? '' : 's'}`;
+      return m.schedule_every_hours({ count: hrs });
     }
 
     const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
 
     // Daily
-    if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-      return `Daily at ${time}`;
+    if (dom === '*' && month === '*' && dayOfWeek === '*') {
+      return m.schedule_daily_at({ time });
     }
 
     // Weekly (specific days)
-    if (dayOfMonth === '*' && month === '*' && dayOfWeek !== '*') {
-      const days = dayOfWeek.split(',').map(d => dayNames[parseInt(d)] || d);
+    if (dom === '*' && month === '*' && dayOfWeek !== '*') {
+      const days = dayOfWeek.split(',').map(d => getDayName(parseInt(d)));
       if (days.length === 7) {
-        return `Daily at ${time}`;
+        return m.schedule_daily_at({ time });
       }
-      return `${days.join(', ')} at ${time}`;
+      return m.schedule_days_at({ days: days.join(', '), time });
     }
 
     // Monthly
-    if (dayOfMonth !== '*' && month === '*' && dayOfWeek === '*') {
-      return `Monthly on day ${dayOfMonth} at ${time}`;
+    if (dom !== '*' && month === '*' && dayOfWeek === '*') {
+      return m.schedule_monthly_on({ day: dom, time });
     }
 
     return cron;
   }
 
   function formatNextRun(date: string | null): string {
-    if (!date) return 'Not scheduled';
+    if (!date) return m.schedule_not_scheduled();
     return new Date(date).toLocaleString();
   }
 
@@ -161,18 +169,18 @@
 <div class="space-y-4">
   <div class="flex items-center justify-between">
     <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-      Schedule
-      <HelpTooltip text="Set up automatic backup times. You can add multiple schedules (e.g., daily at 2 AM and weekly full backup on Sundays). Each schedule can be individually enabled or disabled. Without a schedule, backups only run when you click 'Run Now'." />
+      {m.schedule_title()}
+      <HelpTooltip text={m.schedule_help()} />
     </h2>
     {#if !showAdd}
       <button onclick={() => (showAdd = true)} class="btn btn-secondary text-sm">
-        Add Schedule
+        {m.schedule_add()}
       </button>
     {/if}
   </div>
 
   {#if schedules.length === 0 && !showAdd}
-    <p class="text-gray-500 dark:text-gray-400 text-sm">No schedules configured. Backups will only run manually.</p>
+    <p class="text-gray-500 dark:text-gray-400 text-sm">{m.schedule_no_schedules()}</p>
   {/if}
 
   <!-- Existing Schedules -->
@@ -187,14 +195,14 @@
         />
         <div>
           <div class="font-medium text-gray-900 dark:text-white">{formatSchedule(schedule)}</div>
-          <div class="text-sm text-gray-500 dark:text-gray-400">Next: {formatNextRun(schedule.next_run_at)}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400">{m.schedule_next({ time: formatNextRun(schedule.next_run_at) })}</div>
         </div>
       </div>
       <button
         onclick={() => deleteSchedule(schedule.id)}
         class="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
       >
-        Delete
+        {m.common_delete()}
       </button>
     </div>
   {/each}
@@ -203,35 +211,35 @@
   {#if showAdd}
     <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
       <div>
-        <label for="scheduleType" class="label">Schedule Type</label>
+        <label for="scheduleType" class="label">{m.schedule_type()}</label>
         <select id="scheduleType" bind:value={scheduleType} class="input">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly (select days)</option>
-          <option value="monthly">Monthly</option>
-          <option value="interval">Interval (every N minutes/hours)</option>
-          <option value="custom">Custom (Cron)</option>
+          <option value="daily">{m.schedule_type_daily()}</option>
+          <option value="weekly">{m.schedule_type_weekly()}</option>
+          <option value="monthly">{m.schedule_type_monthly()}</option>
+          <option value="interval">{m.schedule_type_interval()}</option>
+          <option value="custom">{m.schedule_type_custom()}</option>
         </select>
       </div>
 
       {#if scheduleType === 'daily'}
         <div>
-          <label for="dailyTime" class="label">Time</label>
+          <label for="dailyTime" class="label">{m.schedule_time()}</label>
           <input id="dailyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
       {/if}
 
       {#if scheduleType === 'weekly'}
         <div>
-          <label for="weeklyTime" class="label">Time</label>
+          <label for="weeklyTime" class="label">{m.schedule_time()}</label>
           <input id="weeklyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
         <div>
           <label class="label">
-            Days of Week
-            <HelpTooltip text="Select one or more days. The backup will run at the specified time on each selected day." />
+            {m.schedule_days_of_week()}
+            <HelpTooltip text={m.schedule_days_help()} />
           </label>
           <div class="flex flex-wrap gap-2 mt-2">
-            {#each dayNamesFull as day, index}
+            {#each [0, 1, 2, 3, 4, 5, 6] as index}
               <button
                 type="button"
                 onclick={() => toggleDay(index)}
@@ -239,7 +247,7 @@
                   ? 'bg-primary-600 text-white border-primary-600'
                   : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-primary-400'}"
               >
-                {day.slice(0, 3)}
+                {getDayName(index)}
               </button>
             {/each}
           </div>
@@ -248,11 +256,11 @@
 
       {#if scheduleType === 'monthly'}
         <div>
-          <label for="monthlyTime" class="label">Time</label>
+          <label for="monthlyTime" class="label">{m.schedule_time()}</label>
           <input id="monthlyTime" type="time" bind:value={timeOfDay} class="input w-32" />
         </div>
         <div>
-          <label for="dayOfMonth" class="label">Day of Month</label>
+          <label for="dayOfMonth" class="label">{m.schedule_day_of_month()}</label>
           <input
             id="dayOfMonth"
             type="number"
@@ -268,8 +276,8 @@
         <div class="flex items-end gap-3">
           <div>
             <label class="label">
-              Run every
-              <HelpTooltip text="Set how often the backup should run. For example, 'every 30 minutes' or 'every 6 hours'. Note: Very frequent backups may impact system performance." />
+              {m.schedule_run_every()}
+              <HelpTooltip text={m.schedule_interval_help()} />
             </label>
             <input
               type="number"
@@ -281,8 +289,8 @@
           </div>
           <div>
             <select bind:value={intervalUnit} class="input">
-              <option value="minutes">Minutes</option>
-              <option value="hours">Hours</option>
+              <option value="minutes">{m.schedule_minutes()}</option>
+              <option value="hours">{m.schedule_hours()}</option>
             </select>
           </div>
         </div>
@@ -291,17 +299,17 @@
       {#if scheduleType === 'custom'}
         <div>
           <label class="label">
-            Cron Expression
-            <HelpTooltip text="Advanced scheduling using cron syntax. Five fields: minute (0-59), hour (0-23), day of month (1-31), month (1-12), day of week (0-6, Sun=0). Use * for 'any'. Examples: '0 2 * * *' = 2:00 AM daily, '0 3 * * 0' = 3:00 AM every Sunday, '0 */6 * * *' = every 6 hours." />
+            {m.schedule_cron()}
+            <HelpTooltip text={m.schedule_cron_help()} />
           </label>
           <input
             type="text"
             bind:value={cronExpression}
-            placeholder="0 2 * * *"
+            placeholder={m.schedule_cron_placeholder()}
             class="input font-mono"
           />
           <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Format: minute hour day-of-month month day-of-week
+            {m.schedule_cron_format()}
           </p>
         </div>
       {/if}
@@ -309,14 +317,14 @@
       <!-- Cron Preview -->
       {#if scheduleType !== 'custom'}
         <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
-          <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Cron Expression</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">{m.schedule_cron()}</div>
           <code class="text-sm text-gray-800 dark:text-gray-200 font-mono">{cronPreview}</code>
         </div>
       {/if}
 
       <div class="flex gap-2">
         <button onclick={addSchedule} disabled={saving} class="btn btn-primary">
-          {saving ? 'Adding...' : 'Add Schedule'}
+          {saving ? m.schedule_adding() : m.schedule_add()}
         </button>
         <button
           onclick={() => {
@@ -325,7 +333,7 @@
           }}
           class="btn btn-secondary"
         >
-          Cancel
+          {m.common_cancel()}
         </button>
       </div>
     </div>

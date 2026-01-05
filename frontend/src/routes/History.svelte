@@ -4,6 +4,7 @@
   import { jobsStore } from '../lib/stores/jobs';
   import type { Job, JobRun, LogEntry } from '../lib/types';
   import LogViewer from '../components/logs/LogViewer.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let runs = $state<JobRun[]>([]);
   let loading = $state(true);
@@ -185,7 +186,7 @@
   }
 
   function formatDate(date: string | null): string {
-    if (!date) return 'Never';
+    if (!date) return m.common_never();
     return new Date(date).toLocaleString();
   }
 
@@ -278,21 +279,32 @@
 
   function getPurgeMessage(): string {
     if (purgeType === 'all') {
-      return 'Are you sure you want to delete all backup history? This action cannot be undone.';
+      return m.history_purge_all_confirm();
     } else if (purgeType === 'job' && purgeTargetId) {
       const jobName = getJobName(purgeTargetId);
-      return `Are you sure you want to delete all history for "${jobName}"? This action cannot be undone.`;
+      return m.history_purge_job_confirm({ name: jobName });
     } else if (purgeType === 'single' && purgeTargetId) {
-      return 'Are you sure you want to delete this run? This action cannot be undone.';
+      return m.history_purge_run_confirm();
     }
     return '';
+  }
+
+  function getStatusLabel(status: string): string {
+    switch (status) {
+      case 'completed': return m.history_status_completed();
+      case 'running': return m.history_status_running();
+      case 'failed': return m.history_status_failed();
+      case 'cancelled': return m.history_status_cancelled();
+      case 'pending': return m.history_status_pending();
+      default: return status;
+    }
   }
 </script>
 
 <div class="space-y-6">
   <!-- Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup History</h1>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.history_title()}</h1>
 
     <div class="flex items-center gap-2">
       {#if runs.length > 0 && selectedJobId}
@@ -300,7 +312,7 @@
           onclick={confirmPurgeJob}
           class="btn btn-secondary"
         >
-          Clear Job
+          {m.history_clear_job()}
         </button>
       {/if}
       <button
@@ -308,7 +320,7 @@
         disabled={runs.length === 0}
         class="btn btn-secondary"
       >
-        Clear All
+        {m.history_clear_all()}
       </button>
     </div>
   </div>
@@ -326,7 +338,7 @@
           <input
             type="text"
             bind:value={searchQuery}
-            placeholder="Search by job name..."
+            placeholder={m.history_search_placeholder()}
             class="input pl-10"
           />
         </div>
@@ -337,7 +349,7 @@
           onchange={() => loadRuns()}
           class="input lg:w-48"
         >
-          <option value={null}>All Jobs</option>
+          <option value={null}>{m.jobs_filter_all()}</option>
           {#each $jobsStore.jobs as job}
             <option value={job.id}>{job.name}</option>
           {/each}
@@ -351,7 +363,7 @@
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
           </svg>
-          Filters
+          {m.common_filters()}
           {#if activeFilterCount > 0}
             <span class="bg-primary-600 text-white text-xs font-medium px-2 py-0.5 rounded-full">{activeFilterCount}</span>
           {/if}
@@ -364,10 +376,10 @@
               type="date"
               bind:value={dateFrom}
               class="input w-40 text-sm"
-              aria-label="From date"
+              aria-label={m.history_filter_from()}
             />
             {#if !dateFrom}
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">From</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">{m.history_filter_from()}</span>
             {/if}
           </div>
           <span class="text-gray-400">-</span>
@@ -376,10 +388,10 @@
               type="date"
               bind:value={dateTo}
               class="input w-40 text-sm"
-              aria-label="To date"
+              aria-label={m.history_filter_to()}
             />
             {#if !dateTo}
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">To</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">{m.history_filter_to()}</span>
             {/if}
           </div>
         </div>
@@ -387,7 +399,7 @@
 
       <!-- Desktop: Status filter chips -->
       <div class="hidden lg:flex items-center gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-        <span class="text-sm text-gray-500 dark:text-gray-400">Status:</span>
+        <span class="text-sm text-gray-500 dark:text-gray-400">{m.history_table_status()}:</span>
         <div class="flex flex-wrap gap-2">
           {#each allStatuses as status}
             <button
@@ -406,7 +418,7 @@
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                 }"
             >
-              {status}
+              {getStatusLabel(status)}
             </button>
           {/each}
         </div>
@@ -419,7 +431,7 @@
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
-            Clear filters
+            {m.jobs_clear_filters()}
           </button>
         {/if}
       </div>
@@ -429,27 +441,27 @@
         <div class="lg:hidden mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
           <!-- Date range -->
           <div class="space-y-2">
-            <span class="label">Date Range</span>
+            <span class="label">{m.history_date_range()}</span>
             <div class="flex items-center gap-2">
               <input
                 type="date"
                 bind:value={dateFrom}
                 class="input flex-1 text-sm"
-                aria-label="From date"
+                aria-label={m.history_filter_from()}
               />
               <span class="text-gray-400">-</span>
               <input
                 type="date"
                 bind:value={dateTo}
                 class="input flex-1 text-sm"
-                aria-label="To date"
+                aria-label={m.history_filter_to()}
               />
             </div>
           </div>
 
           <!-- Status filters -->
           <div class="space-y-2">
-            <span class="label">Status</span>
+            <span class="label">{m.history_table_status()}</span>
             <div class="flex flex-wrap gap-2">
               {#each allStatuses as status}
                 <button
@@ -468,7 +480,7 @@
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                     }"
                 >
-                  {status}
+                  {getStatusLabel(status)}
                 </button>
               {/each}
             </div>
@@ -479,7 +491,7 @@
               onclick={clearAllFilters}
               class="btn btn-sm btn-secondary w-full"
             >
-              Clear all filters
+              {m.jobs_clear_all_filters()}
             </button>
           {/if}
         </div>
@@ -519,8 +531,8 @@
           d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
         />
       </svg>
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No backup history</h3>
-      <p class="text-gray-500 dark:text-gray-400">Run a backup job to see history here.</p>
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.history_no_runs()}</h3>
+      <p class="text-gray-500 dark:text-gray-400">{m.history_no_runs_description()}</p>
     </div>
   {:else if filteredRuns.length === 0}
     <div class="card p-12 text-center">
@@ -537,10 +549,10 @@
           d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
         />
       </svg>
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No matching runs</h3>
-      <p class="text-gray-500 dark:text-gray-400 mb-4">Try adjusting your filters to find what you're looking for.</p>
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.history_no_matching()}</h3>
+      <p class="text-gray-500 dark:text-gray-400 mb-4">{m.history_no_matching_description()}</p>
       <button onclick={clearAllFilters} class="btn btn-secondary">
-        Clear all filters
+        {m.jobs_clear_all_filters()}
       </button>
     </div>
   {:else}
@@ -549,15 +561,15 @@
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">Started</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">{m.history_table_started()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden sm:table-cell">
-                Duration
+                {m.history_table_duration()}
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">Files</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">Size</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_files()}</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_size()}</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_actions()}</th>
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -565,7 +577,7 @@
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
                 <td class="px-4 py-3">
-                  <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
+                  <span class="badge {getStatusBadge(run.status)}">{getStatusLabel(run.status)}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
@@ -579,12 +591,12 @@
                       onclick={() => selectRun(run)}
                       class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 text-sm font-medium"
                     >
-                      Logs
+                      {m.history_logs()}
                     </button>
                     <button
                       onclick={() => confirmDeleteRun(run.id)}
                       class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm p-1"
-                      title="Delete this run"
+                      title={m.history_delete_this_run()}
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -612,7 +624,7 @@
           </h3>
           <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{formatDate(selectedRun.started_at)}</p>
         </div>
-        <button onclick={closeDetails} class="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="Close details">
+        <button onclick={closeDetails} class="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700" aria-label={m.history_close_details()}>
           <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
@@ -651,7 +663,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         </div>
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Confirm Delete</h3>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.history_confirm_delete_title()}</h3>
       </div>
       <p class="text-gray-600 dark:text-gray-300 mb-6">{getPurgeMessage()}</p>
       <div class="flex justify-end gap-3">
@@ -660,7 +672,7 @@
           class="btn btn-secondary"
           disabled={purging}
         >
-          Cancel
+          {m.common_cancel()}
         </button>
         <button
           onclick={executePurge}
@@ -670,7 +682,7 @@
           {#if purging}
             <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
           {/if}
-          Delete
+          {m.common_delete()}
         </button>
       </div>
     </div>

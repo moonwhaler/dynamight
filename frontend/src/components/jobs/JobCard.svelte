@@ -4,6 +4,7 @@
   import { jobsStore } from '../../lib/stores/jobs';
   import { preferencesStore } from '../../lib/stores/preferences';
   import RunLogModal from '../logs/RunLogModal.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let { job }: { job: Job } = $props();
   let running = $state(false);
@@ -13,15 +14,15 @@
   function getStatusIndicator(status: string | null | undefined): { color: string; label: string } {
     switch (status) {
       case 'completed':
-        return { color: 'bg-green-500', label: 'Last run succeeded' };
+        return { color: 'bg-green-500', label: m.job_card_last_run_succeeded() };
       case 'failed':
-        return { color: 'bg-red-500', label: 'Last run failed' };
+        return { color: 'bg-red-500', label: m.job_card_last_run_failed() };
       case 'running':
-        return { color: 'bg-blue-500', label: 'Currently running' };
+        return { color: 'bg-blue-500', label: m.job_card_currently_running() };
       case 'cancelled':
-        return { color: 'bg-orange-500', label: 'Last run was cancelled' };
+        return { color: 'bg-orange-500', label: m.job_card_last_run_cancelled() };
       case 'pending':
-        return { color: 'bg-yellow-500', label: 'Run pending' };
+        return { color: 'bg-yellow-500', label: m.job_card_run_pending() };
       default:
         return { color: '', label: '' };
     }
@@ -36,10 +37,10 @@
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return m.time_just_now();
+    if (diffMins < 60) return m.time_minutes_ago({ count: diffMins });
+    if (diffHours < 24) return m.time_hours_ago({ count: diffHours });
+    if (diffDays < 7) return m.time_days_ago({ count: diffDays });
     return date.toLocaleDateString();
   }
 
@@ -103,9 +104,9 @@
       onclick={handleToggleEnabled}
       disabled={toggling}
       class="badge {job.enabled ? 'badge-success' : 'badge-gray'} ml-2 shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-      title={job.enabled ? 'Click to disable' : 'Click to enable'}
+      title={job.enabled ? m.job_card_click_disable() : m.job_card_click_enable()}
     >
-      {toggling ? '...' : job.enabled ? 'Active' : 'Disabled'}
+      {toggling ? '...' : job.enabled ? m.common_active() : m.common_disabled()}
     </button>
   </div>
 
@@ -119,7 +120,7 @@
           d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
         />
       </svg>
-      <span class="truncate">{job.source_dirs.length} source(s)</span>
+      <span class="truncate">{m.jobs_sources_count({ count: job.source_dirs.length })}</span>
     </div>
     <div class="flex items-center gap-2">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -137,22 +138,22 @@
   <div class="mt-4 flex items-center justify-between">
     <div class="flex gap-1">
       {#if job.sync_deletes}
-        <span class="badge badge-warning text-xs">Mirror</span>
+        <span class="badge badge-warning text-xs">{m.job_card_badge_mirror()}</span>
       {/if}
       {#if job.compress}
-        <span class="badge badge-info text-xs">Compress</span>
+        <span class="badge badge-info text-xs">{m.job_card_badge_compress()}</span>
       {/if}
       {#if job.dry_run}
-        <span class="badge badge-gray text-xs">Dry Run</span>
+        <span class="badge badge-gray text-xs">{m.job_card_badge_dry_run()}</span>
       {/if}
     </div>
     <button
       onclick={handleRun}
       disabled={running || !job.enabled}
       class="btn btn-sm btn-secondary"
-      title={!job.enabled ? 'Enable job to run' : 'Start backup job'}
+      title={!job.enabled ? m.job_card_tooltip_enable() : m.job_card_tooltip_start()}
     >
-      {running ? 'Starting...' : 'Run'}
+      {running ? m.job_btn_starting() : m.common_run()}
     </button>
   </div>
 </div>

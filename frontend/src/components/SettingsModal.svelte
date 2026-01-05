@@ -5,6 +5,8 @@
   import type { TotpStatusResponse } from '../lib/types';
   import { preferencesStore } from '../lib/stores/preferences';
   import { showToast } from './ui/Toast.svelte';
+  import { languageStore, languageNames, type Locale } from '../lib/stores/language';
+  import * as m from '$lib/paraglide/messages.js';
 
   let { open = $bindable(false) } = $props();
 
@@ -70,7 +72,7 @@
     try {
       totpStatus = await api.auth.totpStatus();
     } catch (err) {
-      showToast({ message: err instanceof Error ? err.message : 'Failed to load 2FA status', variant: 'error' });
+      showToast({ message: err instanceof Error ? err.message : m.settings_2fa_load_error(), variant: 'error' });
     }
     totpLoading = false;
   }
@@ -83,9 +85,9 @@
       totpStatus = { enabled: false, recovery_codes_remaining: 0 };
       disablePassword = '';
       disableCode = '';
-      showToast({ message: 'Two-factor authentication disabled', variant: 'success' });
+      showToast({ message: m.settings_2fa_disabled(), variant: 'success' });
     } catch (err) {
-      showToast({ message: err instanceof Error ? err.message : 'Failed to disable 2FA', variant: 'error' });
+      showToast({ message: err instanceof Error ? err.message : m.settings_2fa_disable_error(), variant: 'error' });
     }
     disableLoading = false;
   }
@@ -105,29 +107,29 @@
     e.preventDefault();
 
     if (newPassword.length < 8) {
-      showToast({ message: 'New password must be at least 8 characters', variant: 'error' });
+      showToast({ message: m.error_password_too_short(), variant: 'error' });
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      showToast({ message: 'Passwords do not match', variant: 'error' });
+      showToast({ message: m.error_passwords_mismatch(), variant: 'error' });
       return;
     }
 
     if (currentPassword === newPassword) {
-      showToast({ message: 'New password must be different from current password', variant: 'error' });
+      showToast({ message: m.error_password_same(), variant: 'error' });
       return;
     }
 
     passwordLoading = true;
     try {
       await api.auth.changePassword(currentPassword, newPassword);
-      showToast({ message: 'Password changed successfully', variant: 'success' });
+      showToast({ message: m.settings_password_changed(), variant: 'success' });
       currentPassword = '';
       newPassword = '';
       confirmPassword = '';
     } catch (err) {
-      showToast({ message: err instanceof Error ? err.message : 'Failed to change password', variant: 'error' });
+      showToast({ message: err instanceof Error ? err.message : m.settings_password_error(), variant: 'error' });
     } finally {
       passwordLoading = false;
     }
@@ -137,7 +139,7 @@
     const value = maxRunsInput.trim() === '' ? null : parseInt(maxRunsInput, 10);
 
     if (value !== null && (isNaN(value) || value < 1)) {
-      showToast({ message: 'Please enter a valid number (minimum 1) or leave empty for unlimited', variant: 'error' });
+      showToast({ message: m.settings_retention_invalid(), variant: 'error' });
       return;
     }
 
@@ -146,9 +148,9 @@
       await api.settings.update({ max_runs_per_job: value });
       maxRunsPerJob = value;
       initialMaxRuns = value;
-      showToast({ message: 'Settings saved', variant: 'success' });
+      showToast({ message: m.settings_saved(), variant: 'success' });
     } catch (err) {
-      showToast({ message: err instanceof Error ? err.message : 'Failed to save settings', variant: 'error' });
+      showToast({ message: err instanceof Error ? err.message : m.settings_save_error(), variant: 'error' });
     } finally {
       logsLoading = false;
     }
@@ -174,26 +176,26 @@
   const tabs = [
     {
       id: 'general' as Tab,
-      label: 'General',
-      description: 'App preferences',
+      labelKey: () => m.settings_tab_general(),
+      descriptionKey: () => m.settings_tab_general_desc(),
       icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z'
     },
     {
       id: 'account' as Tab,
-      label: 'Account',
-      description: 'Manage your password',
+      labelKey: () => m.settings_tab_account(),
+      descriptionKey: () => m.settings_tab_account_desc(),
       icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'
     },
     {
       id: 'security' as Tab,
-      label: 'Security',
-      description: 'Two-factor authentication',
+      labelKey: () => m.settings_tab_security(),
+      descriptionKey: () => m.settings_tab_security_desc(),
       icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'
     },
     {
       id: 'logs' as Tab,
-      label: 'History',
-      description: 'Configure retention',
+      labelKey: () => m.settings_tab_history(),
+      descriptionKey: () => m.settings_tab_history_desc(),
       icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'
     }
   ];
@@ -214,8 +216,8 @@
       <!-- Header -->
       <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
         <div>
-          <h2 id="settings-title" class="text-xl font-semibold text-gray-900 dark:text-white">Settings</h2>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Manage your account and preferences</p>
+          <h2 id="settings-title" class="text-xl font-semibold text-gray-900 dark:text-white">{m.settings_title()}</h2>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_description()}</p>
         </div>
         <button
           onclick={close}
@@ -246,7 +248,7 @@
                 <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={tab.icon} />
                 </svg>
-                <span class="whitespace-nowrap">{tab.label}</span>
+                <span class="whitespace-nowrap">{tab.labelKey()}</span>
               </button>
             {/each}
           </div>
@@ -270,8 +272,8 @@
                   </svg>
                 </div>
                 <div class="min-w-0 flex-1">
-                  <div class="font-medium text-sm">{tab.label}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{tab.description}</div>
+                  <div class="font-medium text-sm">{tab.labelKey()}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{tab.descriptionKey()}</div>
                 </div>
               </button>
             {/each}
@@ -284,14 +286,14 @@
             {#if activeTab === 'general'}
               <!-- General Tab -->
               <div class="mb-6">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">General Preferences</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Customize your application experience.</p>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.settings_general_title()}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.settings_general_description()}</p>
               </div>
 
               <div class="space-y-4">
                 <!-- Job Execution Section -->
                 <div class="space-y-3">
-                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Job Execution</h4>
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.settings_job_execution()}</h4>
 
                   <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
                     <div class="relative flex items-center">
@@ -305,15 +307,15 @@
                       <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="font-medium text-gray-900 dark:text-white text-sm">Show log viewer after manual runs</div>
-                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Automatically open the log viewer dialog when you manually start a backup job.</p>
+                      <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_show_log_viewer()}</div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_show_log_viewer_desc()}</p>
                     </div>
                   </label>
                 </div>
 
                 <!-- Log Viewer Section -->
                 <div class="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Log Viewer</h4>
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.settings_log_viewer()}</h4>
 
                   <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
                     <div class="relative flex items-center">
@@ -327,58 +329,88 @@
                       <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="font-medium text-gray-900 dark:text-white text-sm">Auto-scroll logs</div>
-                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Automatically scroll to the latest entries when viewing live logs.</p>
+                      <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_auto_scroll()}</div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_auto_scroll_desc()}</p>
                     </div>
                   </label>
+                </div>
+
+                <!-- Language & Region Section -->
+                <div class="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.settings_language_title()}</h4>
+
+                  <div class="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-primary-100 dark:bg-primary-900/40 rounded-xl flex items-center justify-center">
+                          <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_language_label()}</div>
+                          <p class="text-xs text-gray-500 dark:text-gray-400">{m.settings_language_description()}</p>
+                        </div>
+                      </div>
+                      <select
+                        value={$languageStore}
+                        onchange={(e) => languageStore.setLanguage(e.currentTarget.value as Locale)}
+                        class="input w-auto min-w-[140px] text-sm"
+                      >
+                        {#each languageStore.available as lang}
+                          <option value={lang}>{languageNames[lang]}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
 
             {:else if activeTab === 'account'}
               <!-- Account Tab -->
               <div class="mb-6">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Change Password</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Update your account password.</p>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.settings_password_title()}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.settings_password_description()}</p>
               </div>
 
               <form onsubmit={handlePasswordSubmit} class="space-y-4">
                 <div>
-                    <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Current Password</label>
+                    <label for="current-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_current_password()}</label>
                     <input
                       id="current-password"
                       type="password"
                       required
                       bind:value={currentPassword}
                       class="input"
-                      placeholder="Enter current password"
+                      placeholder={m.settings_current_password_placeholder()}
                       autocomplete="current-password"
                     />
                   </div>
 
                   <div class="grid gap-4 sm:grid-cols-2">
                     <div>
-                      <label for="new-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">New Password</label>
+                      <label for="new-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_new_password()}</label>
                       <input
                         id="new-password"
                         type="password"
                         required
                         bind:value={newPassword}
                         class="input"
-                        placeholder="Min. 8 characters"
+                        placeholder={m.settings_new_password_placeholder()}
                         autocomplete="new-password"
                       />
                       <PasswordStrength password={newPassword} />
                     </div>
 
                     <div>
-                      <label for="confirm-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Confirm Password</label>
+                      <label for="confirm-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_confirm_password()}</label>
                       <input
                         id="confirm-password"
                         type="password"
                         required
                         bind:value={confirmPassword}
                         class="input"
-                        placeholder="Confirm password"
+                        placeholder={m.settings_confirm_password_placeholder()}
                         autocomplete="new-password"
                       />
                     </div>
@@ -392,10 +424,10 @@
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                           </svg>
-                          Updating...
+                          {m.settings_updating_password()}
                         </span>
                       {:else}
-                        Update Password
+                        {m.settings_update_password()}
                       {/if}
                     </button>
                   </div>
@@ -404,8 +436,8 @@
             {:else if activeTab === 'security'}
               <!-- Security Tab -->
               <div class="mb-6">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Two-Factor Authentication</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Add an extra layer of security to your account.</p>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.settings_2fa_title()}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.settings_2fa_description()}</p>
               </div>
 
               {#if totpLoading}
@@ -426,8 +458,8 @@
                         </svg>
                       </div>
                       <div>
-                        <p class="font-medium text-green-800 dark:text-green-300">2FA Enabled</p>
-                        <p class="text-sm text-green-600 dark:text-green-400">{totpStatus.recovery_codes_remaining} recovery codes remaining</p>
+                        <p class="font-medium text-green-800 dark:text-green-300">{m.settings_2fa_enabled()}</p>
+                        <p class="text-sm text-green-600 dark:text-green-400">{m.settings_2fa_recovery_remaining({ count: totpStatus.recovery_codes_remaining })}</p>
                       </div>
                     </div>
                   </div>
@@ -435,7 +467,7 @@
                   {#if totpStatus.recovery_codes_remaining < 3}
                     <div class="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
                       <p class="text-sm text-amber-700 dark:text-amber-300">
-                        Low recovery codes. Consider re-enabling 2FA for new codes.
+                        {m.settings_2fa_low_codes()}
                       </p>
                     </div>
                   {/if}
@@ -448,15 +480,15 @@
                         </svg>
                       </div>
                       <div>
-                        <p class="text-sm font-medium text-gray-900 dark:text-white">Disable Two-Factor Authentication</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Enter your password and current authenticator code to disable 2FA.</p>
+                        <p class="text-sm font-medium text-gray-900 dark:text-white">{m.settings_2fa_disable_title()}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_2fa_disable_description()}</p>
                       </div>
                     </div>
 
                     <form onsubmit={handleDisable2FA} class="space-y-4">
                       <div class="grid gap-4 sm:grid-cols-2">
                         <div>
-                          <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Password</label>
+                          <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.auth_password()}</label>
                           <input
                             id="disable-password"
                             type="password"
@@ -467,7 +499,7 @@
                           />
                         </div>
                         <div>
-                          <label for="disable-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Authenticator Code</label>
+                          <label for="disable-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_2fa_authenticator_code()}</label>
                           <input
                             id="disable-code"
                             type="text"
@@ -494,10 +526,10 @@
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                               </svg>
-                              Disabling...
+                              {m.settings_2fa_disabling()}
                             </span>
                           {:else}
-                            Disable 2FA
+                            {m.settings_2fa_disable()}
                           {/if}
                         </button>
                       </div>
@@ -512,24 +544,24 @@
             {:else if activeTab === 'logs'}
               <!-- History Tab -->
               <div class="mb-6">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">History Retention</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Control how many job runs are kept in history.</p>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.settings_retention_title()}</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.settings_retention_description()}</p>
               </div>
 
               <div class="space-y-4">
                 <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
-                  <span class="text-sm text-gray-600 dark:text-gray-400">Current setting</span>
+                  <span class="text-sm text-gray-600 dark:text-gray-400">{m.settings_retention_current()}</span>
                   <span class="text-sm font-medium text-gray-900 dark:text-white">
                     {#if maxRunsPerJob === null}
-                      Unlimited retention
+                      {m.settings_retention_unlimited()}
                     {:else}
-                      Keep last {maxRunsPerJob} runs per job
+                      {m.settings_retention_keep({ count: maxRunsPerJob })}
                     {/if}
                   </span>
                 </div>
 
                 <div>
-                  <label for="max-runs" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Maximum Runs per Job</label>
+                  <label for="max-runs" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_retention_max_runs()}</label>
                   <div class="flex gap-3">
                     <div class="relative flex-1">
                       <input
@@ -538,9 +570,9 @@
                         inputmode="numeric"
                         bind:value={maxRunsInput}
                         class="input pr-14"
-                        placeholder="Empty = unlimited"
+                        placeholder={m.settings_retention_placeholder()}
                       />
-                      <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 dark:text-gray-500">runs</span>
+                      <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 dark:text-gray-500">{m.settings_retention_unit()}</span>
                     </div>
                     <button
                       onclick={handleLogsSave}
@@ -553,12 +585,12 @@
                           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                       {:else}
-                        Save
+                        {m.common_save()}
                       {/if}
                     </button>
                   </div>
                   <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                    When set, older runs are automatically deleted when new runs exceed the limit.
+                    {m.settings_retention_help()}
                   </p>
                 </div>
               </div>

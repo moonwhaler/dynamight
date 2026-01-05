@@ -10,6 +10,7 @@ use regex::Regex;
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::errors::{ApiError, ErrorCode};
 use crate::models::{CreateJobRequest, Job, JobResponse, JobRunStatus, UpdateJobRequest};
 use crate::AppState;
 
@@ -61,17 +62,6 @@ fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
         return Err("Exclude pattern contains invalid characters".to_string());
     }
 
-    Ok(())
-}
-
-/// Validates a list of exclude patterns.
-/// Returns Ok(()) if all patterns are valid, or Err with details of the first invalid pattern.
-fn validate_exclude_patterns(patterns: &[String]) -> Result<(), String> {
-    for (i, pattern) in patterns.iter().enumerate() {
-        if let Err(e) = validate_exclude_pattern(pattern) {
-            return Err(format!("Invalid exclude pattern at index {}: {} - {}", i, pattern, e));
-        }
-    }
     Ok(())
 }
 
@@ -148,7 +138,7 @@ pub async fn get_job(
 
     match job {
         Some(j) => Json(JobResponse::from(j)).into_response(),
-        None => (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response(),
+        None => ApiError::job_not_found().into_response(),
     }
 }
 
@@ -157,42 +147,28 @@ pub async fn create_job(
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
     // Validate job name
-    if let Err(e) = validate_display_field(&req.name, "Job name", 255, false) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": e})),
-        )
-            .into_response();
+    if let Err(_) = validate_display_field(&req.name, "Job name", 255, false) {
+        return ApiError::field_required("name").into_response();
     }
 
     // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if let Err(e) = validate_display_field(desc, "Description", 4096, true) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-                .into_response();
+        if let Err(_) = validate_display_field(desc, "Description", 4096, true) {
+            return ApiError::field_too_long("description", 4096).into_response();
         }
     }
 
     // Validate at least one source directory
     if req.source_dirs.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "At least one source directory must be specified"})),
-        )
-            .into_response();
+        return ApiError::source_dirs_required().into_response();
     }
 
     // Validate rsync exclude patterns
     if let Some(ref excludes) = req.rsync_excludes {
-        if let Err(e) = validate_exclude_patterns(excludes) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-                .into_response();
+        for (i, pattern) in excludes.iter().enumerate() {
+            if let Err(reason) = validate_exclude_pattern(pattern) {
+                return ApiError::invalid_pattern(i, pattern, &reason).into_response();
+            }
         }
     }
 
@@ -204,11 +180,7 @@ pub async fn create_job(
         .unwrap_or(None);
 
     if existing.is_some() {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "A job with this name already exists"})),
-        )
-            .into_response();
+        return ApiError::job_name_exists().into_response();
     }
 
     let source_dirs_json = serde_json::to_string(&req.source_dirs).unwrap_or_default();
@@ -271,18 +243,10 @@ pub async fn create_job(
 
             match job {
                 Some(j) => (StatusCode::CREATED, Json(JobResponse::from(j))).into_response(),
-                None => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to fetch created job"})),
-                )
-                    .into_response(),
+                None => ApiError::new(ErrorCode::JobCreateFailed).into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to create job: {}", e)})),
-        )
-            .into_response(),
+        Err(_) => ApiError::new(ErrorCode::JobCreateFailed).into_response(),
     }
 }
 
@@ -299,52 +263,38 @@ pub async fn update_job(
         .unwrap_or(None);
 
     if existing.is_none() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response();
+        return ApiError::job_not_found().into_response();
     }
 
     let existing = existing.unwrap();
 
     // Validate job name if provided
     if let Some(ref name) = req.name {
-        if let Err(e) = validate_display_field(name, "Job name", 255, false) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-                .into_response();
+        if let Err(_) = validate_display_field(name, "Job name", 255, false) {
+            return ApiError::field_required("name").into_response();
         }
     }
 
     // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if let Err(e) = validate_display_field(desc, "Description", 4096, true) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-                .into_response();
+        if let Err(_) = validate_display_field(desc, "Description", 4096, true) {
+            return ApiError::field_too_long("description", 4096).into_response();
         }
     }
 
     // Validate source directories if provided
     if let Some(ref source_dirs) = req.source_dirs {
         if source_dirs.is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "At least one source directory must be specified"})),
-            )
-                .into_response();
+            return ApiError::source_dirs_required().into_response();
         }
     }
 
     // Validate rsync exclude patterns if provided
     if let Some(ref excludes) = req.rsync_excludes {
-        if let Err(e) = validate_exclude_patterns(excludes) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": e})),
-            )
-                .into_response();
+        for (i, pattern) in excludes.iter().enumerate() {
+            if let Err(reason) = validate_exclude_pattern(pattern) {
+                return ApiError::invalid_pattern(i, pattern, &reason).into_response();
+            }
         }
     }
 
@@ -359,11 +309,7 @@ pub async fn update_job(
                 .unwrap_or(None);
 
         if duplicate.is_some() {
-            return (
-                StatusCode::CONFLICT,
-                Json(json!({"error": "A job with this name already exists"})),
-            )
-                .into_response();
+            return ApiError::job_name_exists().into_response();
         }
     }
 
@@ -449,18 +395,10 @@ pub async fn update_job(
 
             match job {
                 Some(j) => Json(JobResponse::from(j)).into_response(),
-                None => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to fetch updated job"})),
-                )
-                    .into_response(),
+                None => ApiError::new(ErrorCode::JobUpdateFailed).into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to update job: {}", e)})),
-        )
-            .into_response(),
+        Err(_) => ApiError::new(ErrorCode::JobUpdateFailed).into_response(),
     }
 }
 
@@ -475,14 +413,10 @@ pub async fn delete_job(
 
     match result {
         Ok(r) if r.rows_affected() > 0 => {
-            (StatusCode::OK, Json(json!({"success": true}))).into_response()
+            Json(json!({"success": true})).into_response()
         }
-        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to delete job: {}", e)})),
-        )
-            .into_response(),
+        Ok(_) => ApiError::job_not_found().into_response(),
+        Err(_) => ApiError::new(ErrorCode::JobDeleteFailed).into_response(),
     }
 }
 
@@ -500,17 +434,13 @@ pub async fn run_job(
     let job = match job {
         Some(j) => j,
         None => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response()
+            return ApiError::job_not_found().into_response();
         }
     };
 
     // Check if already running
     if state.backup_service.is_job_running(id).await {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "Job is already running"})),
-        )
-            .into_response();
+        return ApiError::job_already_running().into_response();
     }
 
     // Create job run
@@ -522,12 +452,8 @@ pub async fn run_job(
 
     let run_id = match result {
         Ok(r) => r.last_insert_rowid(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Failed to create job run: {}", e)})),
-            )
-                .into_response()
+        Err(_) => {
+            return ApiError::new(ErrorCode::RunCreateFailed).into_response();
         }
     };
 
@@ -634,25 +560,20 @@ pub async fn cancel_job(
             match state.backup_service.cancel_job(run_id).await {
                 Ok(killed) => {
                     tracing::info!("cancel_job returned: killed={}", killed);
-                    (StatusCode::OK, Json(json!({
+                    Json(json!({
                         "success": true,
                         "processKilled": killed
-                    })))
+                    })).into_response()
                 },
                 Err(e) => {
                     tracing::error!("cancel_job error: {}", e);
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({
-                        "error": format!("Failed to cancel: {}", e)
-                    })))
+                    ApiError::new(ErrorCode::JobCancelFailed).into_response()
                 },
             }
         }
         None => {
             tracing::warn!("No running job found for job_id: {}", id);
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "No running job found"})),
-            )
+            ApiError::new(ErrorCode::NoRunningJob).into_response()
         },
     }
 }
@@ -671,7 +592,7 @@ pub async fn clone_job(
     let job = match job {
         Some(j) => j,
         None => {
-            return (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response()
+            return ApiError::job_not_found().into_response();
         }
     };
 
@@ -726,18 +647,10 @@ pub async fn clone_job(
 
             match new_job {
                 Some(j) => (StatusCode::CREATED, Json(JobResponse::from(j))).into_response(),
-                None => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to fetch cloned job"})),
-                )
-                    .into_response(),
+                None => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to clone job: {}", e)})),
-        )
-            .into_response(),
+        Err(_) => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
     }
 }
 

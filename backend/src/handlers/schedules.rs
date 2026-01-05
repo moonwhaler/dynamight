@@ -10,6 +10,7 @@ use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::errors::{ApiError, ErrorCode};
 use crate::models::{CreateScheduleRequest, Schedule, UpdateScheduleRequest};
 use crate::AppState;
 
@@ -40,7 +41,7 @@ pub async fn create_schedule(
         .unwrap_or(None);
 
     if job_exists.is_none() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))).into_response();
+        return ApiError::job_not_found().into_response();
     }
 
     let cron_expression = req.to_cron_expression();
@@ -53,11 +54,7 @@ pub async fn create_schedule(
     };
 
     if CronSchedule::from_str(&cron_with_seconds).is_err() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid cron expression"})),
-        )
-            .into_response();
+        return ApiError::invalid_cron().into_response();
     }
 
     // Calculate next run
@@ -97,18 +94,10 @@ pub async fn create_schedule(
 
             match schedule {
                 Some(s) => (StatusCode::CREATED, Json(s)).into_response(),
-                None => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to fetch created schedule"})),
-                )
-                    .into_response(),
+                None => ApiError::new(ErrorCode::ScheduleCreateFailed).into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to create schedule: {}", e)})),
-        )
-            .into_response(),
+        Err(_) => ApiError::new(ErrorCode::ScheduleCreateFailed).into_response(),
     }
 }
 
@@ -127,11 +116,7 @@ pub async fn update_schedule(
     let existing = match existing {
         Some(s) => s,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Schedule not found"})),
-            )
-                .into_response()
+            return ApiError::schedule_not_found().into_response();
         }
     };
 
@@ -174,11 +159,7 @@ pub async fn update_schedule(
     };
 
     if CronSchedule::from_str(&cron_with_seconds).is_err() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid cron expression"})),
-        )
-            .into_response();
+        return ApiError::invalid_cron().into_response();
     }
 
     // Calculate next run
@@ -221,18 +202,10 @@ pub async fn update_schedule(
 
             match schedule {
                 Some(s) => Json(s).into_response(),
-                None => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to fetch updated schedule"})),
-                )
-                    .into_response(),
+                None => ApiError::new(ErrorCode::ScheduleUpdateFailed).into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to update schedule: {}", e)})),
-        )
-            .into_response(),
+        Err(_) => ApiError::new(ErrorCode::ScheduleUpdateFailed).into_response(),
     }
 }
 
@@ -246,14 +219,8 @@ pub async fn delete_schedule(
         .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => (StatusCode::OK, Json(json!({"success": true}))),
-        Ok(_) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Schedule not found"})),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to delete schedule: {}", e)})),
-        ),
+        Ok(r) if r.rows_affected() > 0 => Json(json!({"success": true})).into_response(),
+        Ok(_) => ApiError::schedule_not_found().into_response(),
+        Err(_) => ApiError::new(ErrorCode::ScheduleDeleteFailed).into_response(),
     }
 }

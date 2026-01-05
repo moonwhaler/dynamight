@@ -5,6 +5,7 @@
   import { api } from '../lib/api';
   import type { JobRun } from '../lib/types';
   import JobCard from '../components/jobs/JobCard.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let recentRuns = $state<JobRun[]>([]);
   let loadingRuns = $state(true);
@@ -38,7 +39,7 @@
   });
 
   function formatDate(date: string | null): string {
-    if (!date) return 'Never';
+    if (!date) return m.common_never();
     return new Date(date).toLocaleString();
   }
 
@@ -60,28 +61,28 @@
 
 <div class="space-y-6">
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center"> New Job </a>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.dashboard_title()}</h1>
+    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center">{m.dashboard_new_job()}</a>
   </div>
 
   <!-- Stats -->
   <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
     <div class="card p-4">
-      <div class="text-sm text-gray-500 dark:text-gray-400">Total Jobs</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">{m.dashboard_total_jobs()}</div>
       <div class="text-2xl font-bold text-gray-900 dark:text-white">{$jobsStore.jobs.length}</div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500 dark:text-gray-400">Active Jobs</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">{m.dashboard_active_jobs()}</div>
       <div class="text-2xl font-bold text-gray-900 dark:text-white">
         {$jobsStore.jobs.filter((j) => j.enabled).length}
       </div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500 dark:text-gray-400">Recent Runs</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">{m.dashboard_recent_runs()}</div>
       <div class="text-2xl font-bold text-gray-900 dark:text-white">{recentRuns.length}</div>
     </div>
     <div class="card p-4">
-      <div class="text-sm text-gray-500 dark:text-gray-400">Failed Runs</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">{m.dashboard_failed_runs()}</div>
       <div class="text-2xl font-bold text-red-600 dark:text-red-400">
         {recentRuns.filter((r) => r.status === 'failed').length}
       </div>
@@ -90,15 +91,15 @@
 
   <!-- Jobs Overview -->
   <div>
-    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Backup Jobs</h2>
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{m.dashboard_backup_jobs()}</h2>
     {#if $jobsStore.loading}
       <div class="flex justify-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
       </div>
     {:else if $jobsStore.jobs.length === 0}
       <div class="card p-8 text-center">
-        <p class="text-gray-500 dark:text-gray-400 mb-4">No backup jobs configured yet.</p>
-        <a href="#/jobs/new" class="btn btn-primary">Create your first job</a>
+        <p class="text-gray-500 dark:text-gray-400 mb-4">{m.dashboard_no_jobs()}</p>
+        <a href="#/jobs/new" class="btn btn-primary">{m.dashboard_create_first()}</a>
       </div>
     {:else}
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -111,14 +112,14 @@
 
   <!-- Recent Activity -->
   <div>
-    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent Activity</h2>
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{m.dashboard_recent_activity()}</h2>
     {#if loadingRuns}
       <div class="flex justify-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
       </div>
     {:else if recentRuns.length === 0}
       <div class="card p-8 text-center">
-        <p class="text-gray-500 dark:text-gray-400">No recent backup runs.</p>
+        <p class="text-gray-500 dark:text-gray-400">{m.dashboard_no_recent_runs()}</p>
       </div>
     {:else}
       <div class="card overflow-hidden">
@@ -126,14 +127,14 @@
           <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Status
+                  {m.history_table_status()}
                 </th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">
-                  Started
+                  {m.history_table_started()}
                 </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Files</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_files()}</th>
               </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">

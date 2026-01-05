@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../../lib/api';
   import type { DirectoryEntry } from '../../lib/types';
+  import * as m from '$lib/paraglide/messages.js';
 
   let { paths = $bindable<string[]>([]) }: { paths: string[] } = $props();
 
@@ -209,11 +210,11 @@
       type="text"
       bind:value={manualPath}
       onkeydown={handleKeydown}
-      placeholder="Enter path manually or browse..."
+      placeholder={m.path_selector_placeholder_manual()}
       class="input flex-1"
     />
-    <button type="button" onclick={addManualPath} class="btn btn-secondary">Add</button>
-    <button type="button" onclick={openBrowser} class="btn btn-secondary">Browse</button>
+    <button type="button" onclick={addManualPath} class="btn btn-secondary">{m.common_add()}</button>
+    <button type="button" onclick={openBrowser} class="btn btn-secondary">{m.path_selector_browse()}</button>
   </div>
 </div>
 
@@ -232,13 +233,13 @@
       <!-- Header -->
       <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
         <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Select Directories</h3>
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directories()}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
         <button
           onclick={closeBrowser}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-3"
-          aria-label="Close browser"
+          aria-label={m.common_close()}
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -257,36 +258,36 @@
           <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
           </svg>
-          Up
+          {m.path_selector_up()}
         </button>
         <button
           type="button"
           onclick={quickAddCurrentPath}
           disabled={isAlreadyAdded(currentPath)}
           class="btn {isAlreadyAdded(currentPath) ? 'btn-secondary' : 'btn-primary'} text-sm inline-flex items-center"
-          title={isAlreadyAdded(currentPath) ? 'Already added' : 'Add current directory'}
+          title={isAlreadyAdded(currentPath) ? m.path_selector_already_added() : m.path_selector_add_this_directory()}
         >
           {#if isAlreadyAdded(currentPath)}
             <svg class="w-4 h-4 mr-1.5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
               <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
             </svg>
-            Added
+            {m.path_selector_added()}
           {:else}
             <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
-            Add This Directory
+            {m.path_selector_add_this_directory()}
           {/if}
         </button>
         <div class="flex-1"></div>
         {#if selectableDirectories.length > 0}
           <button type="button" onclick={selectAllVisible} class="text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium px-2">
-            Select all
+            {m.path_selector_select_all()}
           </button>
         {/if}
         {#if selectedInDialog.size > 0}
           <button type="button" onclick={clearSelection} class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-2">
-            Clear ({selectedInDialog.size})
+            {m.path_selector_clear_selection({ count: selectedInDialog.size })}
           </button>
         {/if}
       </div>
@@ -302,7 +303,7 @@
             <svg class="w-12 h-12 mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            <p>Empty directory</p>
+            <p>{m.path_selector_empty_directory()}</p>
           </div>
         {:else}
           <div class="space-y-0.5">
@@ -315,7 +316,7 @@
                 >
                   <!-- Checkbox for selection -->
                   {#if alreadyAdded}
-                    <div class="w-5 h-5 flex items-center justify-center flex-shrink-0" title="Already added">
+                    <div class="w-5 h-5 flex items-center justify-center flex-shrink-0" title={m.path_selector_already_added()}>
                       <svg class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
@@ -353,9 +354,9 @@
                       type="button"
                       onclick={() => toggleSelection(entry.path)}
                       class="text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex-shrink-0 px-2 py-1 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors"
-                      title="Add to selection"
+                      title={m.path_selector_add_to_selection()}
                     >
-                      +Add
+                      +{m.common_add()}
                     </button>
                   {/if}
                 </div>
@@ -376,14 +377,14 @@
       <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center justify-between gap-4 flex-shrink-0">
         <div class="text-sm text-gray-600 dark:text-gray-400">
           {#if newSelectionCount > 0}
-            <span class="font-semibold text-primary-600 dark:text-primary-400">{newSelectionCount}</span> director{newSelectionCount === 1 ? 'y' : 'ies'} selected
+            {newSelectionCount === 1 ? m.path_selector_directory_selected({ count: newSelectionCount }) : m.path_selector_directories_selected({ count: newSelectionCount })}
           {:else}
-            <span class="text-gray-500 dark:text-gray-500">Select directories to add</span>
+            <span class="text-gray-500 dark:text-gray-500">{m.path_selector_select_to_add()}</span>
           {/if}
         </div>
         <div class="flex gap-3">
           <button type="button" onclick={closeBrowser} class="btn btn-secondary">
-            Cancel
+            {m.common_cancel()}
           </button>
           <button
             type="button"
@@ -392,9 +393,9 @@
             class="btn btn-primary"
           >
             {#if newSelectionCount > 0}
-              Add {newSelectionCount} Director{newSelectionCount === 1 ? 'y' : 'ies'}
+              {newSelectionCount === 1 ? m.path_selector_add_directory({ count: newSelectionCount }) : m.path_selector_add_directories({ count: newSelectionCount })}
             {:else}
-              Add Selected
+              {m.path_selector_add_selected()}
             {/if}
           </button>
         </div>

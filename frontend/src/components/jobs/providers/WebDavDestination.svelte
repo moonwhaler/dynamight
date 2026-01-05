@@ -2,6 +2,7 @@
   import type { WebDavDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<WebDavDestinationConfig>(),
@@ -15,9 +16,9 @@
 
   // Common WebDAV URL templates
   const urlTemplates = [
-    { label: 'Custom URL', value: '' },
-    { label: 'Nextcloud', value: 'https://your-server.com/remote.php/dav/files/username/' },
-    { label: 'ownCloud', value: 'https://your-server.com/remote.php/webdav/' },
+    { labelKey: () => m.webdav_template_custom(), value: '' },
+    { labelKey: () => m.webdav_template_nextcloud(), value: 'https://your-server.com/remote.php/dav/files/username/' },
+    { labelKey: () => m.webdav_template_owncloud(), value: 'https://your-server.com/remote.php/webdav/' },
   ];
 </script>
 
@@ -30,14 +31,14 @@
 
   <div>
     <label for="url" class="label">
-      WebDAV Server URL
-      <HelpTooltip text="The WebDAV endpoint URL. For Nextcloud, this is usually https://your-server.com/remote.php/dav/files/username/" />
+      {m.webdav_url()}
+      <HelpTooltip text={m.webdav_url_help()} />
     </label>
     <input
       type="url"
       id="url"
       bind:value={config.url}
-      placeholder="https://nextcloud.example.com/remote.php/dav/files/user/"
+      placeholder={m.webdav_url_placeholder()}
       class="input"
     />
     <div class="mt-2 flex flex-wrap gap-2">
@@ -48,7 +49,7 @@
             class="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
             onclick={() => (config.url = template.value)}
           >
-            {template.label}
+            {template.labelKey()}
           </button>
         {/if}
       {/each}
@@ -57,18 +58,18 @@
 
   <div>
     <label for="remote-path" class="label">
-      Remote Path
-      <HelpTooltip text="The folder path within your WebDAV server where backups will be stored." />
+      {m.webdav_remote_path()}
+      <HelpTooltip text={m.webdav_remote_path_help()} />
     </label>
     <input
       type="text"
       id="remote-path"
       bind:value={config.remote_path}
-      placeholder="/Backups"
+      placeholder={m.webdav_remote_path_placeholder()}
       class="input"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Files will be stored at: {config.url}{config.remote_path}
+      {m.webdav_preview({ url: config.url || '', path: config.remote_path || '' })}
     </p>
   </div>
 </div>

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { api } from '../../lib/api';
   import type { DirectoryEntry } from '../../lib/types';
+  import * as m from '$lib/paraglide/messages.js';
 
-  let { path = $bindable(''), placeholder = 'Enter path...' }: { path: string; placeholder?: string } = $props();
+  let { path = $bindable(''), placeholder = m.path_selector_placeholder() }: { path: string; placeholder?: string } = $props();
 
   let showBrowser = $state(false);
   let currentPath = $state('/');
@@ -39,21 +40,21 @@
           is_dir: true,
           size: null,
         }));
-        browseError = `"${targetPath}" is not accessible. Select an allowed path below.`;
+        browseError = m.path_selector_error_not_accessible({ path: targetPath });
       } else if (allowedPaths.length === 1) {
         // Try the single allowed path
         try {
           const result = await api.system.browse(allowedPaths[0]);
           currentPath = result.path;
           entries = result.entries;
-          browseError = `"${targetPath}" is not accessible. Showing ${allowedPaths[0]}.`;
+          browseError = m.path_selector_error_showing_fallback({ path: targetPath, fallback: allowedPaths[0] });
         } catch {
           entries = [];
-          browseError = 'Cannot access any allowed paths';
+          browseError = m.path_selector_error_no_access();
         }
       } else {
         entries = [];
-        browseError = 'Cannot access this path';
+        browseError = m.path_selector_error_path_denied();
       }
     } finally {
       loading = false;
@@ -92,12 +93,12 @@
       } else {
         // No allowed paths configured
         entries = [];
-        browseError = 'No browseable paths configured';
+        browseError = m.path_selector_error_no_paths();
         loading = false;
       }
     } catch {
       entries = [];
-      browseError = 'Failed to load allowed paths';
+      browseError = m.path_selector_error_load_failed();
       loading = false;
     }
   }
@@ -175,7 +176,7 @@
 
     // Validate folder name
     if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
-      createError = 'Invalid folder name';
+      createError = m.path_selector_invalid_folder_name();
       return;
     }
 
@@ -189,7 +190,7 @@
       // Refresh and navigate into the new folder
       await browse(newPath);
     } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to create folder';
+      createError = e instanceof Error ? e.message : m.path_selector_create_failed();
     }
   }
 
@@ -225,7 +226,7 @@
     {placeholder}
     class="input flex-1"
   />
-  <button type="button" onclick={openBrowser} class="btn btn-secondary">Browse</button>
+  <button type="button" onclick={openBrowser} class="btn btn-secondary">{m.path_selector_browse()}</button>
 </div>
 
 <!-- File Browser Modal -->
@@ -243,13 +244,13 @@
       <!-- Header -->
       <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
         <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Select Directory</h3>
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directory()}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
         <button
           onclick={closeBrowser}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-3"
-          aria-label="Close browser"
+          aria-label={m.common_close()}
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -275,7 +276,7 @@
           <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
           </svg>
-          Up
+          {m.path_selector_up()}
         </button>
         <button
           type="button"
@@ -286,7 +287,7 @@
           <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
-          New Folder
+          {m.path_selector_new_folder()}
         </button>
         <div class="flex-1"></div>
         <button
@@ -297,7 +298,7 @@
           <svg class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
           </svg>
-          Select This Directory
+          {m.path_selector_select_this_directory()}
         </button>
       </div>
 
@@ -313,11 +314,11 @@
                 bind:this={newFolderInput}
                 bind:value={newFolderName}
                 onkeydown={handleNewFolderKeydown}
-                placeholder="Folder name"
+                placeholder={m.path_selector_folder_name()}
                 class="flex-1 px-3 py-1.5 text-sm border border-blue-300 dark:border-blue-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               />
-              <button type="button" onclick={createFolder} class="btn btn-primary text-sm py-1.5 px-3">Create</button>
-              <button type="button" onclick={cancelCreatingFolder} class="btn btn-secondary text-sm py-1.5 px-3">Cancel</button>
+              <button type="button" onclick={createFolder} class="btn btn-primary text-sm py-1.5 px-3">{m.path_selector_create()}</button>
+              <button type="button" onclick={cancelCreatingFolder} class="btn btn-secondary text-sm py-1.5 px-3">{m.common_cancel()}</button>
             </div>
             {#if createError}
               <p class="mt-2 text-xs text-red-600 dark:text-red-400">{createError}</p>
@@ -334,7 +335,7 @@
             <svg class="w-12 h-12 mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            <p>Directory is empty</p>
+            <p>{m.path_selector_directory_empty()}</p>
           </div>
         {:else if !loading}
           <div class="space-y-0.5">
@@ -365,10 +366,10 @@
       <!-- Footer -->
       <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center justify-between gap-4 flex-shrink-0">
         <p class="text-xs text-gray-500 dark:text-gray-400">
-          Tip: You can also type a path directly in the input field.
+          {m.path_selector_tip()}
         </p>
         <button type="button" onclick={closeBrowser} class="btn btn-secondary">
-          Cancel
+          {m.common_cancel()}
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@
   import type { SftpDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<SftpDestinationConfig>(),
@@ -24,22 +25,22 @@
   <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
     <div class="sm:col-span-2">
       <label for="host" class="label">
-        Host
-        <HelpTooltip text="The hostname or IP address of the SSH/SFTP server." />
+        {m.sftp_host()}
+        <HelpTooltip text={m.sftp_host_help()} />
       </label>
       <input
         type="text"
         id="host"
         bind:value={config.host}
-        placeholder="backup.example.com"
+        placeholder={m.sftp_host_placeholder()}
         class="input"
       />
     </div>
 
     <div>
       <label for="port" class="label">
-        Port
-        <HelpTooltip text="The SSH port number (default is 22)." />
+        {m.sftp_port()}
+        <HelpTooltip text={m.sftp_port_help()} />
       </label>
       <input
         type="number"
@@ -54,32 +55,32 @@
 
   <div>
     <label for="username" class="label">
-      Username
-      <HelpTooltip text="The SSH username to authenticate with." />
+      {m.sftp_username()}
+      <HelpTooltip text={m.sftp_username_help()} />
     </label>
     <input
       type="text"
       id="username"
       bind:value={config.username}
-      placeholder="backup-user"
+      placeholder={m.sftp_username_placeholder()}
       class="input"
     />
   </div>
 
   <div>
     <label for="remote-path" class="label">
-      Remote Path
-      <HelpTooltip text="The directory path on the remote server where backups will be stored." />
+      {m.sftp_remote_path()}
+      <HelpTooltip text={m.sftp_remote_path_help()} />
     </label>
     <input
       type="text"
       id="remote-path"
       bind:value={config.remote_path}
-      placeholder="/home/backup-user/backups"
+      placeholder={m.sftp_remote_path_placeholder()}
       class="input"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Files will be synced to: {config.username}@{config.host}:{config.remote_path}
+      {m.sftp_preview({ user: config.username || '', host: config.host || '', path: config.remote_path || '' })}
     </p>
   </div>
 
@@ -97,13 +98,13 @@
     </div>
     <div class="flex-1 min-w-0">
       <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        Use SSH Key Authentication
-        <HelpTooltip text="Authenticate using an SSH key pair. First, add your PUBLIC key to ~/.ssh/authorized_keys on the server, then store your PRIVATE key in the credentials here. More secure than passwords." />
+        {m.sftp_key_auth()}
+        <HelpTooltip text={m.sftp_key_auth_help()} />
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
         {config.key_based_auth
-          ? 'Private key stored in credentials'
-          : 'Password stored in credentials'}
+          ? m.sftp_key_auth_desc_key()
+          : m.sftp_key_auth_desc_password()}
       </p>
     </div>
   </label>

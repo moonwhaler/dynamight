@@ -2,6 +2,7 @@
   import type { OneDriveDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<OneDriveDestinationConfig>(),
@@ -23,48 +24,46 @@
 
   <div>
     <label for="folder-path" class="label">
-      Folder Path
-      <HelpTooltip text="The folder path in your OneDrive where backups will be stored. Use forward slashes, e.g., /Backups/MyServer" />
+      {m.onedrive_folder_path()}
+      <HelpTooltip text={m.onedrive_folder_path_help()} />
     </label>
     <input
       type="text"
       id="folder-path"
       bind:value={config.folder_path}
-      placeholder="/Backups"
+      placeholder={m.onedrive_folder_path_placeholder()}
       class="input"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Files will be synced to: OneDrive{config.folder_path}
+      {m.onedrive_preview({ path: config.folder_path || '' })}
     </p>
   </div>
 
   <div>
     <label for="drive-id" class="label">
-      Drive ID (Optional)
-      <HelpTooltip text="Leave empty to use your personal OneDrive. Specify a drive ID to use a shared drive or SharePoint document library." />
+      {m.onedrive_drive_id()} ({m.common_optional()})
+      <HelpTooltip text={m.onedrive_drive_id_help()} />
     </label>
     <input
       type="text"
       id="drive-id"
       bind:value={config.drive_id}
-      placeholder="Leave empty for personal OneDrive"
+      placeholder={m.onedrive_drive_id_placeholder()}
       class="input"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
       {#if config.drive_id}
-        Using shared drive: {config.drive_id}
+        {m.onedrive_using_shared({ id: config.drive_id })}
       {:else}
-        Using your personal OneDrive
+        {m.onedrive_using_personal()}
       {/if}
     </p>
   </div>
 
   <div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-    <h3 class="font-medium text-blue-800 dark:text-blue-300 mb-2">OneDrive Setup</h3>
+    <h3 class="font-medium text-blue-800 dark:text-blue-300 mb-2">{m.onedrive_setup_title()}</h3>
     <p class="text-sm text-blue-700 dark:text-blue-400">
-      OneDrive uses OAuth authentication. You'll need to add your Microsoft account credentials
-      using the "Add Credentials" button above. The credentials will be securely stored and used
-      to access your OneDrive.
+      {m.onedrive_setup_desc()}
     </p>
   </div>
 </div>

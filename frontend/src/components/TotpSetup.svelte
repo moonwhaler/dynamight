@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { showToast } from './ui/Toast.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   type SetupStep = 'initial' | 'qr' | 'verify' | 'recovery' | 'complete';
 
@@ -27,14 +28,14 @@
       otpauthUrl = response.otpauth_url;
       step = 'qr';
     } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : 'Failed to start setup', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.totp_failed_start(), variant: 'error' });
     }
     loading = false;
   }
 
   async function verifyCode() {
     if (verificationCode.length !== 6) {
-      showToast({ message: 'Please enter a 6-digit code', variant: 'error' });
+      showToast({ message: m.totp_enter_6digit(), variant: 'error' });
       return;
     }
 
@@ -44,7 +45,7 @@
       recoveryCodes = response.recovery_codes;
       step = 'recovery';
     } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : 'Verification failed', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.totp_verification_failed(), variant: 'error' });
     }
     loading = false;
   }
@@ -78,9 +79,9 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
         </svg>
       </div>
-      <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Enable Two-Factor Authentication</h3>
+      <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-1">{m.totp_enable_title()}</h3>
       <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-        Use an authenticator app like Google Authenticator or Aegis.
+        {m.totp_enable_desc()}
       </p>
       <button onclick={startSetup} disabled={loading} class="btn btn-primary px-6 py-2">
         {#if loading}
@@ -89,10 +90,10 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            Setting up...
+            {m.totp_setting_up()}
           </span>
         {:else}
-          Get Started
+          {m.totp_get_started()}
         {/if}
       </button>
     </div>
@@ -107,28 +108,28 @@
             type="button"
             onclick={() => showEnlargedQr = true}
             class="bg-white p-2 rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
-            title="Click to enlarge"
+            title={m.totp_click_to_enlarge()}
           >
             <img src={qrCode} alt="2FA QR Code" class="w-32 h-32 sm:w-36 sm:h-36" />
           </button>
-          <p class="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 text-center">Tap to enlarge</p>
+          <p class="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 text-center">{m.totp_tap_enlarge()}</p>
           <button
             onclick={() => showManualEntry = !showManualEntry}
             class="mt-1 text-xs text-primary-600 dark:text-primary-400 hover:underline w-full text-center"
           >
-            {showManualEntry ? 'Hide key' : 'Manual entry'}
+            {showManualEntry ? m.totp_hide_key() : m.totp_manual_entry()}
           </button>
         </div>
 
         <!-- Verification form -->
         <div class="flex-1 w-full">
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            Scan with your authenticator app, then enter the code below.
+            {m.totp_scan_instruction()}
           </p>
 
           {#if showManualEntry}
             <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-2 mb-3">
-              <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Secret key:</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">{m.totp_secret_key()}</p>
               <code class="block text-xs font-mono break-all text-gray-700 dark:text-gray-300">
                 {secret}
               </code>
@@ -137,7 +138,7 @@
 
           <div>
             <label for="verification-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              6-digit code
+              {m.totp_6digit_code()}
             </label>
             <input
               id="verification-code"
@@ -154,7 +155,7 @@
 
           <div class="flex gap-2 mt-4">
             <button onclick={() => step = 'initial'} class="btn btn-secondary px-4 py-2">
-              Back
+              {m.common_back()}
             </button>
             <button onclick={verifyCode} disabled={loading || verificationCode.length !== 6} class="btn btn-primary flex-1 py-2">
               {#if loading}
@@ -163,10 +164,10 @@
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  Verifying...
+                  {m.auth_totp_verifying()}
                 </span>
               {:else}
-                Verify
+                {m.totp_verify()}
               {/if}
             </button>
           </div>
@@ -179,7 +180,7 @@
     <div>
       <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-4">
         <p class="text-sm text-amber-800 dark:text-amber-300">
-          <strong>Save these recovery codes!</strong> Use them to sign in if you lose access to your authenticator.
+          <strong>{m.totp_save_codes_warning()}</strong> {m.totp_save_codes_desc()}
         </p>
       </div>
 
@@ -199,14 +200,14 @@
             <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
-            Copied!
+            {m.totp_copied()}
           </span>
         {:else}
           <span class="flex items-center justify-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
-            Copy Codes
+            {m.totp_copy_codes()}
           </span>
         {/if}
       </button>
@@ -218,12 +219,12 @@
           class="rounded text-primary-600"
         />
         <span class="text-sm text-gray-700 dark:text-gray-300">
-          I've saved these codes safely
+          {m.totp_confirm_saved()}
         </span>
       </label>
 
       <button onclick={finishSetup} disabled={!confirmedSaved} class="btn btn-primary w-full mt-4">
-        Complete Setup
+        {m.totp_complete_setup()}
       </button>
     </div>
 
@@ -235,9 +236,9 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
         </svg>
       </div>
-      <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-1">2FA Enabled</h3>
+      <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-1">{m.totp_2fa_enabled()}</h3>
       <p class="text-sm text-gray-500 dark:text-gray-400">
-        Your account is now protected with two-factor authentication.
+        {m.totp_protected_message()}
       </p>
     </div>
   {/if}
@@ -268,7 +269,7 @@
       >
         <img src={qrCode} alt="2FA QR Code" class="w-64 h-64 sm:w-80 sm:h-80" />
       </button>
-      <p class="text-center text-white/80 text-sm mt-3">Tap anywhere to close</p>
+      <p class="text-center text-white/80 text-sm mt-3">{m.totp_tap_to_close()}</p>
     </div>
   </div>
 {/if}

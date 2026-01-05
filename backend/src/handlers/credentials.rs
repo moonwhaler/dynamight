@@ -1,5 +1,6 @@
 //! Handlers for credential management
 
+use crate::errors::{ApiError, ErrorCode};
 use crate::models::{CreateCredentialRequest, UpdateCredentialRequest};
 use crate::AppState;
 use axum::{
@@ -31,7 +32,7 @@ pub async fn list_credentials(
         Ok(credentials) => Json(credentials).into_response(),
         Err(e) => {
             tracing::error!("Failed to list credentials: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }
@@ -43,10 +44,10 @@ pub async fn get_credential(
 ) -> impl IntoResponse {
     match state.credential_service.get(&state.db, id).await {
         Ok(Some(credential)) => Json(credential).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => ApiError::credential_not_found().into_response(),
         Err(e) => {
             tracing::error!("Failed to get credential: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }
@@ -60,7 +61,7 @@ pub async fn create_credential(
         Ok(credential) => (StatusCode::CREATED, Json(credential)).into_response(),
         Err(e) => {
             tracing::error!("Failed to create credential: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            ApiError::new(ErrorCode::CredentialCreateFailed).into_response()
         }
     }
 }
@@ -73,10 +74,10 @@ pub async fn update_credential(
 ) -> impl IntoResponse {
     match state.credential_service.update(&state.db, id, request).await {
         Ok(Some(credential)) => Json(credential).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => ApiError::credential_not_found().into_response(),
         Err(e) => {
             tracing::error!("Failed to update credential: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            ApiError::new(ErrorCode::CredentialUpdateFailed).into_response()
         }
     }
 }
@@ -89,25 +90,21 @@ pub async fn delete_credential(
     // Check if credential is in use
     match state.credential_service.is_in_use(&state.db, id).await {
         Ok(true) => {
-            return (
-                StatusCode::CONFLICT,
-                "Credential is in use by one or more jobs",
-            )
-                .into_response()
+            return ApiError::credential_in_use().into_response();
         }
         Err(e) => {
             tracing::error!("Failed to check credential usage: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            return ApiError::internal_error().into_response();
         }
         _ => {}
     }
 
     match state.credential_service.delete(&state.db, id).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Ok(false) => ApiError::credential_not_found().into_response(),
         Err(e) => {
             tracing::error!("Failed to delete credential: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            ApiError::new(ErrorCode::CredentialDeleteFailed).into_response()
         }
     }
 }

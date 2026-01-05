@@ -4,6 +4,7 @@
   import { viewPreferencesStore } from '../lib/stores/viewPreferences';
   import JobCard from '../components/jobs/JobCard.svelte';
   import JobListRow from '../components/jobs/JobListRow.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   // Filter state
   let searchQuery = $state('');
@@ -73,8 +74,8 @@
 
 <div class="space-y-6">
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Backup Jobs</h1>
-    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center"> New Job </a>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.jobs_title()}</h1>
+    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center">{m.dashboard_new_job()}</a>
   </div>
 
   {#if $jobsStore.loading}
@@ -84,7 +85,7 @@
   {:else if $jobsStore.error}
     <div class="card p-8 text-center">
       <p class="text-red-600 dark:text-red-400 mb-4">{$jobsStore.error}</p>
-      <button onclick={() => jobsStore.load()} class="btn btn-secondary">Retry</button>
+      <button onclick={() => jobsStore.load()} class="btn btn-secondary">{m.common_retry()}</button>
     </div>
   {:else if $jobsStore.jobs.length === 0}
     <div class="card p-12 text-center">
@@ -101,9 +102,9 @@
           d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
         />
       </svg>
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No backup jobs</h3>
-      <p class="text-gray-500 dark:text-gray-400 mb-6">Get started by creating your first backup job.</p>
-      <a href="#/jobs/new" class="btn btn-primary">Create Job</a>
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.jobs_no_jobs()}</h3>
+      <p class="text-gray-500 dark:text-gray-400 mb-6">{m.jobs_no_jobs_description()}</p>
+      <a href="#/jobs/new" class="btn btn-primary">{m.job_create()}</a>
     </div>
   {:else}
     <!-- Filter Bar -->
@@ -119,7 +120,7 @@
             <input
               type="text"
               bind:value={searchQuery}
-              placeholder="Search jobs..."
+              placeholder={m.jobs_search_placeholder()}
               class="input pl-10"
             />
           </div>
@@ -129,9 +130,9 @@
             bind:value={enabledFilter}
             class="input lg:w-40"
           >
-            <option value="all">All Jobs</option>
-            <option value="enabled">Active Only</option>
-            <option value="disabled">Disabled Only</option>
+            <option value="all">{m.jobs_filter_all()}</option>
+            <option value="enabled">{m.jobs_filter_active()}</option>
+            <option value="disabled">{m.jobs_filter_disabled()}</option>
           </select>
 
           <!-- Filter toggle button (mobile/tablet) -->
@@ -142,7 +143,7 @@
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
-            Filters
+            {m.common_filters()}
             {#if activeFilterCount > 0}
               <span class="bg-primary-600 text-white text-xs font-medium px-2 py-0.5 rounded-full">{activeFilterCount}</span>
             {/if}
@@ -155,7 +156,7 @@
               class="p-2 transition-colors {$viewPreferencesStore === 'grid'
                 ? 'bg-primary-600 text-white'
                 : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-              title="Grid view"
+              title={m.jobs_grid_view()}
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -166,7 +167,7 @@
               class="p-2 transition-colors {$viewPreferencesStore === 'list'
                 ? 'bg-primary-600 text-white'
                 : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-              title="List view"
+              title={m.jobs_list_view()}
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
@@ -177,7 +178,7 @@
 
         <!-- Desktop: Status filter chips -->
         <div class="hidden lg:flex items-center gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-          <span class="text-sm text-gray-500 dark:text-gray-400">Last Run:</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">{m.jobs_last_run_label()}</span>
           <div class="flex flex-wrap gap-2">
             {#each allStatuses as status}
               <button
@@ -209,7 +210,7 @@
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
-              Clear filters
+              {m.jobs_clear_filters()}
             </button>
           {/if}
         </div>
@@ -219,14 +220,14 @@
           <div class="lg:hidden mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
             <!-- View toggle -->
             <div class="space-y-2">
-              <span class="label">View</span>
+              <span class="label">{m.common_view()}</span>
               <div class="flex items-center border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden w-fit">
                 <button
                   onclick={() => viewPreferencesStore.setViewMode('grid')}
                   class="p-2 transition-colors {$viewPreferencesStore === 'grid'
                     ? 'bg-primary-600 text-white'
                     : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-                  title="Grid view"
+                  title={m.jobs_grid_view()}
                 >
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -237,7 +238,7 @@
                   class="p-2 transition-colors {$viewPreferencesStore === 'list'
                     ? 'bg-primary-600 text-white'
                     : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-                  title="List view"
+                  title={m.jobs_list_view()}
                 >
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
@@ -248,7 +249,7 @@
 
             <!-- Status filters -->
             <div class="space-y-2">
-              <span class="label">Last Run Status</span>
+              <span class="label">{m.jobs_last_run_status()}</span>
               <div class="flex flex-wrap gap-2">
                 {#each allStatuses as status}
                   <button
@@ -278,7 +279,7 @@
                 onclick={clearAllFilters}
                 class="btn btn-sm btn-secondary w-full"
               >
-                Clear all filters
+                {m.jobs_clear_all_filters()}
               </button>
             {/if}
           </div>
@@ -289,9 +290,7 @@
       {#if filteredJobs.length !== $jobsStore.jobs.length}
         <div class="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 rounded-b-xl">
           <p class="text-sm text-gray-500 dark:text-gray-400">
-            Showing <span class="font-medium text-gray-700 dark:text-gray-200">{filteredJobs.length}</span>
-            of <span class="font-medium text-gray-700 dark:text-gray-200">{$jobsStore.jobs.length}</span>
-            {filteredJobs.length === 1 ? 'job' : 'jobs'}
+            {m.jobs_showing_filtered({ shown: filteredJobs.length, total: $jobsStore.jobs.length })}
           </p>
         </div>
       {/if}
@@ -313,10 +312,10 @@
             d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
           />
         </svg>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No matching jobs</h3>
-        <p class="text-gray-500 dark:text-gray-400 mb-4">Try adjusting your filters to find what you're looking for.</p>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.jobs_no_matching()}</h3>
+        <p class="text-gray-500 dark:text-gray-400 mb-4">{m.jobs_no_matching_description()}</p>
         <button onclick={clearAllFilters} class="btn btn-secondary">
-          Clear all filters
+          {m.jobs_clear_all_filters()}
         </button>
       </div>
     {:else if $viewPreferencesStore === 'grid'}
@@ -331,13 +330,13 @@
           <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Job</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">Sources</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell">Destination</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap hidden sm:table-cell">Last Run</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden xl:table-cell">Options</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.job_sources()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell">{m.job_destination()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap hidden sm:table-cell">{m.job_last_run()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden xl:table-cell">{m.job_options()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.common_actions()}</th>
               </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">

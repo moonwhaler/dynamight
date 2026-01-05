@@ -1,6 +1,6 @@
 use axum::{
     extract::{ConnectInfo, State},
-    http::{header::SET_COOKIE, HeaderMap, StatusCode},
+    http::{header::SET_COOKIE, HeaderMap},
     response::{AppendHeaders, IntoResponse},
     Json,
 };
@@ -9,6 +9,7 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::errors::{ApiError, ErrorCode};
 use crate::handlers::auth::{build_auth_cookie, extract_client_ip};
 use crate::models::{
     PendingTotpSession, RecoveryCode, TotpDisableRequest, TotpEnableRequest, TotpEnableResponse,
@@ -39,18 +40,13 @@ fn extract_token(headers: &axum::http::HeaderMap) -> Option<String> {
 async fn get_current_user(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> Result<User, (StatusCode, Json<serde_json::Value>)> {
-    let token = extract_token(headers).ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(json!({"error": "Not authenticated"})),
-    ))?;
+) -> Result<User, ApiError> {
+    let token = extract_token(headers).ok_or_else(ApiError::not_authenticated)?;
 
-    let claims = state.auth_service.validate_token(&token).map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid token"})),
-        )
-    })?;
+    let claims = state
+        .auth_service
+        .validate_token(&token)
+        .map_err(|_| ApiError::token_invalid())?;
 
     let user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE id = ?")
         .bind(claims.sub)
@@ -58,10 +54,7 @@ async fn get_current_user(
         .await
         .unwrap_or(None);
 
-    user.ok_or((
-        StatusCode::NOT_FOUND,
-        Json(json!({"error": "User not found"})),
-    ))
+    user.ok_or_else(ApiError::user_not_found)
 }
 
 /// POST /auth/totp/setup - Generate a new TOTP secret and QR code
@@ -79,22 +72,14 @@ pub async fn setup(
     let qr_code = match TotpService::generate_qr_code(&user.username, &secret) {
         Ok(qr) => qr,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to generate QR code"})),
-            )
-                .into_response()
+            return ApiError::totp_setup_failed().into_response();
         }
     };
 
     let otpauth_url = match TotpService::get_otpauth_url(&user.username, &secret) {
         Ok(url) => url,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to generate otpauth URL"})),
-            )
-                .into_response()
+            return ApiError::totp_setup_failed().into_response();
         }
     };
 
@@ -121,20 +106,12 @@ pub async fn enable(
     let valid = match TotpService::verify_code(&req.secret, &req.code) {
         Ok(v) => v,
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid secret or code"})),
-            )
-                .into_response()
+            return ApiError::totp_invalid_code().into_response();
         }
     };
 
     if !valid {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid verification code"})),
-        )
-            .into_response();
+        return ApiError::totp_invalid_code().into_response();
     }
 
     // Generate recovery codes
@@ -144,11 +121,7 @@ pub async fn enable(
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
+            return ApiError::internal_error().into_response();
         }
     };
 
@@ -162,11 +135,7 @@ pub async fn enable(
     .await;
 
     if result.is_err() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to enable 2FA"})),
-        )
-            .into_response();
+        return ApiError::totp_setup_failed().into_response();
     }
 
     // Delete any existing recovery codes
@@ -180,11 +149,7 @@ pub async fn enable(
         let hash = match TotpService::hash_recovery_code(code) {
             Ok(h) => h,
             Err(_) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to hash recovery codes"})),
-                )
-                    .into_response()
+                return ApiError::internal_error().into_response();
             }
         };
 
@@ -195,21 +160,13 @@ pub async fn enable(
             .await;
 
         if result.is_err() {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to store recovery codes"})),
-            )
-                .into_response();
+            return ApiError::internal_error().into_response();
         }
     }
 
     // Commit transaction
     if tx.commit().await.is_err() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to commit changes"})),
-        )
-            .into_response();
+        return ApiError::internal_error().into_response();
     }
 
     tracing::info!("2FA enabled for user '{}'", user.username);
@@ -236,42 +193,26 @@ pub async fn disable(
     let valid = AuthService::verify_password(&req.password, &user.password_hash).unwrap_or(false);
 
     if !valid {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid password"})),
-        )
-            .into_response();
+        return ApiError::password_incorrect().into_response();
     }
 
     // Verify TOTP code
     let secret = match &user.totp_secret {
         Some(s) => s,
         None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "2FA is not enabled"})),
-            )
-                .into_response()
+            return ApiError::totp_not_enabled().into_response();
         }
     };
 
     let code_valid = match TotpService::verify_code(secret, &req.code) {
         Ok(v) => v,
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid verification code"})),
-            )
-                .into_response()
+            return ApiError::totp_invalid_code().into_response();
         }
     };
 
     if !code_valid {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid verification code"})),
-        )
-            .into_response();
+        return ApiError::totp_invalid_code().into_response();
     }
 
     // Disable 2FA
@@ -283,11 +224,7 @@ pub async fn disable(
     .await;
 
     if result.is_err() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Failed to disable 2FA"})),
-        )
-            .into_response();
+        return ApiError::internal_error().into_response();
     }
 
     // Delete recovery codes
@@ -336,14 +273,7 @@ pub async fn validate(
 
     // Check rate limit before processing
     if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
-                "retry_after": e.retry_after_secs
-            })),
-        )
-            .into_response();
+        return ApiError::rate_limited(e.retry_after_secs as u64).into_response();
     }
 
     // Get pending session
@@ -358,11 +288,7 @@ pub async fn validate(
         Some(s) => s,
         None => {
             state.rate_limit_service.record_failure(&client_ip);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid or expired session"})),
-            )
-                .into_response()
+            return ApiError::new(ErrorCode::SessionExpired).into_response();
         }
     };
 
@@ -375,11 +301,7 @@ pub async fn validate(
             .await;
 
         state.rate_limit_service.record_failure(&client_ip);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Session expired, please login again"})),
-        )
-            .into_response();
+        return ApiError::new(ErrorCode::SessionExpired).into_response();
     }
 
     // Get user
@@ -392,11 +314,7 @@ pub async fn validate(
     let user = match user {
         Some(u) => u,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "User not found"})),
-            )
-                .into_response()
+            return ApiError::user_not_found().into_response();
         }
     };
 
@@ -404,32 +322,20 @@ pub async fn validate(
     let secret = match &user.totp_secret {
         Some(s) => s,
         None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "2FA not configured"})),
-            )
-                .into_response()
+            return ApiError::totp_not_enabled().into_response();
         }
     };
 
     let valid = match TotpService::verify_code(secret, &req.code) {
         Ok(v) => v,
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid code"})),
-            )
-                .into_response()
+            return ApiError::totp_invalid_code().into_response();
         }
     };
 
     if !valid {
         state.rate_limit_service.record_failure(&client_ip);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Invalid verification code"})),
-        )
-            .into_response();
+        return ApiError::totp_invalid_code().into_response();
     }
 
     // Delete pending session
@@ -442,11 +348,7 @@ pub async fn validate(
     let token = match state.auth_service.generate_token(user.id) {
         Ok(t) => t,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to generate token"})),
-            )
-                .into_response()
+            return ApiError::internal_error().into_response();
         }
     };
 
@@ -477,14 +379,7 @@ pub async fn recovery(
 
     // Check rate limit before processing
     if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": format!("Too many failed attempts. Please try again in {} seconds.", e.retry_after_secs),
-                "retry_after": e.retry_after_secs
-            })),
-        )
-            .into_response();
+        return ApiError::rate_limited(e.retry_after_secs as u64).into_response();
     }
 
     // Get pending session
@@ -499,11 +394,7 @@ pub async fn recovery(
         Some(s) => s,
         None => {
             state.rate_limit_service.record_failure(&client_ip);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid or expired session"})),
-            )
-                .into_response()
+            return ApiError::new(ErrorCode::SessionExpired).into_response();
         }
     };
 
@@ -515,11 +406,7 @@ pub async fn recovery(
             .await;
 
         state.rate_limit_service.record_failure(&client_ip);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Session expired, please login again"})),
-        )
-            .into_response();
+        return ApiError::new(ErrorCode::SessionExpired).into_response();
     }
 
     // Get user
@@ -532,11 +419,7 @@ pub async fn recovery(
     let user = match user {
         Some(u) => u,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "User not found"})),
-            )
-                .into_response()
+            return ApiError::user_not_found().into_response();
         }
     };
 
@@ -561,11 +444,7 @@ pub async fn recovery(
         Some(id) => id,
         None => {
             state.rate_limit_service.record_failure(&client_ip);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid recovery code"})),
-            )
-                .into_response()
+            return ApiError::totp_invalid_code().into_response();
         }
     };
 
@@ -593,11 +472,7 @@ pub async fn recovery(
     let token = match state.auth_service.generate_token(user.id) {
         Ok(t) => t,
         Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to generate token"})),
-            )
-                .into_response()
+            return ApiError::internal_error().into_response();
         }
     };
 

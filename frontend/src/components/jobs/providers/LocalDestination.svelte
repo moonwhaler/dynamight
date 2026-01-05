@@ -2,6 +2,7 @@
   import type { LocalDestinationConfig, UsbDrive } from '../../../lib/types';
   import SinglePathSelector from '../SinglePathSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<LocalDestinationConfig>(),
@@ -15,13 +16,13 @@
 <div class="space-y-4">
   <div>
     <label for="usb" class="label">
-      USB Drive (Optional)
+      {m.local_usb_drive()} ({m.common_optional()})
       <HelpTooltip
-        text="Select a USB drive to automatically mount before backup. The drive is identified by its unique UUID, so it will work regardless of which USB port you use."
+        text={m.local_usb_drive_help()}
       />
     </label>
     <select id="usb" bind:value={config.usb_uuid} class="input">
-      <option value={null}>No USB mount</option>
+      <option value={null}>{m.local_no_usb_mount()}</option>
       {#each drives as drive}
         <option value={drive.uuid}>
           {drive.label || drive.name} ({drive.uuid.slice(0, 8)}...) - {drive.size}
@@ -32,9 +33,9 @@
 
   <div>
     <label for="mount" class="label">
-      Mount Point
+      {m.local_mount_point()}
       <HelpTooltip
-        text="The directory path where your backup destination will be accessible. For USB drives, this is where the drive gets mounted."
+        text={m.local_mount_point_help()}
       />
     </label>
     <SinglePathSelector bind:path={config.mount_point} placeholder="/mnt/backup" />
@@ -55,11 +56,11 @@
       </div>
       <div class="flex-1 min-w-0">
         <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          Auto-mount before backup
-          <HelpTooltip text="Automatically mount the selected USB drive before the backup starts." />
+          {m.local_auto_mount()}
+          <HelpTooltip text={m.local_auto_mount_help()} />
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          Mount the USB drive automatically when the job runs.
+          {m.local_auto_mount_desc()}
         </p>
       </div>
     </label>
@@ -77,11 +78,11 @@
       </div>
       <div class="flex-1 min-w-0">
         <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          Auto-unmount after backup
-          <HelpTooltip text="Safely unmount the USB drive after backup completes." />
+          {m.local_auto_unmount()}
+          <HelpTooltip text={m.local_auto_unmount_help()} />
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          Safely unmount the drive when the backup completes.
+          {m.local_auto_unmount_desc()}
         </p>
       </div>
     </label>
@@ -89,12 +90,12 @@
 
   <div>
     <label for="subdir" class="label">
-      Backup Subdirectory
-      <HelpTooltip text="A subfolder within the mount point where backups will be stored." />
+      {m.local_backup_subdir()}
+      <HelpTooltip text={m.local_backup_subdir_help()} />
     </label>
     <input type="text" id="subdir" bind:value={config.backup_subdir} class="input" />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Files will be backed up to: {config.mount_point}/{config.backup_subdir}/
+      {m.local_preview({ path: `${config.mount_point}/${config.backup_subdir}/` })}
     </p>
   </div>
 </div>

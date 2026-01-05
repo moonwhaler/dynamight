@@ -2,6 +2,7 @@
   import { api } from '../../lib/api';
   import type { Credential, CredentialProviderType, CredentialData } from '../../lib/types';
   import { showToast } from '../ui/Toast.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     providerType,
@@ -55,7 +56,7 @@
 
   async function handleSave() {
     if (!credentialName.trim()) {
-      showToast({ message: 'Please enter a credential name', variant: 'error' });
+      showToast({ message: m.credentials_error_name_required(), variant: 'error' });
       return;
     }
 
@@ -67,7 +68,7 @@
       switch (providerType) {
         case 's3':
           if (!accessKeyId || !secretAccessKey) {
-            showToast({ message: 'Please fill in all S3 credential fields', variant: 'error' });
+            showToast({ message: m.credentials_error_s3_incomplete(), variant: 'error' });
             saving = false;
             return;
           }
@@ -81,7 +82,7 @@
         case 'sftp':
           if (usePrivateKey) {
             if (!sftpPrivateKey) {
-              showToast({ message: 'Please provide an SSH private key', variant: 'error' });
+              showToast({ message: m.credentials_error_ssh_key_required(), variant: 'error' });
               saving = false;
               return;
             }
@@ -92,7 +93,7 @@
             };
           } else {
             if (!sftpPassword) {
-              showToast({ message: 'Please provide a password', variant: 'error' });
+              showToast({ message: m.credentials_error_password_required(), variant: 'error' });
               saving = false;
               return;
             }
@@ -105,7 +106,7 @@
 
         case 'webdav':
           if (!webdavUsername || !webdavPassword) {
-            showToast({ message: 'Please fill in all WebDAV credential fields', variant: 'error' });
+            showToast({ message: m.credentials_error_webdav_incomplete(), variant: 'error' });
             saving = false;
             return;
           }
@@ -119,7 +120,7 @@
         case 'onedrive':
         case 'google_drive':
           if (!oauthAccessToken || !oauthRefreshToken) {
-            showToast({ message: 'Please fill in all OAuth credential fields', variant: 'error' });
+            showToast({ message: m.credentials_error_oauth_incomplete(), variant: 'error' });
             saving = false;
             return;
           }
@@ -132,7 +133,7 @@
           break;
 
         default:
-          showToast({ message: 'Unsupported provider type', variant: 'error' });
+          showToast({ message: m.credentials_error_unsupported_provider(), variant: 'error' });
           saving = false;
           return;
       }
@@ -143,14 +144,14 @@
         data,
       });
 
-      showToast({ message: 'Credential saved successfully', variant: 'success' });
+      showToast({ message: m.credentials_saved(), variant: 'success' });
       selected = credential.id;
       showAddModal = false;
       resetForm();
       onCredentialsChange();
     } catch (e) {
       showToast({
-        message: e instanceof Error ? e.message : 'Failed to save credential',
+        message: e instanceof Error ? e.message : m.credentials_save_failed(),
         variant: 'error',
       });
     } finally {
@@ -180,12 +181,12 @@
 
 <div class="space-y-2">
   <label for="credential-select" class="label">
-    {getProviderLabel(providerType)} Credentials
+    {m.credentials_provider_label({ provider: getProviderLabel(providerType) })}
   </label>
 
   <div class="flex gap-2">
     <select id="credential-select" bind:value={selected} class="input flex-1">
-      <option value={null}>Select credentials...</option>
+      <option value={null}>{m.credentials_select_placeholder()}</option>
       {#each filteredCredentials as cred}
         <option value={cred.id}>{cred.name}</option>
       {/each}
@@ -196,13 +197,13 @@
       class="btn btn-secondary whitespace-nowrap"
       onclick={() => (showAddModal = true)}
     >
-      + Add
+      + {m.common_add()}
     </button>
   </div>
 
   {#if filteredCredentials.length === 0}
     <p class="text-sm text-gray-500 dark:text-gray-400">
-      No {getProviderLabel(providerType)} credentials configured yet.
+      {m.credentials_none_configured({ provider: getProviderLabel(providerType) })}
     </p>
   {/if}
 </div>
@@ -220,25 +221,25 @@
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md">
       <div class="p-6 border-b border-gray-200 dark:border-gray-700">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-          Add {getProviderLabel(providerType)} Credentials
+          {m.credentials_add_title({ provider: getProviderLabel(providerType) })}
         </h3>
       </div>
 
       <div class="p-6 space-y-4">
         <div>
-          <label for="cred-name" class="label">Credential Name</label>
+          <label for="cred-name" class="label">{m.credentials_name_label()}</label>
           <input
             type="text"
             id="cred-name"
             bind:value={credentialName}
-            placeholder="My {getProviderLabel(providerType)} Backup"
+            placeholder={m.credentials_name_placeholder_dynamic({ provider: getProviderLabel(providerType) })}
             class="input"
           />
         </div>
 
         {#if providerType === 's3'}
           <div>
-            <label for="access-key" class="label">Access Key ID</label>
+            <label for="access-key" class="label">{m.credentials_access_key()}</label>
             <input
               type="text"
               id="access-key"
@@ -248,7 +249,7 @@
             />
           </div>
           <div>
-            <label for="secret-key" class="label">Secret Access Key</label>
+            <label for="secret-key" class="label">{m.credentials_secret_key()}</label>
             <input
               type="password"
               id="secret-key"
@@ -267,7 +268,7 @@
                 onchange={() => (usePrivateKey = false)}
                 class="text-primary-600"
               />
-              <span class="text-sm text-gray-700 dark:text-gray-300">Password</span>
+              <span class="text-sm text-gray-700 dark:text-gray-300">{m.credentials_password()}</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -277,18 +278,18 @@
                 onchange={() => (usePrivateKey = true)}
                 class="text-primary-600"
               />
-              <span class="text-sm text-gray-700 dark:text-gray-300">SSH Key</span>
+              <span class="text-sm text-gray-700 dark:text-gray-300">{m.credentials_ssh_key_label()}</span>
             </label>
           </div>
 
           {#if usePrivateKey}
             <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg mb-4">
               <p class="text-sm text-blue-800 dark:text-blue-300">
-                <strong>Setup:</strong> Add your public key to <code class="bg-blue-100 dark:bg-blue-800 px-1 rounded">~/.ssh/authorized_keys</code> on the server, then paste your private key below.
+                <strong>{m.credentials_ssh_setup_label()}</strong> {m.credentials_ssh_setup_info({ path: '~/.ssh/authorized_keys' })}
               </p>
             </div>
             <div>
-              <label for="private-key" class="label">Private Key (PEM format)</label>
+              <label for="private-key" class="label">{m.credentials_private_key_pem()}</label>
               <textarea
                 id="private-key"
                 bind:value={sftpPrivateKey}
@@ -298,45 +299,45 @@
               ></textarea>
             </div>
             <div>
-              <label for="passphrase" class="label">Passphrase (optional)</label>
+              <label for="passphrase" class="label">{m.credentials_passphrase_optional()}</label>
               <input
                 type="password"
                 id="passphrase"
                 bind:value={sftpPassphrase}
-                placeholder="Key passphrase"
+                placeholder={m.credentials_passphrase_placeholder()}
                 class="input"
               />
             </div>
           {:else}
             <div>
-              <label for="sftp-password" class="label">Password</label>
+              <label for="sftp-password" class="label">{m.credentials_password()}</label>
               <input
                 type="password"
                 id="sftp-password"
                 bind:value={sftpPassword}
-                placeholder="SSH password"
+                placeholder={m.credentials_ssh_password_placeholder()}
                 class="input"
               />
             </div>
           {/if}
         {:else if providerType === 'webdav'}
           <div>
-            <label for="webdav-user" class="label">Username</label>
+            <label for="webdav-user" class="label">{m.credentials_username()}</label>
             <input
               type="text"
               id="webdav-user"
               bind:value={webdavUsername}
-              placeholder="username"
+              placeholder={m.credentials_username_placeholder()}
               class="input"
             />
           </div>
           <div>
-            <label for="webdav-pass" class="label">Password</label>
+            <label for="webdav-pass" class="label">{m.credentials_password()}</label>
             <input
               type="password"
               id="webdav-pass"
               bind:value={webdavPassword}
-              placeholder="password"
+              placeholder={m.credentials_password_placeholder()}
               class="input"
             />
           </div>
@@ -344,16 +345,14 @@
           <div class="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg mb-4">
             <p class="text-sm text-amber-800 dark:text-amber-300">
               {#if providerType === 'onedrive'}
-                To get OAuth tokens, you'll need to register an app in the Azure Portal
-                and complete the OAuth flow to obtain access and refresh tokens.
+                {m.credentials_oauth_onedrive_help()}
               {:else}
-                To get OAuth tokens, you'll need to set up OAuth credentials in the
-                Google Cloud Console and complete the OAuth flow.
+                {m.credentials_oauth_google_help()}
               {/if}
             </p>
           </div>
           <div>
-            <label for="access-token" class="label">Access Token</label>
+            <label for="access-token" class="label">{m.credentials_access_token()}</label>
             <textarea
               id="access-token"
               bind:value={oauthAccessToken}
@@ -363,7 +362,7 @@
             ></textarea>
           </div>
           <div>
-            <label for="refresh-token" class="label">Refresh Token</label>
+            <label for="refresh-token" class="label">{m.credentials_refresh_token()}</label>
             <textarea
               id="refresh-token"
               bind:value={oauthRefreshToken}
@@ -372,7 +371,7 @@
               class="input font-mono text-xs"
             ></textarea>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              The refresh token is used to automatically renew access tokens when they expire.
+              {m.credentials_refresh_token_help()}
             </p>
           </div>
         {/if}
@@ -387,10 +386,10 @@
             resetForm();
           }}
         >
-          Cancel
+          {m.common_cancel()}
         </button>
         <button type="button" class="btn btn-primary" disabled={saving} onclick={handleSave}>
-          {saving ? 'Saving...' : 'Save Credentials'}
+          {saving ? m.credentials_saving() : m.credentials_save()}
         </button>
       </div>
     </div>

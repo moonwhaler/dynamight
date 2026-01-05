@@ -2,6 +2,7 @@
   import type { S3DestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<S3DestinationConfig>(),
@@ -24,17 +25,17 @@
     { value: 'ap-southeast-1', label: 'Asia Pacific (Singapore)' },
     { value: 'ap-southeast-2', label: 'Asia Pacific (Sydney)' },
     { value: 'ap-northeast-1', label: 'Asia Pacific (Tokyo)' },
-    { value: 'custom', label: 'Custom Endpoint' },
+    { value: 'custom', labelKey: () => m.s3_region_custom() },
   ];
 
   const storageClasses = [
-    { value: '', label: 'Default' },
-    { value: 'STANDARD', label: 'Standard' },
-    { value: 'STANDARD_IA', label: 'Standard-IA (Infrequent Access)' },
-    { value: 'ONEZONE_IA', label: 'One Zone-IA' },
-    { value: 'GLACIER', label: 'Glacier' },
-    { value: 'GLACIER_IR', label: 'Glacier Instant Retrieval' },
-    { value: 'DEEP_ARCHIVE', label: 'Glacier Deep Archive' },
+    { value: '', labelKey: () => m.s3_storage_class_default() },
+    { value: 'STANDARD', labelKey: () => m.s3_storage_class_standard() },
+    { value: 'STANDARD_IA', labelKey: () => m.s3_storage_class_standard_ia() },
+    { value: 'ONEZONE_IA', labelKey: () => m.s3_storage_class_onezone_ia() },
+    { value: 'GLACIER', labelKey: () => m.s3_storage_class_glacier() },
+    { value: 'GLACIER_IR', labelKey: () => m.s3_storage_class_glacier_ir() },
+    { value: 'DEEP_ARCHIVE', labelKey: () => m.s3_storage_class_deep_archive() },
   ];
 
   let isCustomEndpoint = $derived(config.region === 'custom' || !!config.endpoint);
@@ -49,26 +50,26 @@
 
   <div>
     <label for="bucket" class="label">
-      Bucket Name
-      <HelpTooltip text="The name of your S3 bucket where backups will be stored." />
+      {m.s3_bucket()}
+      <HelpTooltip text={m.s3_bucket_help()} />
     </label>
     <input
       type="text"
       id="bucket"
       bind:value={config.bucket}
-      placeholder="my-backup-bucket"
+      placeholder={m.s3_bucket_placeholder()}
       class="input"
     />
   </div>
 
   <div>
     <label for="region" class="label">
-      Region
-      <HelpTooltip text="The AWS region where your bucket is located. Select 'Custom Endpoint' for S3-compatible services like MinIO or Backblaze B2." />
+      {m.s3_region()}
+      <HelpTooltip text={m.s3_region_help()} />
     </label>
     <select id="region" bind:value={config.region} class="input">
       {#each regions as region}
-        <option value={region.value}>{region.label}</option>
+        <option value={region.value}>{region.labelKey ? region.labelKey() : region.label}</option>
       {/each}
     </select>
   </div>
@@ -76,47 +77,47 @@
   {#if isCustomEndpoint}
     <div>
       <label for="endpoint" class="label">
-        Custom Endpoint URL
-        <HelpTooltip text="The URL for S3-compatible services like MinIO, Backblaze B2, or Wasabi." />
+        {m.s3_custom_endpoint_url()}
+        <HelpTooltip text={m.s3_custom_endpoint_help()} />
       </label>
       <input
         type="url"
         id="endpoint"
         bind:value={config.endpoint}
-        placeholder="https://s3.example.com"
+        placeholder={m.s3_custom_endpoint_placeholder()}
         class="input"
       />
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-        For MinIO, Backblaze B2, Wasabi, or other S3-compatible services.
+        {m.s3_custom_endpoint_note()}
       </p>
     </div>
   {/if}
 
   <div>
     <label for="prefix" class="label">
-      Path Prefix
-      <HelpTooltip text="A prefix (folder path) within the bucket where backups will be stored." />
+      {m.s3_path_prefix()}
+      <HelpTooltip text={m.s3_path_prefix_help()} />
     </label>
     <input
       type="text"
       id="prefix"
       bind:value={config.prefix}
-      placeholder="backups/"
+      placeholder={m.s3_path_prefix_placeholder()}
       class="input"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Files will be stored at: s3://{config.bucket}/{config.prefix}
+      {m.s3_preview({ bucket: config.bucket || '', prefix: config.prefix || '' })}
     </p>
   </div>
 
   <div>
     <label for="storage-class" class="label">
-      Storage Class
-      <HelpTooltip text="The S3 storage class to use. Different classes have different pricing and retrieval times." />
+      {m.s3_storage_class()}
+      <HelpTooltip text={m.s3_storage_class_help()} />
     </label>
     <select id="storage-class" bind:value={config.storage_class} class="input">
       {#each storageClasses as sc}
-        <option value={sc.value || null}>{sc.label}</option>
+        <option value={sc.value || null}>{sc.labelKey()}</option>
       {/each}
     </select>
   </div>

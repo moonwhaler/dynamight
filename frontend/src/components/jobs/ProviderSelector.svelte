@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { DestinationType } from '../../lib/types';
+  import * as m from '$lib/paraglide/messages.js';
 
   interface Provider {
     type: DestinationType;
-    name: string;
+    nameKey: () => string;
     icon: string;
-    description: string;
+    descriptionKey: () => string;
     available: boolean;
   }
 
@@ -18,44 +19,44 @@
   const providers: Provider[] = [
     {
       type: 'local',
-      name: 'Local / USB',
+      nameKey: () => m.provider_local_name(),
       icon: 'hard-drive',
-      description: 'Rsync to local or mounted drives',
+      descriptionKey: () => m.provider_local_description(),
       available: true,
     },
     {
       type: 's3',
-      name: 'S3 / Compatible',
+      nameKey: () => m.provider_s3_name(),
       icon: 'cloud',
-      description: 'AWS S3, MinIO, Backblaze B2',
+      descriptionKey: () => m.provider_s3_description(),
       available: true,
     },
     {
       type: 'sftp',
-      name: 'SFTP',
+      nameKey: () => m.provider_sftp_name(),
       icon: 'server',
-      description: 'Sync via SSH/SFTP',
+      descriptionKey: () => m.provider_sftp_description(),
       available: true,
     },
     {
       type: 'webdav',
-      name: 'WebDAV',
+      nameKey: () => m.provider_webdav_name(),
       icon: 'globe',
-      description: 'Nextcloud, ownCloud, etc.',
+      descriptionKey: () => m.provider_webdav_description(),
       available: true,
     },
     {
       type: 'google_drive',
-      name: 'Google Drive',
+      nameKey: () => m.provider_google_drive_name(),
       icon: 'cloud',
-      description: 'Google Drive & Shared Drives',
+      descriptionKey: () => m.provider_google_drive_description(),
       available: true,
     },
     {
       type: 'onedrive',
-      name: 'OneDrive',
+      nameKey: () => m.provider_onedrive_name(),
       icon: 'cloud',
-      description: 'Microsoft OneDrive & SharePoint',
+      descriptionKey: () => m.provider_onedrive_description(),
       available: true,
     },
   ];
@@ -69,7 +70,7 @@
 </script>
 
 <div class="space-y-3">
-  <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Destination Type</h3>
+  <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.provider_section_title()}</h3>
   <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
     {#each providers as provider}
       <button
@@ -131,8 +132,8 @@
 
         <!-- Name and description -->
         <div class="text-center">
-          <span class="block text-sm font-medium text-gray-900 dark:text-white">{provider.name}</span>
-          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">{provider.description}</span>
+          <span class="block text-sm font-medium text-gray-900 dark:text-white">{provider.nameKey()}</span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">{provider.descriptionKey()}</span>
         </div>
 
         <!-- Selected indicator -->

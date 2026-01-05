@@ -4,6 +4,7 @@
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
   import { preferencesStore } from '../lib/stores/preferences';
+  import * as m from '$lib/paraglide/messages.js';
   import type {
     Job,
     Schedule,
@@ -82,7 +83,7 @@
       await loadCapabilities(destinationType);
     } catch (e) {
       console.error('[JobDetail] Error:', e);
-      showToast({ message: e instanceof Error ? e.message : 'Failed to load job', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.error_failed_load(), variant: 'error' });
     } finally {
       loading = false;
     }
@@ -145,23 +146,22 @@
 
     // Validate at least one source directory is selected
     if (sourceDirs.length === 0) {
-      showToast({ message: 'At least one source directory must be selected', variant: 'error' });
+      showToast({ message: m.job_validation_source_required(), variant: 'error' });
       return;
     }
 
     // Validate credentials for providers that require them
     if (destinationType !== 'local' && !credentialId) {
-      showToast({ message: 'Please select credentials for this provider', variant: 'error' });
+      showToast({ message: m.job_validation_credentials_required(), variant: 'error' });
       return;
     }
 
     // Warn about Mirror Mode
     if (syncOptions.delete_extraneous) {
       const confirmed = await confirm({
-        title: 'Mirror Mode Enabled',
-        message:
-          'Mirror Mode will delete files from the backup destination that no longer exist in the source. This can result in permanent data loss if files are accidentally deleted from the source. Are you sure you want to continue?',
-        confirmText: 'Yes, enable Mirror Mode',
+        title: m.job_confirm_mirror_title(),
+        message: m.job_confirm_mirror_message(),
+        confirmText: m.job_confirm_mirror_button(),
         variant: 'danger',
       });
       if (!confirmed) return;
@@ -205,16 +205,16 @@
       if (isNew) {
         const job = await api.jobs.create(jobData);
         jobsStore.addJob(job);
-        showToast({ message: 'Job created successfully', variant: 'success' });
+        showToast({ message: m.job_toast_created(), variant: 'success' });
       } else {
         const job = await api.jobs.update(parseInt(params.id!), jobData);
         jobsStore.updateJob(job);
-        showToast({ message: 'Job saved successfully', variant: 'success' });
+        showToast({ message: m.job_toast_saved(), variant: 'success' });
       }
       push('/jobs');
     } catch (e) {
       console.error('[JobDetail] Submit error:', e);
-      showToast({ message: e instanceof Error ? e.message : 'Failed to save job', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.job_error_save(), variant: 'error' });
     } finally {
       saving = false;
     }
@@ -222,9 +222,9 @@
 
   async function handleDelete() {
     const confirmed = await confirm({
-      title: 'Delete Job',
-      message: `Are you sure you want to delete "${name}"? This action cannot be undone.`,
-      confirmText: 'Delete',
+      title: m.job_confirm_delete_title(),
+      message: m.job_confirm_delete_message({ name }),
+      confirmText: m.common_delete(),
       variant: 'danger',
     });
     if (!confirmed) return;
@@ -234,7 +234,7 @@
       jobsStore.removeJob(parseInt(params.id!));
       push('/jobs');
     } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : 'Failed to delete job', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.job_error_delete(), variant: 'error' });
     }
   }
 
@@ -247,7 +247,7 @@
         activeRunId = result.runId;
       }
     } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : 'Failed to start job', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.job_error_start(), variant: 'error' });
     } finally {
       running = false;
     }
@@ -265,7 +265,7 @@
       jobsStore.addJob(clonedJob);
       push(`/jobs/${clonedJob.id}`);
     } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : 'Failed to clone job', variant: 'error' });
+      showToast({ message: e instanceof Error ? e.message : m.job_error_clone(), variant: 'error' });
     } finally {
       cloning = false;
     }
@@ -275,17 +275,17 @@
 <div class="max-w-4xl mx-auto space-y-6">
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
-      {isNew ? 'New Backup Job' : 'Edit Backup Job'}
+      {isNew ? m.jobs_title_new() : m.jobs_title_edit()}
     </h1>
     {#if !isNew}
       <div class="flex gap-2">
         <button onclick={handleRun} disabled={running} class="btn btn-secondary flex-1 sm:flex-none">
-          {running ? 'Starting...' : 'Run Now'}
+          {running ? m.job_btn_starting() : m.job_btn_run_now()}
         </button>
         <button onclick={handleClone} disabled={cloning} class="btn btn-secondary flex-1 sm:flex-none">
-          {cloning ? 'Cloning...' : 'Clone'}
+          {cloning ? m.job_btn_cloning() : m.common_clone()}
         </button>
-        <button onclick={handleDelete} class="btn btn-danger flex-1 sm:flex-none">Delete</button>
+        <button onclick={handleDelete} class="btn btn-danger flex-1 sm:flex-none">{m.common_delete()}</button>
       </div>
     {/if}
   </div>
@@ -319,10 +319,10 @@
         </div>
         <div>
           <div class="font-medium text-gray-900 dark:text-white">
-            {enabled ? 'Job Enabled' : 'Job Disabled'}
+            {enabled ? m.job_status_enabled() : m.job_status_disabled()}
           </div>
           <p class="text-sm text-gray-500 dark:text-gray-400">
-            {enabled ? 'This job will run on schedule' : 'Scheduled runs are paused'}
+            {enabled ? m.job_status_enabled_desc() : m.job_status_disabled_desc()}
           </p>
         </div>
       </div>
@@ -336,15 +336,15 @@
     <form onsubmit={handleSubmit} class="space-y-6">
       <!-- Basic Info -->
       <div class="card p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Basic Information</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{m.job_section_basic()}</h2>
 
         <div>
-          <label for="name" class="label">Job Name</label>
+          <label for="name" class="label">{m.job_label_name()}</label>
           <input type="text" id="name" bind:value={name} required class="input" />
         </div>
 
         <div>
-          <label for="description" class="label">Description</label>
+          <label for="description" class="label">{m.job_label_description()}</label>
           <textarea id="description" bind:value={description} rows="2" class="input"></textarea>
         </div>
       </div>
@@ -358,15 +358,19 @@
       <div class="card p-6 space-y-4">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
           {#if destinationType === 'local'}
-            Mount Configuration
+            {m.provider_config_local()}
           {:else if destinationType === 's3'}
-            S3 Configuration
+            {m.provider_config_s3()}
           {:else if destinationType === 'sftp'}
-            SFTP Configuration
+            {m.provider_config_sftp()}
           {:else if destinationType === 'webdav'}
-            WebDAV Configuration
+            {m.provider_config_webdav()}
+          {:else if destinationType === 'google_drive'}
+            {m.provider_config_google_drive()}
+          {:else if destinationType === 'onedrive'}
+            {m.provider_config_onedrive()}
           {:else}
-            Destination Configuration
+            {m.provider_config_generic()}
           {/if}
         </h2>
 
@@ -404,7 +408,7 @@
           />
         {:else}
           <p class="text-gray-500 dark:text-gray-400">
-            This destination type is not yet supported.
+            {m.job_destination_not_supported()}
           </p>
         {/if}
       </div>
@@ -412,9 +416,9 @@
       <!-- Source Directories -->
       <div class="card p-6 space-y-4">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-          Source Directories
+          {m.job_section_sources()}
           <HelpTooltip
-            text="The folders on your system that you want to back up. You can add multiple directories, and each will be synced to a matching subfolder in the destination."
+            text={m.job_sources_help()}
           />
         </h2>
         <PathSelector bind:paths={sourceDirs} />
@@ -434,9 +438,9 @@
 
       <!-- Actions -->
       <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
-        <a href="#/jobs" class="btn btn-secondary text-center">Cancel</a>
+        <a href="#/jobs" class="btn btn-secondary text-center">{m.common_cancel()}</a>
         <button type="submit" disabled={saving} class="btn btn-primary">
-          {saving ? (isNew ? 'Adding...' : 'Saving...') : isNew ? 'Add Job' : 'Save Changes'}
+          {saving ? (isNew ? m.job_btn_adding() : m.job_btn_saving()) : isNew ? m.job_btn_add() : m.job_btn_save()}
         </button>
       </div>
     </form>

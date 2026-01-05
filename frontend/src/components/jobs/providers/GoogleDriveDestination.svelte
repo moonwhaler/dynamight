@@ -2,6 +2,7 @@
   import type { GoogleDriveDestinationConfig, Credential } from '../../../lib/types';
   import CredentialSelector from '../CredentialSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     config = $bindable<GoogleDriveDestinationConfig>(),
@@ -23,56 +24,56 @@
 
   <div>
     <label for="folder-id" class="label">
-      Folder ID
-      <HelpTooltip text="The ID of the Google Drive folder where backups will be stored. Leave empty to use the root of your Drive. You can find the folder ID in the URL when viewing the folder in Google Drive." />
+      {m.google_drive_folder_id()}
+      <HelpTooltip text={m.google_drive_folder_id_help()} />
     </label>
     <input
       type="text"
       id="folder-id"
       bind:value={config.folder_id}
-      placeholder="Leave empty for root folder"
+      placeholder={m.google_drive_folder_id_placeholder_text()}
       class="input font-mono"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
       {#if config.folder_id}
-        Files will be synced to folder: {config.folder_id}
+        {m.google_drive_preview_folder({ id: config.folder_id })}
       {:else}
-        Files will be synced to the root of your Google Drive
+        {m.google_drive_preview_root()}
       {/if}
     </p>
   </div>
 
   <div>
     <label for="shared-drive-id" class="label">
-      Shared Drive ID (Optional)
-      <HelpTooltip text="Leave empty to use your personal 'My Drive'. Specify a Shared Drive ID to sync to a team drive." />
+      {m.google_drive_shared_drive()} ({m.common_optional()})
+      <HelpTooltip text={m.google_drive_shared_drive_help()} />
     </label>
     <input
       type="text"
       id="shared-drive-id"
       bind:value={config.shared_drive_id}
-      placeholder="Leave empty for My Drive"
+      placeholder={m.google_drive_shared_drive_placeholder()}
       class="input font-mono"
     />
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
       {#if config.shared_drive_id}
-        Using Shared Drive: {config.shared_drive_id}
+        {m.google_drive_using_shared_drive({ id: config.shared_drive_id })}
       {:else}
-        Using your personal My Drive
+        {m.google_drive_using_my_drive()}
       {/if}
     </p>
   </div>
 
   <div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-    <h3 class="font-medium text-blue-800 dark:text-blue-300 mb-2">Google Drive Setup</h3>
+    <h3 class="font-medium text-blue-800 dark:text-blue-300 mb-2">{m.google_drive_setup_title()}</h3>
     <p class="text-sm text-blue-700 dark:text-blue-400 mb-2">
-      Google Drive uses OAuth authentication. You'll need to:
+      {m.google_drive_setup_desc()}
     </p>
     <ol class="text-sm text-blue-700 dark:text-blue-400 list-decimal list-inside space-y-1">
-      <li>Create a project in the Google Cloud Console</li>
-      <li>Enable the Google Drive API</li>
-      <li>Create OAuth 2.0 credentials</li>
-      <li>Complete the OAuth flow to obtain access and refresh tokens</li>
+      <li>{m.google_drive_setup_step1()}</li>
+      <li>{m.google_drive_setup_step2()}</li>
+      <li>{m.google_drive_setup_step3()}</li>
+      <li>{m.google_drive_setup_step4()}</li>
     </ol>
   </div>
 </div>

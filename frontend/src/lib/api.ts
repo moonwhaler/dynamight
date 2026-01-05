@@ -20,17 +20,93 @@ import type {
   ProviderCapabilities,
   CredentialProviderType,
 } from './types';
+import * as m from '$lib/paraglide/messages.js';
 
 const API_BASE = '/api';
+
+// Error response from the backend with error code
+interface ApiErrorResponse {
+  code: string;
+  params?: Record<string, string | number>;
+}
+
+// Legacy error response format
+interface LegacyErrorResponse {
+  error: string;
+}
 
 class ApiError extends Error {
   constructor(
     public status: number,
-    message: string
+    message: string,
+    public code?: string,
+    public params?: Record<string, string | number>
   ) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+/**
+ * Translate an error code from the backend to a localized message
+ */
+function translateErrorCode(code: string, params?: Record<string, string | number>): string {
+  // Map error codes to translation functions
+  const translations: Record<string, () => string> = {
+    // Authentication errors
+    INVALID_CREDENTIALS: () => m.error_invalid_credentials(),
+    NOT_AUTHENTICATED: () => m.error_not_authenticated(),
+    SESSION_EXPIRED: () => m.error_session_expired(),
+    TOKEN_INVALID: () => m.error_token_invalid(),
+    USER_NOT_FOUND: () => m.error_user_not_found(),
+    RATE_LIMITED: () => m.error_rate_limited({ seconds: params?.seconds ?? 60 }),
+
+    // TOTP errors
+    TOTP_INVALID_CODE: () => m.error_totp_invalid_code(),
+    TOTP_NOT_ENABLED: () => m.error_totp_not_enabled(),
+
+    // Password errors
+    PASSWORD_TOO_SHORT: () => m.error_password_too_short(),
+    PASSWORD_INCORRECT: () => m.error_password_incorrect(),
+    USERNAME_TOO_SHORT: () => m.error_field_required({ field: 'Username' }),
+
+    // Setup errors
+    SETUP_ALREADY_DONE: () => m.error_setup_already_done(),
+
+    // Job errors
+    JOB_NOT_FOUND: () => m.error_job_not_found(),
+    JOB_ALREADY_RUNNING: () => m.error_job_already_running(),
+    JOB_NAME_EXISTS: () => m.error_job_name_exists(),
+
+    // Schedule errors
+    SCHEDULE_NOT_FOUND: () => m.error_schedule_not_found(),
+    INVALID_CRON: () => m.error_invalid_cron(),
+
+    // Credential errors
+    CREDENTIAL_NOT_FOUND: () => m.error_credential_not_found(),
+    CREDENTIAL_IN_USE: () => m.error_credential_in_use(),
+
+    // Validation errors
+    VALIDATION_FIELD_REQUIRED: () => m.error_field_required({ field: String(params?.field ?? 'Field') }),
+    VALIDATION_FIELD_TOO_LONG: () => m.error_field_too_long({ field: String(params?.field ?? 'Field'), max: params?.max ?? 255 }),
+    SOURCE_DIRS_REQUIRED: () => m.error_source_dirs_required(),
+    CREDENTIALS_REQUIRED: () => m.job_validation_credentials_required(),
+
+    // System errors
+    PATH_NOT_ALLOWED: () => m.error_path_not_allowed(),
+
+    // Run errors
+    RUN_NOT_FOUND: () => m.error_generic(),
+  };
+
+  const translator = translations[code];
+  if (translator) {
+    return translator();
+  }
+
+  // Fallback for unknown codes
+  console.warn(`Unknown error code: ${code}`);
+  return m.error_generic();
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -48,14 +124,29 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       window.location.hash = '#/login';
     }
     const text = await response.text();
-    let errorMessage = 'Request failed';
+    let errorMessage: string = String(m.error_generic());
+    let errorCode: string | undefined;
+    let errorParams: Record<string, string | number> | undefined;
+
     try {
       const errorData = JSON.parse(text);
-      errorMessage = errorData.error || errorMessage;
+
+      // Check if it's the new error code format
+      if ('code' in errorData) {
+        const apiError = errorData as ApiErrorResponse;
+        errorCode = apiError.code;
+        errorParams = apiError.params;
+        errorMessage = String(translateErrorCode(apiError.code, apiError.params));
+      }
+      // Legacy format with "error" string
+      else if ('error' in errorData) {
+        const legacyError = errorData as LegacyErrorResponse;
+        errorMessage = String(legacyError.error);
+      }
     } catch {
       console.error(`API Error [${response.status}] ${endpoint}:`, text || '(empty response)');
     }
-    throw new ApiError(response.status, errorMessage);
+    throw new ApiError(response.status, errorMessage, errorCode, errorParams);
   }
 
   const text = await response.text();

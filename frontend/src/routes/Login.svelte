@@ -1,6 +1,7 @@
 <script lang="ts">
   import { authStore } from '../lib/stores/auth';
   import TotpVerification from '../components/TotpVerification.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let username = $state('');
   let password = $state('');
@@ -32,8 +33,8 @@
             />
           </svg>
         </div>
-        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">Dynamight</h2>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Sign in to manage your backups</p>
+        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">{m.auth_app_name()}</h2>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{m.auth_sign_in_description()}</p>
       </div>
 
       <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
@@ -45,7 +46,7 @@
 
         <div class="space-y-4">
           <div>
-            <label for="username" class="label">Username</label>
+            <label for="username" class="label">{m.auth_username()}</label>
             <input
               id="username"
               name="username"
@@ -53,12 +54,12 @@
               required
               bind:value={username}
               class="input"
-              placeholder="admin"
+              placeholder={m.auth_username_placeholder()}
             />
           </div>
 
           <div>
-            <label for="password" class="label">Password</label>
+            <label for="password" class="label">{m.auth_password()}</label>
             <input
               id="password"
               name="password"
@@ -66,7 +67,7 @@
               required
               bind:value={password}
               class="input"
-              placeholder="Enter your password"
+              placeholder={m.auth_password_placeholder()}
             />
           </div>
         </div>
@@ -90,10 +91,10 @@
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 />
               </svg>
-              Signing in...
+              {m.auth_signing_in()}
             </span>
           {:else}
-            Sign in
+            {m.auth_sign_in()}
           {/if}
         </button>
       </form>
