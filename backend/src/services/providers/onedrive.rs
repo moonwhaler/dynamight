@@ -134,8 +134,8 @@ impl SyncProvider for OneDriveProvider {
         };
 
         // Test connection by getting drive info
-        let test_url = if drive_id.is_some() {
-            format!("{}/drives/{}", GRAPH_API_BASE, drive_id.as_ref().unwrap())
+        let test_url = if let Some(ref id) = drive_id {
+            format!("{}/drives/{}", GRAPH_API_BASE, id)
         } else {
             format!("{}/me/drive", GRAPH_API_BASE)
         };

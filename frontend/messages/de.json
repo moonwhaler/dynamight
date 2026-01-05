@@ -438,8 +438,11 @@
   "settings_show_log_viewer": "Protokollansicht nach manuellen Ausführungen anzeigen",
   "settings_show_log_viewer_desc": "Öffnet automatisch die Protokollansicht, wenn Sie eine Backup-Aufgabe manuell starten.",
   "settings_log_viewer": "Protokollansicht",
-  "settings_auto_scroll": "Protokolle automatisch scrollen",
-  "settings_auto_scroll_desc": "Automatisch zu den neuesten Einträgen scrollen, wenn Live-Protokolle angezeigt werden.",
+  "settings_auto_show_last_page": "Protokolle automatisch scrollen",
+  "settings_auto_show_last_page_desc": "Automatisch zu neuen Protokolleinträgen scrollen, wenn sie eintreffen.",
+  "settings_refresh_interval": "Aktualisierungsintervall",
+  "settings_refresh_interval_desc": "Wie oft die letzte Seite aktualisiert und angezeigt wird.",
+  "settings_refresh_interval_seconds": "{count} Sekunde(n)",
   "settings_light_mode": "Heller Modus",
   "settings_dark_mode": "Dunkler Modus",
 

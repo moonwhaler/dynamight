@@ -321,18 +321,19 @@
                     <div class="relative flex items-center">
                       <input
                         type="checkbox"
-                        checked={$preferencesStore.autoScrollLogs}
-                        onchange={(e) => preferencesStore.setAutoScrollLogs(e.currentTarget.checked)}
+                        checked={$preferencesStore.autoShowLastPage}
+                        onchange={(e) => preferencesStore.setAutoShowLastPage(e.currentTarget.checked)}
                         class="peer sr-only"
                       />
                       <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
                       <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_auto_scroll()}</div>
-                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_auto_scroll_desc()}</p>
+                      <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_auto_show_last_page()}</div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_auto_show_last_page_desc()}</p>
                     </div>
                   </label>
+
                 </div>
 
                 <!-- Language & Region Section -->

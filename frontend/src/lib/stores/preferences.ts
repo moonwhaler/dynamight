@@ -2,14 +2,16 @@ import { writable } from 'svelte/store';
 
 interface Preferences {
   showLogViewerAfterManualRun: boolean;
-  autoScrollLogs: boolean;
+  autoShowLastPage: boolean;
+  logRefreshInterval: number; // seconds
 }
 
 const STORAGE_KEY = 'dynamight-preferences';
 
 const defaultPreferences: Preferences = {
   showLogViewerAfterManualRun: true,
-  autoScrollLogs: true,
+  autoShowLastPage: true,
+  logRefreshInterval: 2,
 };
 
 function loadPreferences(): Preferences {
@@ -45,9 +47,16 @@ function createPreferencesStore() {
         return updated;
       });
     },
-    setAutoScrollLogs: (value: boolean) => {
+    setAutoShowLastPage: (value: boolean) => {
       update(prefs => {
-        const updated = { ...prefs, autoScrollLogs: value };
+        const updated = { ...prefs, autoShowLastPage: value };
+        savePreferences(updated);
+        return updated;
+      });
+    },
+    setLogRefreshInterval: (value: number) => {
+      update(prefs => {
+        const updated = { ...prefs, logRefreshInterval: value };
         savePreferences(updated);
         return updated;
       });

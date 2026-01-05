@@ -46,10 +46,20 @@
     }
   });
 
-  function connectWebSocket() {
+  async function connectWebSocket() {
+    // Get token for WebSocket authentication
+    let token: string;
+    try {
+      const response = await api.auth.getToken();
+      token = response.token;
+    } catch {
+      console.error('Failed to get token for WebSocket');
+      return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}`);
+    ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}?token=${encodeURIComponent(token)}`);
 
     ws.onmessage = (event) => {
       try {

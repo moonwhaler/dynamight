@@ -147,13 +147,13 @@ pub async fn create_job(
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
     // Validate job name
-    if let Err(_) = validate_display_field(&req.name, "Job name", 255, false) {
+    if validate_display_field(&req.name, "Job name", 255, false).is_err() {
         return ApiError::field_required("name").into_response();
     }
 
     // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if let Err(_) = validate_display_field(desc, "Description", 4096, true) {
+        if validate_display_field(desc, "Description", 4096, true).is_err() {
             return ApiError::field_too_long("description", 4096).into_response();
         }
     }
@@ -270,14 +270,14 @@ pub async fn update_job(
 
     // Validate job name if provided
     if let Some(ref name) = req.name {
-        if let Err(_) = validate_display_field(name, "Job name", 255, false) {
+        if validate_display_field(name, "Job name", 255, false).is_err() {
             return ApiError::field_required("name").into_response();
         }
     }
 
     // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if let Err(_) = validate_display_field(desc, "Description", 4096, true) {
+        if validate_display_field(desc, "Description", 4096, true).is_err() {
             return ApiError::field_too_long("description", 4096).into_response();
         }
     }

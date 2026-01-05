@@ -439,8 +439,11 @@
   "settings_show_log_viewer": "Show log viewer after manual runs",
   "settings_show_log_viewer_desc": "Automatically open the log viewer dialog when you manually start a backup job.",
   "settings_log_viewer": "Log Viewer",
-  "settings_auto_scroll": "Auto-scroll logs",
-  "settings_auto_scroll_desc": "Automatically scroll to the latest entries when viewing live logs.",
+  "settings_auto_show_last_page": "Auto-scroll logs",
+  "settings_auto_show_last_page_desc": "Automatically scroll to show new log entries as they arrive.",
+  "settings_refresh_interval": "Refresh interval",
+  "settings_refresh_interval_desc": "How often to refresh and show the latest page.",
+  "settings_refresh_interval_seconds": "{count} second(s)",
   "settings_light_mode": "Light Mode",
   "settings_dark_mode": "Dark Mode",
 
