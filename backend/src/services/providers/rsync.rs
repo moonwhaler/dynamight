@@ -3,6 +3,10 @@
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
 use crate::models::{CredentialData, DestinationConfig, LogLevel};
 use async_trait::async_trait;
+#[cfg(unix)]
+use nix::sys::signal::{self, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -298,6 +302,9 @@ impl SyncProvider for RsyncProvider {
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
 
+            // Track if we need to kill the process
+            let mut cancelled = false;
+
             // Stream stdout
             if let Some(stdout) = stdout {
                 let reader = BufReader::new(stdout);
@@ -314,6 +321,7 @@ impl SyncProvider for RsyncProvider {
                         }
                         _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                             if ctx.check_cancelled() {
+                                cancelled = true;
                                 break;
                             }
                             continue;
@@ -321,6 +329,7 @@ impl SyncProvider for RsyncProvider {
                     };
 
                     if ctx.check_cancelled() {
+                        cancelled = true;
                         break;
                     }
 
@@ -345,8 +354,8 @@ impl SyncProvider for RsyncProvider {
                 }
             }
 
-            // Stream stderr
-            if !ctx.check_cancelled() {
+            // Stream stderr (only if not cancelled)
+            if !cancelled && !ctx.check_cancelled() {
                 if let Some(stderr) = stderr {
                     let reader = BufReader::new(stderr);
                     let mut lines = reader.lines();
@@ -362,6 +371,7 @@ impl SyncProvider for RsyncProvider {
                             }
                             _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                                 if ctx.check_cancelled() {
+                                    cancelled = true;
                                     break;
                                 }
                                 continue;
@@ -369,12 +379,27 @@ impl SyncProvider for RsyncProvider {
                         };
 
                         if ctx.check_cancelled() {
+                            cancelled = true;
                             break;
                         }
 
                         ctx.log_warning(&line, "rsync").await;
                     }
                 }
+            } else {
+                cancelled = true;
+            }
+
+            // Kill the process if cancelled
+            if cancelled || ctx.check_cancelled() {
+                ctx.log_warning(&format!("Killing rsync process (PID {})", pid), "system").await;
+                // Kill the entire process group (negative PID sends to group)
+                #[cfg(unix)]
+                if pid > 0 {
+                    let _ = signal::killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                }
+                // Also try to kill via tokio
+                let _ = child.kill().await;
             }
 
             // Wait for process
