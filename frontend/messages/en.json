@@ -178,6 +178,7 @@
   "job_card_tooltip_enable": "Enable job to run",
   "job_card_tooltip_start": "Start backup job",
   "job_card_tooltip_stop": "Stop running job",
+  "job_card_tooltip_view_logs": "View live logs",
   "job_card_click_disable": "Click to disable",
   "job_card_click_enable": "Click to enable",
   "job_btn_stopping": "Stopping...",
