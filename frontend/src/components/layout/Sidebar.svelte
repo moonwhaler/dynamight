@@ -110,4 +110,23 @@
       </a>
     {/each}
   </nav>
+
+  <!-- About link at bottom - more neutral styling -->
+  <div class="pt-4 mt-4 border-t border-gray-200 dark:border-gray-700">
+    <a
+      href="#/about"
+      onclick={handleNavClick}
+      class="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors {isActive(
+        '/about',
+        $location
+      )
+        ? 'bg-gray-100 text-gray-700 dark:bg-gray-700/50 dark:text-gray-300'
+        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-400 dark:hover:bg-gray-700/30'}"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span class="text-sm">{m.nav_about()}</span>
+    </a>
+  </div>
 </aside>

@@ -9,6 +9,7 @@
   import JobDetail from './routes/JobDetail.svelte';
   import History from './routes/History.svelte';
   import FileBrowser from './routes/FileBrowser.svelte';
+  import About from './routes/About.svelte';
   import Layout from './components/layout/Layout.svelte';
   import ConfirmDialog from './components/ui/ConfirmDialog.svelte';
   import Toast from './components/ui/Toast.svelte';
@@ -20,6 +21,7 @@
     '/jobs/:id': JobDetail,
     '/history': History,
     '/files': FileBrowser,
+    '/about': About,
   };
 
   // Check authentication on load

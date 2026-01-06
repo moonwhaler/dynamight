@@ -543,8 +543,15 @@
   "nav_jobs": "Aufgaben",
   "nav_history": "Verlauf",
   "nav_files": "Dateien",
+  "nav_about": "Info",
   "nav_theme_light": "Heller Modus",
   "nav_theme_dark": "Dunkler Modus",
+
+  "about_tagline": "Ein selbst gehostetes Backup-Verwaltungssystem. Planen, synchronisieren und sichern Sie Ihre Daten auf lokalen Laufwerken, Cloud-Speicher und Remote-Servern.",
+  "about_license": "Lizenz:",
+  "about_author": "Autor:",
+  "about_view_on_github": "Auf GitHub ansehen",
+  "about_made_with_love": "Erstellt mit Rust + Svelte",
 
   "filebrowser_title": "Dateibrowser",
   "filebrowser_usb_drives": "USB-Laufwerke",

@@ -551,8 +551,15 @@
   "nav_jobs": "Jobs",
   "nav_history": "History",
   "nav_files": "Files",
+  "nav_about": "About",
   "nav_theme_light": "Light Mode",
   "nav_theme_dark": "Dark Mode",
+
+  "about_tagline": "A self-hosted backup management system. Schedule, sync, and secure your data across local drives, cloud storage, and remote servers.",
+  "about_license": "License:",
+  "about_author": "Author:",
+  "about_view_on_github": "View on GitHub",
+  "about_made_with_love": "Made with Rust + Svelte",
 
   "filebrowser_title": "File Browser",
   "filebrowser_usb_drives": "USB Drives",
