@@ -204,12 +204,13 @@ impl RsyncProvider {
         let _ = Command::new("umount").arg(mount_point).output().await;
     }
 
-    /// Build rsync args for space check (dry-run with stats)
+    /// Build rsync args for space check (dry-run with per-file size output)
     fn build_space_check_args(&self, options: &SyncOptions, fstype: &str) -> Vec<String> {
+        // Use --out-format=%l to output only the file size (bytes) for each file
+        // that would be transferred. This works reliably in dry-run mode unlike --stats.
         let mut args = vec![
             "--dry-run".to_string(),
-            "--stats".to_string(),
-            "-v".to_string(),
+            "--out-format=%l".to_string(),
         ];
 
         // Filesystem-aware options
@@ -257,7 +258,8 @@ impl RsyncProvider {
             .map_err(|_| ProviderError::ConfigError("Failed to parse directory size".to_string()))
     }
 
-    /// Run rsync dry-run and parse transfer size from output
+    /// Run rsync dry-run and sum file sizes from output
+    /// Uses --out-format=%l which outputs file size (bytes) per file to transfer
     async fn get_transfer_size(
         &self,
         source: &str,
@@ -274,20 +276,13 @@ impl RsyncProvider {
         let output = cmd.output().await.map_err(ProviderError::IoError)?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut transfer_size: u64 = 0;
 
-        // Parse "Total transferred file size: X bytes" from rsync stats
-        for line in stdout.lines() {
-            if line.contains("Total transferred file size") {
-                if let Some(size_part) = line.split(':').nth(1) {
-                    if let Some(bytes_str) = size_part.split_whitespace().next() {
-                        if let Ok(bytes) = bytes_str.replace(',', "").parse::<u64>() {
-                            transfer_size = bytes;
-                        }
-                    }
-                }
-            }
-        }
+        // Each line contains a file size in bytes (from --out-format=%l)
+        // Sum all sizes to get total transfer size
+        let transfer_size: u64 = stdout
+            .lines()
+            .filter_map(|line| line.trim().parse::<u64>().ok())
+            .sum();
 
         Ok(transfer_size)
     }
