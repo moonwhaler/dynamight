@@ -197,6 +197,7 @@
             <code class="text-sm text-gray-700 dark:text-gray-200 truncate">{path}</code>
           </div>
           <button
+            type="button"
             onclick={() => removePath(path)}
             class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
             aria-label="Remove path"

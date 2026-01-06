@@ -171,7 +171,7 @@ pub async fn test_connection(
                 providers::ProviderError::HostKeyMismatch { expected, actual } => {
                     (
                         StatusCode::CONFLICT,
-                        format!("SSH host key mismatch! This could indicate a Man-in-the-Middle attack."),
+                        "SSH host key mismatch! This could indicate a Man-in-the-Middle attack.".to_string(),
                         Some(format!("Expected: {}\nReceived: {}\n\nIf you're certain this is legitimate (e.g., the server was reinstalled), update the destination with the new fingerprint.", expected, actual))
                     )
                 }
