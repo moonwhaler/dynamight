@@ -4,6 +4,7 @@ interface Preferences {
   showLogViewerAfterManualRun: boolean;
   autoShowLastPage: boolean;
   logRefreshInterval: number; // seconds
+  confirmKillProcess: boolean;
 }
 
 const STORAGE_KEY = 'dynamight-preferences';
@@ -12,6 +13,7 @@ const defaultPreferences: Preferences = {
   showLogViewerAfterManualRun: true,
   autoShowLastPage: true,
   logRefreshInterval: 2,
+  confirmKillProcess: true,
 };
 
 function loadPreferences(): Preferences {
@@ -57,6 +59,13 @@ function createPreferencesStore() {
     setLogRefreshInterval: (value: number) => {
       update(prefs => {
         const updated = { ...prefs, logRefreshInterval: value };
+        savePreferences(updated);
+        return updated;
+      });
+    },
+    setConfirmKillProcess: (value: boolean) => {
+      update(prefs => {
+        const updated = { ...prefs, confirmKillProcess: value };
         savePreferences(updated);
         return updated;
       });

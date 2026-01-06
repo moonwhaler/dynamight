@@ -465,6 +465,8 @@
   "settings_log_viewer": "Protokollansicht",
   "settings_auto_show_last_page": "Protokolle automatisch scrollen",
   "settings_auto_show_last_page_desc": "Automatisch zu neuen Protokolleinträgen scrollen, wenn sie eintreffen.",
+  "settings_confirm_kill_process": "Vor dem Stoppen bestätigen",
+  "settings_confirm_kill_process_desc": "Bestätigungsdialog anzeigen, bevor ein laufender Backup-Prozess beendet wird.",
   "settings_refresh_interval": "Aktualisierungsintervall",
   "settings_refresh_interval_desc": "Wie oft die letzte Seite aktualisiert und angezeigt wird.",
   "settings_refresh_interval_seconds": "{count} Sekunde(n)",
@@ -590,6 +592,10 @@
   "confirm_dialog_default_title": "Bestätigen",
   "confirm_dialog_default_confirm": "Bestätigen",
   "confirm_dialog_default_cancel": "Abbrechen",
+
+  "kill_confirm_title": "Laufenden Prozess stoppen?",
+  "kill_confirm_message": "Sind Sie sicher, dass Sie das laufende Backup stoppen möchten? Der rsync-Prozess wird sofort beendet.",
+  "kill_confirm_button": "Prozess stoppen",
 
   "path_selector_add": "Verzeichnis hinzufügen",
   "path_selector_browse": "Durchsuchen",

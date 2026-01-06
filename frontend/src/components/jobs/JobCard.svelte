@@ -3,11 +3,13 @@
   import { api } from '../../lib/api';
   import { jobsStore } from '../../lib/stores/jobs';
   import { preferencesStore } from '../../lib/stores/preferences';
+  import { get } from 'svelte/store';
   import RunLogModal from '../logs/RunLogModal.svelte';
   import { showToast } from '../ui/Toast.svelte';
+  import { confirm } from '../ui/ConfirmDialog.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
-  let { job }: { job: Job } = $props();
+  let { job, onStatusChange }: { job: Job; onStatusChange?: () => void } = $props();
   let starting = $state(false);
   let stopping = $state(false);
   let toggling = $state(false);
@@ -60,6 +62,7 @@
     starting = true;
     try {
       const result = await api.jobs.run(job.id);
+      onStatusChange?.();
       if ($preferencesStore.showLogViewerAfterManualRun) {
         activeRunId = result.runId;
       }
@@ -72,11 +75,24 @@
 
   async function handleStop() {
     if (stopping || !isRunning) return;
+
+    // Check if confirmation is required
+    if (get(preferencesStore).confirmKillProcess) {
+      const confirmed = await confirm({
+        title: m.kill_confirm_title(),
+        message: m.kill_confirm_message(),
+        confirmText: m.kill_confirm_button(),
+        variant: 'danger',
+      });
+      if (!confirmed) return;
+    }
+
     stopping = true;
     try {
       await api.jobs.cancel(job.id);
       // Refresh jobs to get updated status
       await jobsStore.refresh();
+      onStatusChange?.();
     } catch {
       // Ignore errors
     } finally {

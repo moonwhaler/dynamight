@@ -473,6 +473,8 @@
   "settings_log_viewer": "Log Viewer",
   "settings_auto_show_last_page": "Auto-scroll logs",
   "settings_auto_show_last_page_desc": "Automatically scroll to show new log entries as they arrive.",
+  "settings_confirm_kill_process": "Confirm before stopping jobs",
+  "settings_confirm_kill_process_desc": "Show a confirmation dialog before killing a running backup process.",
   "settings_refresh_interval": "Refresh interval",
   "settings_refresh_interval_desc": "How often to refresh and show the latest page.",
   "settings_refresh_interval_seconds": "{count} second(s)",
@@ -598,6 +600,10 @@
   "confirm_dialog_default_title": "Confirm",
   "confirm_dialog_default_confirm": "Confirm",
   "confirm_dialog_default_cancel": "Cancel",
+
+  "kill_confirm_title": "Stop Running Process?",
+  "kill_confirm_message": "Are you sure you want to stop the currently running backup? This will terminate the rsync process immediately.",
+  "kill_confirm_button": "Stop Process",
 
   "path_selector_add": "Add Directory",
   "path_selector_browse": "Browse",

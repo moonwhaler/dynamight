@@ -2,8 +2,12 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../../lib/api';
   import { jobsStore } from '../../lib/stores/jobs';
+  import { preferencesStore } from '../../lib/stores/preferences';
+  import { get } from 'svelte/store';
   import type { LogEntry, JobRun } from '../../lib/types';
   import LogViewer from './LogViewer.svelte';
+  import { confirm } from '../ui/ConfirmDialog.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let {
     runId,
@@ -150,6 +154,18 @@
 
   async function handleKill() {
     if (killing) return;
+
+    // Check if confirmation is required
+    if (get(preferencesStore).confirmKillProcess) {
+      const confirmed = await confirm({
+        title: m.kill_confirm_title(),
+        message: m.kill_confirm_message(),
+        confirmText: m.kill_confirm_button(),
+        variant: 'danger',
+      });
+      if (!confirmed) return;
+    }
+
     killing = true;
     try {
       await api.jobs.cancel(jobId);

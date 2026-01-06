@@ -149,7 +149,7 @@
     {:else}
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {#each $jobsStore.jobs as job (job.id)}
-          <JobCard {job} />
+          <JobCard {job} onStatusChange={() => loadRecentRuns(true)} />
         {/each}
       </div>
     {/if}
