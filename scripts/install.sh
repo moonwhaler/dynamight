@@ -149,8 +149,6 @@ After=network.target
 
 [Service]
 Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 Environment=DYNAMIGHT_CONFIG=${CONFIG_DIR}/dynamight.toml
 Environment=RUST_LOG=info,dynamight=debug
@@ -159,17 +157,6 @@ Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
 TimeoutStopSec=30
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-ReadWritePaths=${DATA_DIR} ${LOG_DIR}
-
-# Allow mounting drives (required for backup functionality)
-CapabilityBoundingSet=CAP_SYS_ADMIN
-AmbientCapabilities=CAP_SYS_ADMIN
 
 # Logging
 StandardOutput=journal
