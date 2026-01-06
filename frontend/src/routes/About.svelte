@@ -2,7 +2,7 @@
   import * as m from '$lib/paraglide/messages.js';
 </script>
 
-<div class="min-h-[calc(100vh-8rem)] flex items-center justify-center relative overflow-hidden">
+<div class="-m-4 sm:-m-6 min-h-[calc(100vh-4rem)] flex items-center justify-center relative overflow-hidden">
   <!-- Animated background gradient orbs -->
   <div class="absolute inset-0 overflow-hidden pointer-events-none">
     <div class="absolute -top-40 -right-40 w-96 h-96 bg-gradient-to-br from-primary-500/20 to-cyan-500/20 rounded-full blur-3xl animate-pulse"></div>

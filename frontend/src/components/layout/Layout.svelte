@@ -16,10 +16,10 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col">
+<div class="h-screen flex flex-col overflow-hidden">
   <Navbar onMenuToggle={toggleSidebar} />
 
-  <div class="flex flex-1 relative">
+  <div class="flex flex-1 min-h-0 relative">
     <!-- Mobile backdrop -->
     {#if sidebarOpen}
       <button
@@ -31,7 +31,7 @@
 
     <Sidebar open={sidebarOpen} onClose={closeSidebar} />
 
-    <main class="flex-1 p-4 sm:p-6 overflow-auto w-full">
+    <main class="flex-1 p-4 sm:p-6 overflow-y-auto w-full">
       {@render children()}
     </main>
   </div>

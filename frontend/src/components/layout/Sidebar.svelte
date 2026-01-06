@@ -39,7 +39,7 @@
     w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 p-4
     transform transition-transform duration-200 ease-in-out
     {open ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
-    top-0 md:top-auto h-full md:h-auto
+    top-0 md:top-auto h-full md:h-full md:overflow-y-auto
     flex flex-col
   "
 >
