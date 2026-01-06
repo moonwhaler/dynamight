@@ -9,6 +9,8 @@
   let showSettingsModal = $state(false);
   let showSettingsMenu = $state(false);
   let menuRef = $state<HTMLDivElement | null>(null);
+  let logoLoaded = $state(false);
+  let logoError = $state(false);
 
   async function handleLogout() {
     await authStore.logout();
@@ -52,22 +54,37 @@
         </svg>
       </button>
 
-      <div class="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-        <svg
-          class="w-5 h-5 text-white"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-          />
-        </svg>
-      </div>
-      <h1 class="text-xl font-bold text-gray-900 dark:text-white">{m.auth_app_name()}</h1>
+      <!-- Custom logo (if logo.png exists in public folder) -->
+      {#if !logoError}
+        <img
+          src="/logo.png"
+          alt={m.auth_app_name()}
+          class="h-8 w-auto object-contain"
+          class:hidden={!logoLoaded}
+          onload={() => logoLoaded = true}
+          onerror={() => logoError = true}
+        />
+      {/if}
+
+      <!-- Fallback: icon + text (shown while loading or if logo doesn't exist) -->
+      {#if !logoLoaded}
+        <div class="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
+          <svg
+            class="w-5 h-5 text-white"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+            />
+          </svg>
+        </div>
+        <h1 class="text-xl font-bold text-gray-900 dark:text-white">{m.auth_app_name()}</h1>
+      {/if}
     </div>
 
     <div class="flex items-center gap-2 sm:gap-3">
