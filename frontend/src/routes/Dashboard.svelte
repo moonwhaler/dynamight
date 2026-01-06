@@ -65,6 +65,7 @@
     // Subscribe to status updates and refresh jobs when status changes
     unsubscribeStatus = statusStore.subscribe(() => {
       jobsStore.refresh();
+      loadRecentRuns(true);
     });
 
     // Load recent runs from all jobs
