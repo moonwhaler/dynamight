@@ -17,7 +17,10 @@ services:
       - "8080:8080"
 
     volumes:
-      # Persistent data (database, config)
+      # Configuration file (create from dynamight.toml.example)
+      - ./dynamight.toml:/app/config/dynamight.toml:ro
+
+      # Persistent data (database)
       - dynamight-data:/app/data
 
       # Logs
@@ -35,11 +38,12 @@ services:
       # - /var/www:/source/www:ro
 
     environment:
+      # These env vars override values in dynamight.toml
+      # Useful for secrets or per-deployment overrides
       - TZ=${TZ:-UTC}
       - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}  # Only used on first run
-      - ALLOWED_BROWSE_PATHS=${ALLOWED_BROWSE_PATHS:-/mnt,/home,/media}
+      # Uncomment to override jwt_secret from config file:
+      # - JWT_SECRET=${JWT_SECRET}
 
     # Security options
     security_opt:

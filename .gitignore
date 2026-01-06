@@ -18,9 +18,9 @@ frontend/dist/
 ./logs/
 *.log
 
-# Environment
-.env
-!.env.example
+# Configuration
+dynamight.toml
+!dynamight.toml.example
 
 # IDE
 .idea/

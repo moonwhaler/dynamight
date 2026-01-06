@@ -162,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = Config::from_env();
+    let config = Config::load();
 
     // Ensure database directory exists
     if let Some(db_dir) = config.database_dir() {
@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
     // Create broadcast channel for log streaming
     let (log_tx, _) = broadcast::channel::<models::LogMessage>(1000);
 
-    // Check for max_runs_per_job in database, fall back to config, then default to 5
+    // Check for max_runs_per_job in database, default to 5 if not set
     let db_max_runs: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM app_settings WHERE key = 'max_runs_per_job'"
     )
@@ -209,10 +209,9 @@ async fn main() -> anyhow::Result<()> {
     .await
     .unwrap_or(None);
 
-    let max_runs_per_job = match db_max_runs {
-        Some((value,)) => value.parse::<u32>().ok(),
-        None => config.max_runs_per_job.or(Some(5)), // Default to 5 if not configured
-    };
+    let max_runs_per_job = db_max_runs
+        .and_then(|(value,)| value.parse::<u32>().ok())
+        .or(Some(5));
 
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());

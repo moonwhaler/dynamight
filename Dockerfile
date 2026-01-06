@@ -52,14 +52,16 @@ WORKDIR /app
 COPY --from=backend-builder /app/target/release/dynamight ./
 COPY --from=frontend-builder /app/frontend/dist ./static
 COPY migrations ./migrations
+COPY dynamight.toml.example ./dynamight.toml.example
 
 # Create necessary directories
-RUN mkdir -p /app/data /app/logs /mnt
+RUN mkdir -p /app/data /app/logs /mnt /app/config
 
-# Environment
+# Default environment (can be overridden or use config file)
 ENV DATABASE_URL=sqlite:/app/data/dynamight.db
 ENV STATIC_FILES_DIR=/app/static
 ENV RUST_LOG=info,dynamight=debug
+ENV DYNAMIGHT_CONFIG=/app/config/dynamight.toml
 
 # Expose port
 EXPOSE 8080

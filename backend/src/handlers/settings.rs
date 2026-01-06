@@ -17,7 +17,7 @@ pub struct UpdateSettingsRequest {
 }
 
 pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Get max_runs_per_job from database, fall back to config (env), then default to 5
+    // Get max_runs_per_job from database, default to 5 if not set
     let db_value: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM app_settings WHERE key = 'max_runs_per_job'"
     )
@@ -25,10 +25,9 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
     .await
     .unwrap_or(None);
 
-    let max_runs_per_job = match db_value {
-        Some((value,)) => value.parse::<u32>().ok(),
-        None => state.config.max_runs_per_job.or(Some(5)), // Default to 5 if not configured
-    };
+    let max_runs_per_job = db_value
+        .and_then(|(value,)| value.parse::<u32>().ok())
+        .or(Some(5));
 
     Json(AppSettings { max_runs_per_job })
 }
@@ -61,13 +60,13 @@ pub async fn update_settings(
             state.backup_service.set_max_runs_per_job(Some(value)).await;
         }
         None => {
-            // Delete the setting to fall back to env config or default
+            // Delete the setting to fall back to default
             let _ = sqlx::query("DELETE FROM app_settings WHERE key = 'max_runs_per_job'")
                 .execute(&state.db)
                 .await;
 
-            // Reset to env config value or default (5)
-            state.backup_service.set_max_runs_per_job(state.config.max_runs_per_job.or(Some(5))).await;
+            // Reset to default (5)
+            state.backup_service.set_max_runs_per_job(Some(5)).await;
         }
     }
 

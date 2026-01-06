@@ -56,10 +56,10 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 git clone https://github.com/yourusername/dynamight.git
 cd dynamight
 
-# Create environment file
-cp .env.example .env
+# Create configuration file
+cp dynamight.toml.example dynamight.toml
 
-# Edit .env and set JWT_SECRET (required)
+# Edit dynamight.toml and set jwt_secret (required)
 # Generate with: openssl rand -base64 32
 
 # Start the container
@@ -83,6 +83,9 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      # Configuration file
+      - ./dynamight.toml:/app/config/dynamight.toml:ro
+      # Persistent data
       - dynamight-data:/app/data
       - dynamight-logs:/app/logs
       - /mnt:/mnt:rshared
@@ -92,8 +95,6 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
-      - ALLOWED_BROWSE_PATHS=${ALLOWED_BROWSE_PATHS:-/mnt,/home,/media}
     security_opt:
       - no-new-privileges:true
 
@@ -104,41 +105,63 @@ volumes:
 
 ## Configuration
 
-All configuration is done via environment variables.
+Configuration is done via a TOML file (`dynamight.toml`). Environment variables can override any setting.
 
-### Required
+### Configuration File
 
-| Variable | Description |
-|----------|-------------|
-| `JWT_SECRET` | Secret for JWT signing and credential encryption. Generate with `openssl rand -base64 32` |
+Copy `dynamight.toml.example` to `dynamight.toml` and edit:
 
-### Server Settings
+```toml
+[security]
+jwt_secret = "your-secret-here"  # Generate with: openssl rand -base64 32
+secure_cookies = true
+allowed_browse_paths = ["/mnt", "/home", "/media"]
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `sqlite:data/dynamight.db` | Main database location |
-| `HOST` | `0.0.0.0` | Network interface to bind |
-| `PORT` | `8080` | Port to listen on |
-| `TZ` | `UTC` | Timezone for scheduled jobs |
-| `RUST_LOG` | `info,dynamight=debug` | Log level |
-| `STATIC_FILES_DIR` | `static` | Frontend files directory |
+[server]
+host = "0.0.0.0"
+port = 8080
 
-### Security Settings
+[database]
+url = "sqlite:data/dynamight.db"
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALLOWED_BROWSE_PATHS` | `/mnt,/home,/media` | Paths users can browse |
-| `CORS_ORIGINS` | (same-origin) | Allowed CORS origins |
-| `SECURE_COOKIES` | `true` | Require HTTPS for cookies |
+See `dynamight.toml.example` for all available options with detailed documentation.
 
-### Rate Limiting
+### Configuration Priority
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed auth attempts before lockout |
-| `RATE_LIMIT_WINDOW_SECS` | `60` | Time window for tracking attempts |
-| `RATE_LIMIT_LOCKOUT_SECS` | `60` | Initial lockout duration |
-| `RATE_LIMIT_MAX_LOCKOUT_SECS` | `3600` | Maximum lockout (1 hour) |
+1. **Environment variables** (highest priority) - for Docker/CI overrides
+2. **Config file** (`dynamight.toml`)
+3. **Built-in defaults** (lowest priority)
+
+### Config File Search Paths
+
+1. `DYNAMIGHT_CONFIG` environment variable (if set)
+2. `./dynamight.toml` (current directory)
+3. `/etc/dynamight/dynamight.toml` (system-wide)
+
+### Environment Variable Overrides
+
+Any setting can be overridden via environment variables using SCREAMING_SNAKE_CASE:
+
+| Setting | Environment Variable |
+|---------|---------------------|
+| `security.jwt_secret` | `JWT_SECRET` |
+| `server.host` | `HOST` |
+| `server.port` | `PORT` |
+| `database.url` | `DATABASE_URL` |
+| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` (comma-separated) |
+
+### Key Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `security.jwt_secret` | **required** | Secret for JWT signing and credential encryption |
+| `server.host` | `0.0.0.0` | Network interface to bind |
+| `server.port` | `8080` | Port to listen on |
+| `database.url` | `sqlite:data/dynamight.db` | SQLite database location |
+| `security.secure_cookies` | `true` | Require HTTPS for cookies |
+| `security.allowed_browse_paths` | `["/mnt", "/home", "/media"]` | Paths users can browse |
+| `rate_limit.max_attempts` | `5` | Max failed auth attempts before lockout |
 
 ## Local Development
 
@@ -157,9 +180,9 @@ All configuration is done via environment variables.
 
 This will:
 - Check dependencies
-- Create `.env` from `.env.example` if needed
+- Create `dynamight.toml` from `dynamight.toml.example` with a random JWT secret
 - Install frontend npm packages
-- Start backend on http://localhost:8080
+- Start backend on http://localhost:3000
 - Start frontend dev server on http://localhost:5173 (with hot-reload)
 
 ### Manual Setup
@@ -167,19 +190,17 @@ This will:
 #### Backend
 
 ```bash
-cd backend
+# Create config file in project root
+cp dynamight.toml.example dynamight.toml
 
-# Create .env file in project root
-cat > ../.env << EOF
-JWT_SECRET=$(openssl rand -base64 32)
-DATABASE_URL=sqlite:../data/dynamight.db
-RUST_LOG=info,dynamight=debug
-EOF
+# Edit dynamight.toml and set jwt_secret
+# Or generate one: openssl rand -base64 32
 
 # Create data directory
-mkdir -p ../data
+mkdir -p data
 
 # Run the backend
+cd backend
 cargo run
 ```
 
@@ -228,15 +249,15 @@ sudo ./scripts/install.sh
 This will:
 - Create `dynamight` system user
 - Install binary to `/opt/dynamight`
-- Create config at `/etc/dynamight/.env`
+- Create config at `/etc/dynamight/dynamight.toml` (with auto-generated JWT secret)
 - Set up data directory at `/var/lib/dynamight`
 - Install and configure systemd service
 
 Then configure and start:
 
 ```bash
-# Edit configuration
-sudo nano /etc/dynamight/.env
+# Review/edit configuration (optional - defaults are sensible)
+sudo nano /etc/dynamight/dynamight.toml
 
 # Enable and start service
 sudo systemctl enable dynamight

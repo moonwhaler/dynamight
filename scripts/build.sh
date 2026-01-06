@@ -88,8 +88,8 @@ create_package() {
     # Create default directories
     mkdir -p "$pkg_dir/data"
 
-    # Copy example .env from project root
-    cp "$PROJECT_DIR/.env.example" "$pkg_dir/.env.example"
+    # Copy example config from project root
+    cp "$PROJECT_DIR/dynamight.toml.example" "$pkg_dir/dynamight.toml.example"
 
     # Copy scripts
     mkdir -p "$pkg_dir/scripts"
@@ -108,22 +108,23 @@ create_package() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Load environment
-if [[ -f .env ]]; then
-    set -a
-    source .env
-    set +a
+# Check for config file
+if [[ ! -f "dynamight.toml" ]]; then
+    echo "ERROR: dynamight.toml not found!"
+    echo "Please copy dynamight.toml.example to dynamight.toml and configure it."
+    echo ""
+    echo "  cp dynamight.toml.example dynamight.toml"
+    echo "  # Edit dynamight.toml and set jwt_secret"
+    echo ""
+    exit 1
 fi
 
-# Set defaults
-export DATABASE_URL="${DATABASE_URL:-sqlite:data/dynamight.db}"
-export STATIC_FILES_DIR="${STATIC_FILES_DIR:-static}"
-export HOST="${HOST:-0.0.0.0}"
-export PORT="${PORT:-8080}"
+# Optional environment variable overrides (these take precedence over config file)
 export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
 export TZ="${TZ:-UTC}"
 
-echo "Starting Dynamight on http://${HOST}:${PORT}"
+echo "Starting Dynamight..."
+echo "Config: dynamight.toml"
 exec ./dynamight
 EOF
     chmod +x "$pkg_dir/run.sh"
@@ -134,23 +135,29 @@ Dynamight - Backup Management System
 =====================================
 
 Quick Start:
-1. Copy .env.example to .env
-2. Edit .env and set a secure value for JWT_SECRET (min 32 characters)
-   Generate one with: openssl rand -base64 32
+1. Copy dynamight.toml.example to dynamight.toml
+2. Edit dynamight.toml and set jwt_secret (generate with: openssl rand -base64 32)
 3. Run: ./run.sh
 4. Open http://localhost:8080 in your browser
 5. Complete the initial setup to create your admin account
 
 System Service Installation:
 1. Run: sudo ./scripts/install.sh
-2. Edit: /etc/dynamight/.env (set JWT_SECRET)
+2. Edit: /etc/dynamight/dynamight.toml (set jwt_secret)
 3. Start: sudo systemctl enable --now dynamight
-4. Open http://your-server:3000 in your browser
+4. Open http://your-server:8080 in your browser
 5. Complete the initial setup to create your admin account
 
 First-Time Setup:
   On first launch, Dynamight will prompt you to create an admin
   account through the web interface. Choose a strong password!
+
+Configuration:
+  All settings are in dynamight.toml. See the comments in the file
+  for detailed documentation of each option.
+
+  Environment variables can override config file settings.
+  Useful for Docker or CI/CD deployments.
 
 For more information, visit the project repository.
 EOF

@@ -105,27 +105,41 @@ check_dependencies() {
     fi
 }
 
-setup_env() {
-    if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-        if [[ -f "$PROJECT_DIR/.env.example" ]]; then
-            log_warn ".env file not found, copying from .env.example"
-            cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+setup_config() {
+    local config_file="$PROJECT_DIR/dynamight.toml"
+    local example_file="$PROJECT_DIR/dynamight.toml.example"
+
+    if [[ ! -f "$config_file" ]]; then
+        if [[ -f "$example_file" ]]; then
+            log_warn "dynamight.toml not found, copying from dynamight.toml.example"
+            cp "$example_file" "$config_file"
+
+            # Generate a random JWT secret for development
+            local jwt_secret
+            jwt_secret="dev-$(openssl rand -hex 32)"
+
+            # Update the jwt_secret in the config file
+            if [[ "$(uname)" == "Darwin" ]]; then
+                # macOS sed
+                sed -i '' "s/jwt_secret = \"CHANGE-ME-generate-with-openssl-rand-base64-32\"/jwt_secret = \"$jwt_secret\"/" "$config_file"
+            else
+                # GNU sed
+                sed -i "s/jwt_secret = \"CHANGE-ME-generate-with-openssl-rand-base64-32\"/jwt_secret = \"$jwt_secret\"/" "$config_file"
+            fi
+
+            log_success "Generated development config with random JWT secret"
         else
-            log_warn "Creating default .env file"
-            cat > "$PROJECT_DIR/.env" << EOF
-JWT_SECRET=dev-secret-$(openssl rand -hex 32)
-DATABASE_URL=sqlite:data/dynamight.db
-STATIC_FILES_DIR=frontend/dist
-HOST=127.0.0.1
-PORT=3000
-EOF
+            log_error "No config file found. Please create dynamight.toml from dynamight.toml.example"
+            exit 1
         fi
     fi
 
-    # Source .env for this script
-    set -a
-    source "$PROJECT_DIR/.env"
-    set +a
+    # Set development-specific overrides via environment variables
+    export HOST="${HOST:-127.0.0.1}"
+    export PORT="${PORT:-3000}"
+    export STATIC_FILES_DIR="${STATIC_FILES_DIR:-frontend/dist}"
+    export SECURE_COOKIES="${SECURE_COOKIES:-false}"
+    export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
 }
 
 install_frontend_deps() {
@@ -166,7 +180,7 @@ main() {
     cd "$PROJECT_DIR"
 
     check_dependencies
-    setup_env
+    setup_config
     install_frontend_deps
 
     echo ""

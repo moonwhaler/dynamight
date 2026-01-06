@@ -101,35 +101,38 @@ install_files() {
 }
 
 setup_config() {
-    if [[ ! -f "$CONFIG_DIR/.env" ]]; then
+    if [[ ! -f "$CONFIG_DIR/dynamight.toml" ]]; then
         log_info "Creating configuration..."
 
         # Generate secure JWT secret
-        JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | base64 | tr -d '\n' | head -c 64)
+        JWT_SECRET=$(openssl rand -base64 32 2>/dev/null || head -c 48 /dev/urandom | base64 | tr -d '\n' | head -c 44)
 
-        cat > "$CONFIG_DIR/.env" << EOF
+        cat > "$CONFIG_DIR/dynamight.toml" << EOF
 # Dynamight Configuration
 # Generated on $(date)
+# See dynamight.toml.example for all available options
 
+[security]
 # JWT secret for authentication (auto-generated, keep secure!)
-JWT_SECRET=${JWT_SECRET}
+jwt_secret = "${JWT_SECRET}"
 
-# Database location
-DATABASE_URL=sqlite:${DATA_DIR}/dynamight.db
+# Paths users are allowed to browse
+allowed_browse_paths = ["/mnt", "/home", "/media"]
 
-# Static files directory
-STATIC_FILES_DIR=${INSTALL_DIR}/static
+[server]
+host = "0.0.0.0"
+port = 8080
+static_files_dir = "${INSTALL_DIR}/static"
 
-# Server binding
-HOST=0.0.0.0
-PORT=3000
+[database]
+url = "sqlite:${DATA_DIR}/dynamight.db"
 
-# Logging (optional)
-# RUST_LOG=info
+[logging]
+level = "info,dynamight=debug"
 EOF
 
-        chmod 600 "$CONFIG_DIR/.env"
-        log_success "Configuration created at $CONFIG_DIR/.env"
+        chmod 600 "$CONFIG_DIR/dynamight.toml"
+        log_success "Configuration created at $CONFIG_DIR/dynamight.toml"
     else
         log_info "Configuration already exists, preserving..."
     fi
@@ -149,7 +152,8 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 WorkingDirectory=${INSTALL_DIR}
-EnvironmentFile=${CONFIG_DIR}/.env
+Environment=DYNAMIGHT_CONFIG=${CONFIG_DIR}/dynamight.toml
+Environment=RUST_LOG=info,dynamight=debug
 ExecStart=${INSTALL_DIR}/dynamight
 Restart=on-failure
 RestartSec=5
@@ -201,16 +205,17 @@ show_status() {
     echo "Installation summary:"
     echo "  Binary:     $INSTALL_DIR/dynamight"
     echo "  Static:     $INSTALL_DIR/static/"
-    echo "  Config:     $CONFIG_DIR/.env"
+    echo "  Config:     $CONFIG_DIR/dynamight.toml"
     echo "  Data:       $DATA_DIR/"
     echo "  Logs:       journalctl -u dynamight"
     echo ""
     echo "Next steps:"
-    echo "  1. Enable service:      sudo systemctl enable dynamight"
-    echo "  2. Start service:       sudo systemctl start dynamight"
-    echo "  3. Check status:        sudo systemctl status dynamight"
-    echo "  4. Open http://your-server:3000 in your browser"
-    echo "  5. Complete the initial setup to create your admin account"
+    echo "  1. Review config:       sudo nano $CONFIG_DIR/dynamight.toml"
+    echo "  2. Enable service:      sudo systemctl enable dynamight"
+    echo "  3. Start service:       sudo systemctl start dynamight"
+    echo "  4. Check status:        sudo systemctl status dynamight"
+    echo "  5. Open http://your-server:8080 in your browser"
+    echo "  6. Complete the initial setup to create your admin account"
     echo ""
 }
 

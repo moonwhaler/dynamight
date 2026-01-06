@@ -1,0 +1,117 @@
+# =============================================================================
+# Dynamight Configuration
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+[security]
+
+# Secret key for JWT token signing and credential encryption.
+# REQUIRED - Generate with: openssl rand -base64 32
+# Minimum 32 characters for security.
+jwt_secret = "CHANGE-ME-generate-with-openssl-rand-base64-32"
+
+# Enable Secure flag on authentication cookies (requires HTTPS).
+# Set to false for local HTTP development without HTTPS.
+# Default: true (recommended for production)
+secure_cookies = true
+
+# Paths users are allowed to browse in the file browser.
+# Users can only browse, create directories, and select sources within these paths.
+allowed_browse_paths = ["/mnt", "/home", "/media"]
+
+# Allowed CORS origins for cross-origin requests.
+# Leave empty for same-origin only (most secure).
+# Examples: ["https://myapp.example.com", "https://app2.example.com"]
+# For development: ["http://localhost:5173"]
+cors_origins = []
+
+# Trusted proxy IP addresses or CIDR ranges for X-Forwarded-For header.
+# When set, client IPs are extracted from X-Forwarded-For only if the
+# direct connection is from a trusted proxy.
+# If empty, X-Forwarded-For is ignored and only direct IPs are used (safest).
+# Examples: ["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12"]
+trusted_proxies = []
+
+# -----------------------------------------------------------------------------
+# Server
+# -----------------------------------------------------------------------------
+[server]
+
+# Network interface to bind to.
+# "0.0.0.0" = all interfaces (accessible from network)
+# "127.0.0.1" = localhost only (local access only)
+host = "0.0.0.0"
+
+# Port to listen on.
+port = 8080
+
+# Directory containing the frontend static files.
+# Relative paths are relative to the working directory.
+static_files_dir = "static"
+
+# Timezone for scheduled jobs (IANA timezone names).
+# Examples: "UTC", "America/New_York", "Europe/London", "Asia/Tokyo"
+timezone = "UTC"
+
+# -----------------------------------------------------------------------------
+# Database
+# -----------------------------------------------------------------------------
+[database]
+
+# SQLite database connection URL.
+# The directory will be created automatically if it doesn't exist.
+url = "sqlite:data/dynamight.db"
+
+# SQLite logs database connection URL (optional).
+# Defaults to logs.db in the same directory as the main database.
+# logs_url = "sqlite:data/logs.db"
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+[logging]
+
+# Log level configuration using Rust's tracing filter syntax.
+# Format: level or target=level,target=level
+# Levels: trace, debug, info, warn, error
+#
+# Examples:
+#   "info"                     - Info level for everything
+#   "warn,dynamight=debug"     - Warn globally, debug for dynamight
+#   "error,dynamight=trace"    - Error globally, trace for dynamight
+level = "info,dynamight=debug"
+
+# -----------------------------------------------------------------------------
+# Rate Limiting (Authentication Protection)
+# -----------------------------------------------------------------------------
+[rate_limit]
+
+# Maximum failed authentication attempts before lockout.
+# Applies to login, TOTP validation, and recovery code attempts.
+max_attempts = 5
+
+# Time window in seconds for tracking failed attempts.
+window_secs = 60
+
+# Initial lockout duration in seconds after exceeding max attempts.
+# Subsequent failures use exponential backoff (doubles each time).
+lockout_secs = 60
+
+# Maximum lockout duration in seconds (caps the exponential backoff).
+max_lockout_secs = 3600
+
+# -----------------------------------------------------------------------------
+# Resource Limits
+# -----------------------------------------------------------------------------
+[limits]
+
+# Maximum file download size in bytes.
+# Default: 2GB (2147483648 bytes)
+max_download_size = 2147483648
+
+# Maximum request body size in bytes.
+# Protects against DoS attacks via oversized payloads.
+# Default: 10MB (10485760 bytes)
+max_request_body_size = 10485760
