@@ -452,7 +452,10 @@ impl SftpProvider {
                 if !ctx.options.dry_run {
                     let _ = sftp.create_dir(&remote_path).await;
                 }
-                Box::pin(self.sync_directory(sftp, path.to_str().unwrap(), &remote_path, ctx, result)).await?;
+                let path_str = path.to_str().ok_or_else(|| {
+                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
+                })?;
+                Box::pin(self.sync_directory(sftp, path_str, &remote_path, ctx, result)).await?;
             } else if path.is_file() {
                 if ctx.options.dry_run {
                     ctx.log_info(&format!("[DRY RUN] Would upload: {}", remote_path), "sftp").await;

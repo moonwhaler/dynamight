@@ -462,8 +462,11 @@ impl GoogleDriveProvider {
                     "dry-run".to_string()
                 };
 
+                let path_str = path.to_str().ok_or_else(|| {
+                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
+                })?;
                 Box::pin(self.sync_directory(
-                    path.to_str().unwrap(),
+                    path_str,
                     &subfolder_id,
                     shared_drive_id,
                     access_token,

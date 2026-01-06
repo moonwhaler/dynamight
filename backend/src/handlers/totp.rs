@@ -269,7 +269,11 @@ pub async fn validate(
     headers: HeaderMap,
     Json(req): Json<TotpValidateRequest>,
 ) -> impl IntoResponse {
-    let client_ip = extract_client_ip(&headers, connect_info.as_ref().map(|c| &c.0));
+    let client_ip = extract_client_ip(
+        &headers,
+        connect_info.as_ref().map(|c| &c.0),
+        &state.config.trusted_proxies,
+    );
 
     // Check rate limit before processing
     if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {
@@ -375,7 +379,11 @@ pub async fn recovery(
     headers: HeaderMap,
     Json(req): Json<TotpRecoveryRequest>,
 ) -> impl IntoResponse {
-    let client_ip = extract_client_ip(&headers, connect_info.as_ref().map(|c| &c.0));
+    let client_ip = extract_client_ip(
+        &headers,
+        connect_info.as_ref().map(|c| &c.0),
+        &state.config.trusted_proxies,
+    );
 
     // Check rate limit before processing
     if let Err(e) = state.rate_limit_service.check_rate_limit(&client_ip) {

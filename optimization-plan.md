@@ -31,6 +31,11 @@
 - ✅ O(n²) → O(n) performance fix in `list_jobs` using HashMap
 - ✅ ~85 lines of duplicated code removed across auth handlers
 
+### Completed Optimizations (Phase 2 - Security)
+- ✅ IP spoofing vulnerability fixed with trusted proxy configuration and CIDR support
+- ✅ Request body size limits added via `RequestBodyLimitLayer` (configurable, default 10MB)
+- ✅ All critical `.unwrap()` calls replaced with `.expect()` or proper error handling
+
 ### Key Findings
 
 | Category | Issues Found | Status |
@@ -38,8 +43,8 @@
 | Dead Code | 8-10 items | 3 resolved (extractors), 1 false positive |
 | Code Duplication | ~800+ lines | ~85 lines resolved (token extraction) |
 | Performance Issues | 12 items | 1 resolved (O(n) lookup) |
-| Security Vulnerabilities | 9 critical items | Pending |
-| Resilience Gaps | 7 items | Pending |
+| Security Vulnerabilities | 9 critical items | 2 resolved (IP spoofing, request limits) |
+| Resilience Gaps | 7 items | 1 resolved (unwrap panics) |
 | Architectural Issues | 5 items | Auth flow consolidated |
 
 ### Estimated Effort
@@ -316,31 +321,32 @@ const ProviderComponent = await import(`./providers/${type}Destination.svelte`);
 
 ### CRITICAL
 
-#### 1. IP Spoofing via X-Forwarded-For (Rate Limiting Bypass)
-**File**: `handlers/auth.rs:44-70`
+#### 1. ~~IP Spoofing via X-Forwarded-For (Rate Limiting Bypass)~~ ✅ RESOLVED
+**File**: `handlers/auth.rs:44-170`
 
-```rust
-// Trusts X-Forwarded-For without validation
-if let Some(forwarded) = headers.get("x-forwarded-for") {
-    if let Some(ip) = forwarded_str.split(',').next() {
-        return ip.trim().to_string();  // Attacker-controlled!
-    }
-}
-```
+**Status**: Fixed with comprehensive trusted proxy support.
 
-**Risk**: Attackers can bypass rate limiting by spoofing IPs.
+**Implementation**:
+- Added `TRUSTED_PROXIES` config option (comma-separated IPs or CIDRs)
+- `extract_client_ip()` now takes trusted proxies as parameter
+- Only trusts X-Forwarded-For when direct connection is from trusted proxy
+- Uses rightmost untrusted IP from X-Forwarded-For chain
+- Supports both exact IP and CIDR notation (e.g., `10.0.0.0/8`, `192.168.1.0/24`)
+- When no trusted proxies configured, only direct connection IP is used (safest default)
 
-**Fix**:
-1. Add configuration for trusted proxy IPs
-2. Only trust X-Forwarded-For from known proxies
-3. Use the rightmost IP when behind multiple proxies
+**New config options**:
+- `TRUSTED_PROXIES`: Comma-separated list of trusted proxy IPs/CIDRs
 
-#### 2. Missing Request Size Limits
-**Files**: All handlers in `handlers/*.rs`
+#### 2. ~~Missing Request Size Limits~~ ✅ RESOLVED
+**Files**: `main.rs`, `config.rs`, `Cargo.toml`
 
-No per-route request size limits. Large JSON payloads could cause DoS.
+**Status**: Fixed with configurable request body size limits.
 
-**Fix**: Add `tower_http::limit::RequestBodyLimitLayer` to routes.
+**Implementation**:
+- Added `tower-http/limit` feature to Cargo.toml
+- Added `RequestBodyLimitLayer` to API routes in `main.rs`
+- Default limit: 10MB (configurable via `MAX_REQUEST_BODY_SIZE` env var)
+- Protects against DoS via oversized JSON payloads
 
 ### HIGH
 
@@ -460,19 +466,21 @@ let _ = sqlx::query("INSERT INTO log_entries ...").execute(&self.logs_db).await;
 
 **Fix**: At minimum, log the error with `tracing::warn!`.
 
-### Unwrap Panics
+### ~~Unwrap Panics~~ ✅ RESOLVED
 
-Multiple `.unwrap()` calls that should use `.expect()` with context:
+**Status**: All critical `.unwrap()` calls have been replaced with `.expect()` or proper error handling.
 
-| File | Lines | Pattern |
-|------|-------|---------|
-| `handlers/jobs.rs` | 40, 59 | Regex compilation |
-| `providers/sftp.rs` | 455 | Path conversion |
-| `providers/webdav.rs` | 123, 186, 234, 297, 302 | Various |
-| `providers/onedrive.rs` | 362, 375, 473 | Various |
-| `providers/googledrive.rs` | 466 | Various |
+**Changes Made**:
 
-**Fix**: Replace with `.expect("context message")` or proper error handling.
+| File | Lines | Fix Applied |
+|------|-------|-------------|
+| `handlers/jobs.rs` | 40-42, 60-62 | `.expect("DANGEROUS_CHARS regex pattern is invalid")`, `.expect("SAFE_PATTERN regex pattern is invalid")` |
+| `providers/sftp.rs` | 455 | `path.to_str().ok_or_else(\|\| ProviderError::TransferError(...))` |
+| `providers/webdav.rs` | 123-126, 191-193, 243-245, 310-312, 318-320 | `.expect("PROPFIND/MKCOL is a valid HTTP method")` + proper error handling for path conversion |
+| `providers/onedrive.rs` | 362-364, 377-380, 476-478 | `.expect("...must succeed after contains check")` + proper error handling for path conversion |
+| `providers/googledrive.rs` | 465-467 | `path.to_str().ok_or_else(\|\| ProviderError::TransferError(...))` |
+
+**Result**: Better error context for debugging, no silent panics on invalid UTF-8 paths.
 
 ### Race Conditions
 
@@ -558,19 +566,19 @@ let provider = ProviderFactory::new()
 | Fix O(n) lookup in list_jobs | Medium | Low | ✅ Done - HashMap for O(1) lookups |
 | Remove unused `clearError()` | Low | Trivial | ⏸️ Skipped - confirmed NOT dead code (used by authStore) |
 | Combine duplicate $effects | Low | Low | Pending |
-| Add `.expect()` context to unwraps | Medium | Low | Pending |
+| Add `.expect()` context to unwraps | Medium | Low | ✅ Done - all critical unwraps now have context |
 
 **Note**: `clearError()` in `fileBrowser.ts` was confirmed to be used by `authStore` and is NOT dead code.
 
-### Phase 2: Security Hardening (3-5 days)
+### Phase 2: Security Hardening (3-5 days) - PARTIALLY COMPLETED
 
-| Task | Impact | Effort | Files |
-|------|--------|--------|-------|
-| Fix IP spoofing vulnerability | Critical | Medium | `auth.rs:44-70` |
-| Add request size limits | High | Low | `main.rs` |
-| Add operation timeouts | High | Medium | `rsync.rs`, providers |
-| Fix TOCTOU in path validation | Medium | Medium | `system.rs` |
-| Add HSTS/CSP headers | Medium | Low | `main.rs` |
+| Task | Impact | Effort | Status |
+|------|--------|--------|--------|
+| Fix IP spoofing vulnerability | Critical | Medium | ✅ Done - trusted proxy config with CIDR support |
+| Add request size limits | High | Low | ✅ Done - `RequestBodyLimitLayer` added |
+| Add operation timeouts | High | Medium | Pending |
+| Fix TOCTOU in path validation | Medium | Medium | Pending |
+| Add HSTS/CSP headers | Medium | Low | Pending |
 
 ### Phase 3: Code Consolidation (1 week)
 
@@ -601,10 +609,10 @@ After implementing this plan, the codebase should achieve:
 - [x] Zero `#[allow(dead_code)]` suppressions for extractors (AuthUser, AuthClaims now used)
 - [x] Token extraction in single location (`extractors.rs`)
 - [ ] All operations have explicit timeouts
-- [ ] Request size limits on all endpoints
-- [ ] No `.unwrap()` without `.expect()` context
+- [x] Request size limits on all endpoints (10MB default, configurable via `MAX_REQUEST_BODY_SIZE`)
+- [x] No `.unwrap()` without `.expect()` context (all critical unwraps fixed)
 - [ ] Security headers on all responses
-- [ ] IP spoofing vulnerability fixed
+- [x] IP spoofing vulnerability fixed (trusted proxy support with CIDR)
 - [ ] ~800 lines of duplicate code eliminated (~85 done via token extraction)
 - [ ] Modal components reduced to single reusable implementation
 - [ ] All large components under 400 lines
@@ -614,15 +622,17 @@ After implementing this plan, the codebase should achieve:
 ## Appendix: File Reference
 
 ### Backend Files with Issues
-- `backend/src/handlers/auth.rs` - ~~Token extraction~~ ✅, IP spoofing (pending)
-- `backend/src/handlers/jobs.rs` - ~~Performance~~ ✅, Query patterns (pending)
+- `backend/src/handlers/auth.rs` - ~~Token extraction~~ ✅, ~~IP spoofing~~ ✅
+- `backend/src/handlers/jobs.rs` - ~~Performance~~ ✅, ~~Unwrap panics~~ ✅, Query patterns (pending)
 - `backend/src/handlers/system.rs` - TOCTOU vulnerability
 - `backend/src/middleware.rs` - ~~Token extraction duplication~~ ✅
 - `backend/src/extractors.rs` - ~~Unused code~~ ✅ (now central token utility)
 - `backend/src/errors.rs` - Dead code markers
 - `backend/src/services/backup_service.rs` - Race conditions
 - `backend/src/services/credential_service.rs` - Weak encryption
-- `backend/src/services/providers/*.rs` - Unwrap panics, timeouts
+- `backend/src/services/providers/*.rs` - ~~Unwrap panics~~ ✅, timeouts (pending)
+- `backend/src/main.rs` - ~~Request size limits~~ ✅
+- `backend/src/config.rs` - ~~Trusted proxies config~~ ✅, ~~Request size config~~ ✅
 
 ### Frontend Files with Issues
 - `frontend/src/lib/stores/fileBrowser.ts` - ~~Dead code~~ (false positive - `clearError()` is used by authStore)

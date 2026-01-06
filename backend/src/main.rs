@@ -17,7 +17,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use axum::http::{header, HeaderValue, Method};
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
@@ -243,7 +243,9 @@ async fn main() -> anyhow::Result<()> {
     let api_routes = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .merge(ws_routes);
+        .merge(ws_routes)
+        // Apply request body size limit to prevent DoS attacks via large payloads
+        .layer(RequestBodyLimitLayer::new(state.config.max_request_body_size));
 
     let app = Router::new()
         .nest("/api", api_routes)

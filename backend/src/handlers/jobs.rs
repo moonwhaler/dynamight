@@ -38,7 +38,8 @@ fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
     // These could be dangerous if the pattern is ever mishandled
     static DANGEROUS_CHARS: Lazy<Regex> = Lazy::new(|| {
         // Backticks, $(), ${}, and shell operators
-        Regex::new(r"(`|\$\(|\$\{|[;&|><])").unwrap()
+        Regex::new(r"(`|\$\(|\$\{|[;&|><])")
+            .expect("DANGEROUS_CHARS regex pattern is invalid")
     });
 
     if DANGEROUS_CHARS.is_match(pattern) {
@@ -57,7 +58,8 @@ fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
     // - Spaces (valid in filenames)
     // - Other common filename characters: @, #, %, +, =, ~, comma, parentheses
     static SAFE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^[\w\s./\-_*?\[\]\\@#%+=~,()':!]+$").unwrap()
+        Regex::new(r"^[\w\s./\-_*?\[\]\\@#%+=~,()':!]+$")
+            .expect("SAFE_PATTERN regex pattern is invalid")
     });
 
     if !SAFE_PATTERN.is_match(pattern) {

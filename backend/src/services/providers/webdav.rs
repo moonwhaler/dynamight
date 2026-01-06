@@ -120,7 +120,11 @@ impl SyncProvider for WebDavProvider {
         // Use PROPFIND to test connection (standard WebDAV method)
         let response = self
             .client
-            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &test_url)
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND")
+                    .expect("PROPFIND is a valid HTTP method"),
+                &test_url,
+            )
             .basic_auth(&username, Some(&password))
             .header("Depth", "0")
             .send()
@@ -183,7 +187,11 @@ impl SyncProvider for WebDavProvider {
         // Test connection
         let test_url = format!("{}/{}", base_url.trim_end_matches('/'), remote_path.trim_start_matches('/'));
         let response = self.client
-            .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &test_url)
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND")
+                    .expect("PROPFIND is a valid HTTP method"),
+                &test_url,
+            )
             .basic_auth(&username, Some(&password))
             .header("Depth", "0")
             .send()
@@ -231,7 +239,11 @@ impl SyncProvider for WebDavProvider {
             // Create remote directory (MKCOL)
             if !ctx.options.dry_run {
                 let _ = self.client
-                    .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &dest_url)
+                    .request(
+                        reqwest::Method::from_bytes(b"MKCOL")
+                            .expect("MKCOL is a valid HTTP method"),
+                        &dest_url,
+                    )
                     .basic_auth(&username, Some(&password))
                     .send()
                     .await;
@@ -294,12 +306,19 @@ impl WebDavProvider {
                 // Create remote directory
                 if !ctx.options.dry_run {
                     let _ = self.client
-                        .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &remote_url)
+                        .request(
+                            reqwest::Method::from_bytes(b"MKCOL")
+                                .expect("MKCOL is a valid HTTP method"),
+                            &remote_url,
+                        )
                         .basic_auth(username, Some(password))
                         .send()
                         .await;
                 }
-                Box::pin(self.sync_directory(base_url, &remote_path, path.to_str().unwrap(), username, password, ctx, result)).await?;
+                let path_str = path.to_str().ok_or_else(|| {
+                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
+                })?;
+                Box::pin(self.sync_directory(base_url, &remote_path, path_str, username, password, ctx, result)).await?;
             } else if path.is_file() {
                 if ctx.options.dry_run {
                     ctx.log_info(&format!("[DRY RUN] Would upload: {}", remote_path), "webdav").await;

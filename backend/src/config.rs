@@ -21,6 +21,11 @@ pub struct Config {
     pub secure_cookies: bool,
     // File browser max download size (default: 2GB)
     pub max_download_size: u64,
+    // Trusted proxy IPs/CIDRs for X-Forwarded-For header trust
+    // If empty, X-Forwarded-For is ignored (safest default)
+    pub trusted_proxies: Vec<String>,
+    // Maximum request body size in bytes (default: 10MB)
+    pub max_request_body_size: usize,
 }
 
 impl Config {
@@ -95,6 +100,22 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2_147_483_648),
+            // Trusted proxies: comma-separated list of IPs/CIDRs
+            // If empty (default), X-Forwarded-For header is ignored for security
+            trusted_proxies: env::var("TRUSTED_PROXIES")
+                .ok()
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            // Max request body size: default 10MB
+            max_request_body_size: env::var("MAX_REQUEST_BODY_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10 * 1024 * 1024),
         }
     }
 

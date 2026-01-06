@@ -359,7 +359,9 @@ impl OneDriveProvider {
                 Ok(resp) if resp.status() == 404 => {
                     // Folder doesn't exist, create it
                     let parent_path = if current_path.contains('/') {
-                        let idx = current_path.rfind('/').unwrap();
+                        let idx = current_path
+                            .rfind('/')
+                            .expect("rfind('/') must succeed after contains('/') check");
                         &current_path[..idx]
                     } else {
                         ""
@@ -372,7 +374,10 @@ impl OneDriveProvider {
                     };
 
                     let folder_name = if current_path.contains('/') {
-                        current_path.rsplit('/').next().unwrap()
+                        current_path
+                            .rsplit('/')
+                            .next()
+                            .expect("rsplit('/').next() always returns Some")
                     } else {
                         &current_path
                     };
@@ -468,9 +473,12 @@ impl OneDriveProvider {
                 if !ctx.options.dry_run {
                     self.ensure_folder_exists(base_path, &remote_path, access_token, ctx).await?;
                 }
+                let path_str = path.to_str().ok_or_else(|| {
+                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
+                })?;
                 Box::pin(self.sync_directory(
                     base_path,
-                    path.to_str().unwrap(),
+                    path_str,
                     &remote_path,
                     access_token,
                     ctx,
