@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
+use crate::extractors::{extract_token_from_headers, AuthUser};
 use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
 use crate::services::AuthService;
 use crate::AppState;
@@ -172,92 +173,15 @@ pub async fn logout(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     )
 }
 
-pub async fn me(State(state): State<Arc<AppState>>, headers: axum::http::HeaderMap) -> impl IntoResponse {
-    // Extract token from cookie
-    let token = headers
-        .get("Cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let mut parts = c.trim().splitn(2, '=');
-                if parts.next() == Some("token") {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-
-    let token = match token {
-        Some(t) => t,
-        None => {
-            return ApiError::not_authenticated().into_response();
-        }
-    };
-
-    // Validate token
-    let claims = match state.auth_service.validate_token(&token) {
-        Ok(c) => c,
-        Err(_) => {
-            return ApiError::token_invalid().into_response();
-        }
-    };
-
-    // Get user
-    let user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE id = ?")
-        .bind(claims.sub)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    match user {
-        Some(u) => Json(UserResponse::from(u)).into_response(),
-        None => ApiError::user_not_found().into_response(),
-    }
+pub async fn me(AuthUser(user): AuthUser) -> impl IntoResponse {
+    Json(UserResponse::from(user))
 }
 
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
+    AuthUser(user): AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
-    // Extract and validate token
-    let token = headers
-        .get("Cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let mut parts = c.trim().splitn(2, '=');
-                if parts.next() == Some("token") {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-
-    let token = match token {
-        Some(t) => t,
-        None => return ApiError::not_authenticated().into_response(),
-    };
-
-    let claims = match state.auth_service.validate_token(&token) {
-        Ok(c) => c,
-        Err(_) => return ApiError::token_invalid().into_response(),
-    };
-
-    // Get user
-    let user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE id = ?")
-        .bind(claims.sub)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let user = match user {
-        Some(u) => u,
-        None => return ApiError::user_not_found().into_response(),
-    };
-
     // Verify current password
     let valid =
         AuthService::verify_password(&req.current_password, &user.password_hash).unwrap_or(false);
@@ -300,22 +224,7 @@ pub async fn setup_required(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// GET /auth/token - Return the current JWT token for WebSocket authentication
 pub async fn get_token(headers: axum::http::HeaderMap) -> impl IntoResponse {
-    // Extract token from cookie
-    let token = headers
-        .get("Cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let mut parts = c.trim().splitn(2, '=');
-                if parts.next() == Some("token") {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-
-    match token {
+    match extract_token_from_headers(&headers) {
         Some(t) => Json(json!({"token": t})).into_response(),
         None => ApiError::not_authenticated().into_response(),
     }

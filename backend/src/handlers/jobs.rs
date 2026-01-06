@@ -8,6 +8,7 @@ use chrono::Utc;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
@@ -112,13 +113,19 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     .await
     .unwrap_or_default();
 
+    // Convert to HashMap for O(1) lookups instead of O(n) linear scan per job
+    let last_runs_map: HashMap<i64, (String, Option<chrono::DateTime<Utc>>)> = last_runs
+        .into_iter()
+        .map(|(job_id, status, run_at)| (job_id, (status, run_at)))
+        .collect();
+
     let response: Vec<JobResponse> = jobs
         .into_iter()
         .map(|job| {
             let job_id = job.id;
-            let run_info = last_runs.iter().find(|(id, _, _)| *id == job_id);
-            let (status, run_at) = run_info
-                .map(|(_, s, t)| (Some(s.clone()), *t))
+            let (status, run_at) = last_runs_map
+                .get(&job_id)
+                .map(|(s, t)| (Some(s.clone()), *t))
                 .unwrap_or((None, None));
             JobResponse::from(job).with_run_status(status, run_at)
         })

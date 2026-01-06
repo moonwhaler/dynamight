@@ -11,6 +11,7 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::extractors::extract_token_from_headers;
 use crate::AppState;
 
 /// Middleware that requires authentication for all requests.
@@ -26,41 +27,19 @@ pub async fn require_auth(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Extract token from cookie header
-    let token = request
-        .headers()
-        .get("Cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let mut parts = c.trim().splitn(2, '=');
-                if parts.next() == Some("token") {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        });
+    let token = extract_token_from_headers(request.headers()).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Not authenticated"})),
+        )
+    })?;
 
-    let token = match token {
-        Some(t) => t,
-        None => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Not authenticated"})),
-            ))
-        }
-    };
-
-    // Validate token
-    match state.auth_service.validate_token(&token) {
-        Ok(_claims) => {
-            // Token is valid, proceed to handler
-            Ok(next.run(request).await)
-        }
-        Err(_) => Err((
+    state.auth_service.validate_token(&token).map_err(|_| {
+        (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Invalid or expired token"})),
-        )),
-    }
+        )
+    })?;
+
+    Ok(next.run(request).await)
 }

@@ -6,7 +6,7 @@
 use axum::{
     async_trait,
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, HeaderMap, StatusCode},
     Json,
 };
 use serde_json::json;
@@ -14,6 +14,26 @@ use std::sync::Arc;
 
 use crate::models::User;
 use crate::AppState;
+
+/// Extract JWT token from Cookie header.
+///
+/// This is the canonical function for extracting auth tokens from HTTP headers.
+/// Used by extractors, middleware, and handlers that need just the token string.
+pub fn extract_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("Cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|c| {
+                let mut parts = c.trim().splitn(2, '=');
+                if parts.next() == Some("token") {
+                    parts.next().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+}
 
 /// Authenticated user extractor.
 ///
@@ -23,7 +43,6 @@ use crate::AppState;
 ///     // user is guaranteed to be authenticated
 /// }
 /// ```
-#[allow(dead_code)]
 pub struct AuthUser(pub User);
 
 #[async_trait]
@@ -34,29 +53,13 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        // Extract token from cookie header
-        let token = parts
-            .headers
-            .get("Cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let mut cookie_parts = c.trim().splitn(2, '=');
-                    if cookie_parts.next() == Some("token") {
-                        cookie_parts.next().map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Not authenticated"})),
-                )
-            })?;
+        let token = extract_token_from_headers(&parts.headers).ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Not authenticated"})),
+            )
+        })?;
 
-        // Validate token
         let claims = state.auth_service.validate_token(&token).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -64,7 +67,6 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
             )
         })?;
 
-        // Fetch user from database
         let user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE id = ?")
             .bind(claims.sub)
             .fetch_optional(&state.db)
@@ -82,7 +84,6 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 
 /// Extract just the claims without fetching the user.
 /// Useful for lightweight auth checks where you don't need the full user object.
-#[allow(dead_code)]
 pub struct AuthClaims(pub crate::services::Claims);
 
 #[async_trait]
@@ -93,26 +94,12 @@ impl FromRequestParts<Arc<AppState>> for AuthClaims {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        let token = parts
-            .headers
-            .get("Cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let mut cookie_parts = c.trim().splitn(2, '=');
-                    if cookie_parts.next() == Some("token") {
-                        cookie_parts.next().map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Not authenticated"})),
-                )
-            })?;
+        let token = extract_token_from_headers(&parts.headers).ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Not authenticated"})),
+            )
+        })?;
 
         let claims = state.auth_service.validate_token(&token).map_err(|_| {
             (

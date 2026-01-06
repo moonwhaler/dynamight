@@ -1,13 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::extractors::AuthClaims;
 use crate::AppState;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,33 +35,9 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
 
 pub async fn update_settings(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
+    AuthClaims(_claims): AuthClaims,
     Json(req): Json<UpdateSettingsRequest>,
 ) -> impl IntoResponse {
-    // Verify authentication
-    let token = headers
-        .get("Cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let mut parts = c.trim().splitn(2, '=');
-                if parts.next() == Some("token") {
-                    parts.next().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        });
-
-    let token = match token {
-        Some(t) => t,
-        None => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Not authenticated"}))),
-    };
-
-    if state.auth_service.validate_token(&token).is_err() {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid token"})));
-    }
-
     // Update or insert max_runs_per_job setting
     match req.max_runs_per_job {
         Some(value) => {
