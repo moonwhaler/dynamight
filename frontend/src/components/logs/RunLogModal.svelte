@@ -15,6 +15,17 @@
     onClose: () => void;
   } = $props();
 
+  // Portal action - moves element to document.body to avoid DOM hierarchy issues
+  // (e.g., when rendered inside a table, the fixed positioning and events break)
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
+
   let logs = $state<LogEntry[]>([]);
   let logsTotal = $state(0);
   let logsCurrentPage = $state(1);
@@ -165,6 +176,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4 overflow-hidden"
   onwheel={(e) => e.stopPropagation()}
 >
