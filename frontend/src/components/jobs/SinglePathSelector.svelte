@@ -241,23 +241,23 @@
 {#if showBrowser}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-0 sm:p-4"
     onclick={handleBackdropClick}
     onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
   >
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full h-[70vh] flex flex-col overflow-hidden">
+    <div class="bg-white dark:bg-gray-800 sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl h-full sm:h-[80vh] sm:max-h-[700px] flex flex-col overflow-hidden">
       <!-- Header -->
-      <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+      <div class="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
         <div class="min-w-0 flex-1">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directory()}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
+          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directory()}</h3>
+          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
         <button
           onclick={closeBrowser}
-          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-3"
+          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
           aria-label={m.common_close()}
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,54 +268,59 @@
 
       <!-- Error Message -->
       {#if browseError}
-        <div class="mx-4 mt-3 px-4 py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-sm rounded-xl flex-shrink-0">
+        <div class="mx-2 sm:mx-4 mt-2 sm:mt-3 px-3 sm:px-4 py-2 sm:py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs sm:text-sm rounded-xl flex-shrink-0">
           {browseError}
         </div>
       {/if}
 
       <!-- Navigation & Actions -->
-      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex gap-2 items-center flex-shrink-0">
+      <div class="px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-wrap gap-1.5 sm:gap-2 items-center flex-shrink-0">
         <button
           type="button"
           onclick={goUp}
           disabled={showingRoots || (allowedPaths.includes(currentPath) && allowedPaths.length === 1)}
-          class="btn btn-secondary text-sm inline-flex items-center"
+          class="btn btn-secondary text-xs sm:text-sm py-1.5 sm:py-2 px-2 sm:px-3 inline-flex items-center"
+          title={m.path_selector_up()}
         >
-          <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12" />
           </svg>
-          {m.path_selector_up()}
+          <span class="hidden sm:inline">{m.path_selector_up()}</span>
         </button>
         <button
           type="button"
           onclick={startCreatingFolder}
           disabled={creatingFolder}
-          class="btn btn-secondary text-sm inline-flex items-center"
+          class="btn btn-secondary text-xs sm:text-sm py-1.5 sm:py-2 px-2 sm:px-3 inline-flex items-center"
+          title={m.path_selector_new_folder()}
         >
-          <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
-          {m.path_selector_new_folder()}
+          <span class="hidden sm:inline">{m.path_selector_new_folder()}</span>
+          <span class="sm:hidden">New</span>
         </button>
         <div class="flex-1"></div>
         <button
           type="button"
           onclick={() => selectPath(currentPath)}
-          class="btn btn-primary text-sm inline-flex items-center"
+          class="btn btn-primary text-xs sm:text-sm py-1.5 sm:py-2 px-2 sm:px-3 inline-flex items-center"
+          title={m.path_selector_select_this_directory()}
         >
-          <svg class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+          <svg class="w-4 h-4 sm:mr-1.5" fill="currentColor" viewBox="0 0 20 20">
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
           </svg>
-          {m.path_selector_select_this_directory()}
+          <span class="hidden sm:inline">{m.path_selector_select_this_directory()}</span>
+          <span class="sm:hidden">Select</span>
         </button>
       </div>
 
       <!-- Directory Listing -->
-      <div class="flex-1 min-h-0 overflow-y-auto p-3">
+      <div class="flex-1 min-h-0 overflow-y-auto p-2 sm:p-3">
         {#if creatingFolder}
-          <div class="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
-            <div class="flex items-center gap-3">
-              <svg class="w-5 h-5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <div class="mb-2 sm:mb-3 p-2 sm:p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+            <div class="flex flex-col xs:flex-row items-stretch xs:items-center gap-2 sm:gap-3">
+              <svg class="hidden xs:block w-5 h-5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
               </svg>
               <input
@@ -325,8 +330,10 @@
                 placeholder={m.path_selector_folder_name()}
                 class="flex-1 px-3 py-1.5 text-sm border border-blue-300 dark:border-blue-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               />
-              <button type="button" onclick={createFolder} class="btn btn-primary text-sm py-1.5 px-3">{m.path_selector_create()}</button>
-              <button type="button" onclick={cancelCreatingFolder} class="btn btn-secondary text-sm py-1.5 px-3">{m.common_cancel()}</button>
+              <div class="flex gap-2 justify-end">
+                <button type="button" onclick={cancelCreatingFolder} class="btn btn-secondary text-xs sm:text-sm py-1.5 px-2 sm:px-3">{m.common_cancel()}</button>
+                <button type="button" onclick={createFolder} class="btn btn-primary text-xs sm:text-sm py-1.5 px-2 sm:px-3">{m.path_selector_create()}</button>
+              </div>
             </div>
             {#if createError}
               <p class="mt-2 text-xs text-red-600 dark:text-red-400">{createError}</p>
@@ -340,10 +347,10 @@
           </div>
         {:else if entries.length === 0 && !creatingFolder}
           <div class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <svg class="w-12 h-12 mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-10 h-10 sm:w-12 sm:h-12 mb-2 sm:mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            <p>{m.path_selector_directory_empty()}</p>
+            <p class="text-sm sm:text-base">{m.path_selector_directory_empty()}</p>
           </div>
         {:else if !loading}
           <div class="space-y-0.5">
@@ -351,19 +358,19 @@
               {#if entry.is_dir}
                 <button
                   onclick={() => browse(entry.path)}
-                  class="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-left transition-colors"
+                  class="w-full flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-left transition-colors active:bg-gray-200 dark:active:bg-gray-700"
                 >
                   <svg class="w-5 h-5 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                   </svg>
-                  <span class="text-gray-900 dark:text-gray-100 truncate">{entry.name}</span>
+                  <span class="text-sm sm:text-base text-gray-900 dark:text-gray-100 truncate">{entry.name}</span>
                 </button>
               {:else}
-                <div class="flex items-center gap-2.5 px-3 py-2.5 text-gray-400 dark:text-gray-500">
+                <div class="flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 text-gray-400 dark:text-gray-500">
                   <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  <span class="truncate">{entry.name}</span>
+                  <span class="text-sm sm:text-base truncate">{entry.name}</span>
                 </div>
               {/if}
             {/each}
@@ -372,11 +379,11 @@
       </div>
 
       <!-- Footer -->
-      <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center justify-between gap-4 flex-shrink-0">
-        <p class="text-xs text-gray-500 dark:text-gray-400">
+      <div class="px-3 sm:px-5 py-3 sm:py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-col xs:flex-row items-stretch xs:items-center justify-between gap-2 sm:gap-4 flex-shrink-0">
+        <p class="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 text-center xs:text-left">
           {m.path_selector_tip()}
         </p>
-        <button type="button" onclick={closeBrowser} class="btn btn-secondary">
+        <button type="button" onclick={closeBrowser} class="btn btn-secondary text-sm py-2 px-3 sm:px-4">
           {m.common_cancel()}
         </button>
       </div>

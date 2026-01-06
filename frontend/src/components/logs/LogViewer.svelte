@@ -125,98 +125,101 @@
   const endEntry = $derived(Math.min(currentPage * pageSize, total));
 </script>
 
-<!-- Header bar - fixed height -->
-<div class="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800 gap-2 flex-wrap">
-  <span class="text-sm text-gray-500 dark:text-gray-400">
+<!-- Header bar - responsive height -->
+<div class="p-1.5 sm:p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800 gap-1.5 sm:gap-2 flex-wrap">
+  <span class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
     {#if isStreaming}
       {logs.length.toLocaleString()} entries (live)
     {:else if total > 0}
-      {startEntry.toLocaleString()}-{endEntry.toLocaleString()} of {total.toLocaleString()} entries
+      <span class="hidden xs:inline">{startEntry.toLocaleString()}-{endEntry.toLocaleString()} of</span> {total.toLocaleString()} <span class="hidden xs:inline">entries</span>
     {:else}
       0 entries
     {/if}
   </span>
 
-  <div class="flex items-center gap-3">
+  <div class="flex items-center gap-1.5 sm:gap-3">
     {#if isStreaming}
-      <label class="flex items-center gap-2 text-sm cursor-pointer text-gray-700 dark:text-gray-300">
-        <input type="checkbox" checked={autoScrollEnabled} onchange={(e) => toggleAutoScroll(e.currentTarget.checked)} class="rounded text-primary-600" />
-        Auto-scroll
+      <label class="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm cursor-pointer text-gray-700 dark:text-gray-300">
+        <input type="checkbox" checked={autoScrollEnabled} onchange={(e) => toggleAutoScroll(e.currentTarget.checked)} class="rounded text-primary-600 w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <span class="hidden xs:inline">Auto-scroll</span>
+        <span class="xs:hidden">Auto</span>
       </label>
       {#if userScrolledAway && autoScrollEnabled}
         <button
           onclick={jumpToBottom}
-          class="px-2 py-1 text-xs bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/60 flex items-center gap-1"
+          class="p-1.5 sm:px-2 sm:py-1 text-xs bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/60 flex items-center gap-1"
+          title="Jump to latest"
         >
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
-          Jump to latest
+          <span class="hidden sm:inline">Jump to latest</span>
         </button>
       {/if}
     {:else if totalPages > 1}
       <!-- Pagination controls for non-streaming mode -->
-      <div class="flex items-center gap-1 text-sm">
+      <div class="flex items-center gap-0.5 sm:gap-1 text-xs sm:text-sm">
         <button
           onclick={() => goToPage(1)}
           disabled={currentPage === 1 || loading}
-          class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+          class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
           title="First page"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
           </svg>
         </button>
         <button
           onclick={() => goToPage(currentPage - 1)}
           disabled={currentPage === 1 || loading}
-          class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+          class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
           title="Previous page"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
 
-        <span class="px-2 text-gray-600 dark:text-gray-400">
-          Page {currentPage} of {totalPages}
+        <span class="px-1 sm:px-2 text-gray-600 dark:text-gray-400 tabular-nums">
+          <span class="hidden xs:inline">Page</span> {currentPage}<span class="hidden xs:inline"> of {totalPages}</span><span class="xs:hidden">/{totalPages}</span>
         </span>
 
         <button
           onclick={() => goToPage(currentPage + 1)}
           disabled={currentPage === totalPages || loading}
-          class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+          class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
           title="Next page"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
           </svg>
         </button>
         <button
           onclick={() => goToPage(totalPages)}
           disabled={currentPage === totalPages || loading}
-          class="px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
+          class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
           title="Last page"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
           </svg>
         </button>
 
-        <div class="flex items-center gap-1 ml-2">
+        <!-- Jump to page - hidden on very small screens -->
+        <div class="hidden xs:flex items-center gap-1 ml-1 sm:ml-2">
           <input
             type="number"
             bind:value={jumpToPage}
             placeholder="#"
             min="1"
             max={totalPages}
-            class="w-14 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            class="w-10 sm:w-14 px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs sm:text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
             onkeydown={(e) => e.key === 'Enter' && handleJumpToPage()}
           />
           <button
             onclick={handleJumpToPage}
             disabled={loading}
-            class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
+            class="px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
           >
             Go
           </button>
@@ -229,8 +232,8 @@
 <!-- Log content - takes remaining height via calc -->
 <div
   bind:this={container}
-  class="overflow-y-auto bg-gray-900 p-4 font-mono text-sm"
-  style="height: calc(100% - 49px);"
+  class="overflow-y-auto bg-gray-900 p-2 sm:p-4 font-mono text-xs sm:text-sm"
+  style="height: calc(100% - 41px);"
   onscroll={handleScroll}
 >
   {#if loading}
@@ -241,17 +244,28 @@
     <p class="text-gray-500">No log entries.</p>
   {:else}
     {#each logs as entry (entry.id)}
-      <div class="flex gap-2 py-0.5 hover:bg-gray-800">
-        <span class="text-gray-500 shrink-0 tabular-nums">{formatTime(entry.timestamp)}</span>
-        <span
-          class="shrink-0 w-14 uppercase text-xs font-semibold {getLevelClass(entry.level)}"
-        >
-          {entry.level}
-        </span>
-        {#if entry.source}
-          <span class="text-purple-400 shrink-0">[{entry.source}]</span>
-        {/if}
-        <span class="text-gray-200 break-all whitespace-pre-wrap">{entry.message}</span>
+      <!-- Desktop: horizontal layout | Mobile: compact stacked layout -->
+      <div class="py-0.5 hover:bg-gray-800 rounded">
+        <!-- Mobile layout (< sm): stacked with abbreviated info -->
+        <div class="sm:hidden">
+          <div class="flex items-center gap-1.5 text-[10px]">
+            <span class="text-gray-500 tabular-nums">{formatTime(entry.timestamp)}</span>
+            <span class="uppercase font-semibold {getLevelClass(entry.level)}">{entry.level.slice(0, 3)}</span>
+            {#if entry.source}
+              <span class="text-purple-400 truncate max-w-[80px]">[{entry.source}]</span>
+            {/if}
+          </div>
+          <div class="text-gray-200 break-all whitespace-pre-wrap pl-0 mt-0.5 leading-snug">{entry.message}</div>
+        </div>
+        <!-- Desktop layout (>= sm): horizontal -->
+        <div class="hidden sm:flex gap-2">
+          <span class="text-gray-500 shrink-0 tabular-nums">{formatTime(entry.timestamp)}</span>
+          <span class="shrink-0 w-14 uppercase text-xs font-semibold {getLevelClass(entry.level)}">{entry.level}</span>
+          {#if entry.source}
+            <span class="text-purple-400 shrink-0">[{entry.source}]</span>
+          {/if}
+          <span class="text-gray-200 break-all whitespace-pre-wrap">{entry.message}</span>
+        </div>
       </div>
     {/each}
   {/if}
