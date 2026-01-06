@@ -8,7 +8,7 @@ edition = "2021"
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.5", features = ["fs", "cors", "trace", "limit"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace", "limit", "set-header"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono"] }

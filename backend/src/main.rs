@@ -17,7 +17,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use axum::http::{header, HeaderValue, Method};
-use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
@@ -33,6 +33,86 @@ pub struct AppState {
     pub rate_limit_service: Arc<RateLimitService>,
     pub credential_service: Arc<CredentialService>,
     pub log_tx: broadcast::Sender<models::LogMessage>,
+}
+
+use tower::ServiceBuilder;
+
+/// Build security headers layers.
+/// Includes HSTS (when secure_cookies enabled), CSP, and other security headers.
+#[allow(clippy::type_complexity)] // Tower's ServiceBuilder produces complex nested types by design
+fn build_security_headers(config: &Config) -> tower::ServiceBuilder<
+    tower::layer::util::Stack<
+        SetResponseHeaderLayer<HeaderValue>,
+        tower::layer::util::Stack<
+            SetResponseHeaderLayer<HeaderValue>,
+            tower::layer::util::Stack<
+                SetResponseHeaderLayer<HeaderValue>,
+                tower::layer::util::Stack<
+                    SetResponseHeaderLayer<HeaderValue>,
+                    tower::layer::util::Stack<
+                        SetResponseHeaderLayer<HeaderValue>,
+                        tower::layer::util::Identity,
+                    >,
+                >,
+            >,
+        >,
+    >,
+> {
+    let builder = ServiceBuilder::new();
+
+    // Content-Security-Policy: Restrict resource loading
+    // - default-src 'self': Only load resources from same origin by default
+    // - script-src 'self': Scripts only from same origin
+    // - style-src 'self' 'unsafe-inline': Styles from same origin + inline (needed for Svelte)
+    // - img-src 'self' data: blob:: Images from same origin + data URIs (QR codes) + blobs
+    // - connect-src 'self' ws: wss:: Allow same-origin + WebSocket connections
+    // - font-src 'self': Fonts from same origin
+    // - frame-ancestors 'none': Prevent embedding in frames (clickjacking protection)
+    let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; \
+             script-src 'self'; \
+             style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: blob:; \
+             connect-src 'self' ws: wss:; \
+             font-src 'self'; \
+             frame-ancestors 'none'"
+        ),
+    ));
+
+    // X-Content-Type-Options: Prevent MIME type sniffing
+    let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    ));
+
+    // X-Frame-Options: Prevent clickjacking (backup for older browsers)
+    let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("DENY"),
+    ));
+
+    // Referrer-Policy: Control referrer information
+    let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    ));
+
+    // Strict-Transport-Security (HSTS): Only when secure cookies are enabled (HTTPS mode)
+    // max-age=31536000 (1 year), includeSubDomains
+    if config.secure_cookies {
+        builder.layer(SetResponseHeaderLayer::if_not_present(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
+    } else {
+        // When not using HTTPS, add a placeholder layer to maintain consistent types
+        builder.layer(SetResponseHeaderLayer::if_not_present(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=0"),
+        ))
+    }
 }
 
 /// Build a CORS layer based on configuration.
@@ -138,6 +218,30 @@ async fn main() -> anyhow::Result<()> {
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
     let credential_service = Arc::new(CredentialService::new(&config.jwt_secret, db.clone()));
+
+    // Migrate any legacy-encrypted credentials to v1 format (Argon2id)
+    // This is idempotent and safe to run on every startup
+    match credential_service.migrate_legacy_credentials(&db).await {
+        Ok(result) => {
+            if result.migrated > 0 {
+                tracing::info!(
+                    "Credential encryption migration: {} upgraded to v1 format",
+                    result.migrated
+                );
+            }
+            if !result.errors.is_empty() {
+                tracing::warn!(
+                    "Credential migration had {} errors: {:?}",
+                    result.errors.len(),
+                    result.errors
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Credential migration check failed: {}", e);
+        }
+    }
+
     let backup_service = Arc::new(BackupService::new(
         db.clone(),
         logs_db.clone(),
@@ -247,11 +351,15 @@ async fn main() -> anyhow::Result<()> {
         // Apply request body size limit to prevent DoS attacks via large payloads
         .layer(RequestBodyLimitLayer::new(state.config.max_request_body_size));
 
+    // Build security headers layers
+    let security_headers = build_security_headers(&config);
+
     let app = Router::new()
         .nest("/api", api_routes)
         .fallback_service(ServeDir::new(&config.static_files_dir))
         .layer(TraceLayer::new_for_http())
         .layer(build_cors_layer(&config))
+        .layer(security_headers)
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);

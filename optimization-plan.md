@@ -35,6 +35,8 @@
 - ✅ IP spoofing vulnerability fixed with trusted proxy configuration and CIDR support
 - ✅ Request body size limits added via `RequestBodyLimitLayer` (configurable, default 10MB)
 - ✅ All critical `.unwrap()` calls replaced with `.expect()` or proper error handling
+- ✅ HSTS/CSP security headers added (CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, HSTS)
+- ✅ Weak encryption key derivation fixed with Argon2id and per-credential salt + automatic migration
 
 ### Key Findings
 
@@ -43,7 +45,7 @@
 | Dead Code | 8-10 items | 3 resolved (extractors), 1 false positive |
 | Code Duplication | ~800+ lines | ~85 lines resolved (token extraction) |
 | Performance Issues | 12 items | 1 resolved (O(n) lookup) |
-| Security Vulnerabilities | 9 critical items | 2 resolved (IP spoofing, request limits) |
+| Security Vulnerabilities | 9 critical items | 4 resolved (IP spoofing, request limits, HSTS/CSP, encryption) |
 | Resilience Gaps | 7 items | 1 resolved (unwrap panics) |
 | Architectural Issues | 5 items | Auth flow consolidated |
 
@@ -361,16 +363,18 @@ if !is_path_allowed(&canonical, &allowed_paths) {  // Time of use
 
 **Fix**: Use atomic operations or hold locks during validation.
 
-#### 4. Weak Encryption Key Derivation
-**File**: `services/credential_service.rs:26-37`
+#### 4. ~~Weak Encryption Key Derivation~~ ✅ RESOLVED
+**File**: `services/credential_service.rs`
 
-```rust
-// Using SHA-256 with static salt - should use proper KDF
-hasher.update(jwt_secret.as_bytes());
-hasher.update(b"credential_encryption_salt");  // Static!
-```
+**Status**: Fixed with proper Argon2id key derivation and automatic migration.
 
-**Fix**: Use Argon2 or PBKDF2 for key derivation with random per-credential salt.
+**Implementation**:
+- Upgraded to Argon2id with per-credential random salt (16 bytes)
+- New v1 encryption format: `MAGIC (4 bytes) + salt (16 bytes) + nonce (12 bytes) + ciphertext`
+- Automatic migration at startup upgrades legacy credentials to v1 format
+- Backward compatibility maintained: legacy format still decryptable
+- Argon2id parameters: 64 MiB memory, 3 iterations, 4 parallel lanes
+- Migration is idempotent and safe to run multiple times
 
 #### 5. No Token Revocation Mechanism
 **File**: `services/auth_service.rs:59-76`
@@ -395,18 +399,25 @@ The `/auth/setup` endpoint allows unlimited attempts.
 
 **Fix**: Add rate limiting or lockout after N failed attempts.
 
-#### 8. Missing HSTS and CSP Headers
-**File**: `main.rs` (missing)
+#### 8. ~~Missing HSTS and CSP Headers~~ ✅ RESOLVED
+**File**: `main.rs`
 
-No security headers enforced.
+**Status**: Fixed with comprehensive security headers middleware.
 
-**Fix**: Add tower middleware for security headers:
-```rust
-.layer(SetResponseHeaderLayer::if_not_present(
-    header::STRICT_TRANSPORT_SECURITY,
-    HeaderValue::from_static("max-age=31536000; includeSubDomains")
-))
-```
+**Implementation**:
+- `Content-Security-Policy`: Restricts resource loading (default-src, script-src, style-src, img-src, connect-src, font-src, frame-ancestors)
+- `Strict-Transport-Security`: HSTS with 1-year max-age (enabled when `SECURE_COOKIES=true`)
+- `X-Content-Type-Options: nosniff`: Prevents MIME sniffing
+- `X-Frame-Options: DENY`: Clickjacking protection
+- `Referrer-Policy: strict-origin-when-cross-origin`: Controls referrer information
+
+**CSP Policy Details**:
+- `default-src 'self'`: Only same-origin resources
+- `script-src 'self'`: Scripts from same origin only
+- `style-src 'self' 'unsafe-inline'`: Styles from same origin + inline (Svelte needs this)
+- `img-src 'self' data: blob:`: Images from same origin + data URIs (QR codes) + blobs
+- `connect-src 'self' ws: wss:`: Same-origin + WebSocket connections
+- `frame-ancestors 'none'`: Cannot be embedded in frames
 
 #### 9. S3 Error Messages May Leak Credentials
 **File**: `services/providers/s3.rs:137-150`
@@ -570,7 +581,7 @@ let provider = ProviderFactory::new()
 
 **Note**: `clearError()` in `fileBrowser.ts` was confirmed to be used by `authStore` and is NOT dead code.
 
-### Phase 2: Security Hardening (3-5 days) - PARTIALLY COMPLETED
+### Phase 2: Security Hardening (3-5 days) - MOSTLY COMPLETED
 
 | Task | Impact | Effort | Status |
 |------|--------|--------|--------|
@@ -578,7 +589,8 @@ let provider = ProviderFactory::new()
 | Add request size limits | High | Low | ✅ Done - `RequestBodyLimitLayer` added |
 | Add operation timeouts | High | Medium | Pending |
 | Fix TOCTOU in path validation | Medium | Medium | Pending |
-| Add HSTS/CSP headers | Medium | Low | Pending |
+| Add HSTS/CSP headers | Medium | Low | ✅ Done - CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy |
+| Upgrade encryption key derivation | High | Medium | ✅ Done - Argon2id with per-credential salt + auto-migration |
 
 ### Phase 3: Code Consolidation (1 week)
 
@@ -611,8 +623,9 @@ After implementing this plan, the codebase should achieve:
 - [ ] All operations have explicit timeouts
 - [x] Request size limits on all endpoints (10MB default, configurable via `MAX_REQUEST_BODY_SIZE`)
 - [x] No `.unwrap()` without `.expect()` context (all critical unwraps fixed)
-- [ ] Security headers on all responses
+- [x] Security headers on all responses (CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
 - [x] IP spoofing vulnerability fixed (trusted proxy support with CIDR)
+- [x] Strong encryption key derivation (Argon2id with per-credential salt, auto-migration)
 - [ ] ~800 lines of duplicate code eliminated (~85 done via token extraction)
 - [ ] Modal components reduced to single reusable implementation
 - [ ] All large components under 400 lines
@@ -629,9 +642,9 @@ After implementing this plan, the codebase should achieve:
 - `backend/src/extractors.rs` - ~~Unused code~~ ✅ (now central token utility)
 - `backend/src/errors.rs` - Dead code markers
 - `backend/src/services/backup_service.rs` - Race conditions
-- `backend/src/services/credential_service.rs` - Weak encryption
+- `backend/src/services/credential_service.rs` - ~~Weak encryption~~ ✅ (Argon2id + auto-migration)
 - `backend/src/services/providers/*.rs` - ~~Unwrap panics~~ ✅, timeouts (pending)
-- `backend/src/main.rs` - ~~Request size limits~~ ✅
+- `backend/src/main.rs` - ~~Request size limits~~ ✅, ~~Security headers~~ ✅
 - `backend/src/config.rs` - ~~Trusted proxies config~~ ✅, ~~Request size config~~ ✅
 
 ### Frontend Files with Issues
