@@ -384,8 +384,37 @@ impl RsyncProvider {
             });
         }
 
-        // Get destination free space using df command
+        // Ensure mount point directory exists for df command
+        // (may not exist if auto_mount is disabled and no source dirs were processed)
+        if let Err(e) = tokio::fs::create_dir_all(&mount_point).await {
+            tracing::warn!("Could not create mount point directory {}: {}", mount_point, e);
+        }
+
+        // Verify mount point exists and is actually mounted (not just an empty directory)
+        let mount_check = Command::new("findmnt")
+            .args(["--target", &mount_point, "-n", "-o", "TARGET"])
+            .output()
+            .await;
+
+        let is_mounted = match &mount_check {
+            Ok(out) => {
+                let target = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                out.status.success() && !target.is_empty()
+            }
+            Err(_) => false,
+        };
+
+        if !is_mounted {
+            tracing::warn!(
+                "Mount point {} is not mounted or doesn't exist (did_mount={})",
+                mount_point, did_mount
+            );
+        }
+
+        // Get destination free space using statvfs via df command
+        // First try the GNU coreutils --output option, then fall back to POSIX df
         let (destination_free, destination_total) = {
+            // Try GNU df with --output first (most accurate)
             let output = Command::new("df")
                 .args(["--block-size=1", "--output=avail,size", &mount_point])
                 .output()
@@ -400,18 +429,79 @@ impl RsyncProvider {
                         let parts: Vec<&str> = data_line.split_whitespace().collect();
                         let free: u64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
                         let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                        (free, total)
+                        if free > 0 || total > 0 {
+                            (free, total)
+                        } else {
+                            tracing::warn!("df returned zero values, output: {:?}", stdout);
+                            (0, 0)
+                        }
                     } else {
+                        tracing::warn!("df output has no data line: {:?}", stdout);
                         (0, 0)
                     }
                 }
-                _ => (0, 0),
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    tracing::warn!(
+                        "df --output failed for {}: stderr={}, stdout={}, exit={:?}",
+                        mount_point, stderr.trim(), stdout.trim(), out.status.code()
+                    );
+
+                    // Fallback: try POSIX df (columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on)
+                    let fallback = Command::new("df")
+                        .args(["-B1", &mount_point])
+                        .output()
+                        .await;
+
+                    match fallback {
+                        Ok(fb) if fb.status.success() => {
+                            let fb_stdout = String::from_utf8_lossy(&fb.stdout);
+                            let mut lines = fb_stdout.lines();
+                            lines.next(); // Skip header
+                            if let Some(data_line) = lines.next() {
+                                let parts: Vec<&str> = data_line.split_whitespace().collect();
+                                // POSIX: Filesystem, Size, Used, Avail, Use%, Mount
+                                let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                                let free: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                                tracing::info!("df fallback succeeded: free={}, total={}", free, total);
+                                (free, total)
+                            } else {
+                                (0, 0)
+                            }
+                        }
+                        Ok(fb) => {
+                            tracing::error!(
+                                "df fallback also failed for {}: {}",
+                                mount_point,
+                                String::from_utf8_lossy(&fb.stderr).trim()
+                            );
+                            (0, 0)
+                        }
+                        Err(e) => {
+                            tracing::error!("df fallback command error: {}", e);
+                            (0, 0)
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("df command error for {}: {}", mount_point, e);
+                    (0, 0)
+                }
             }
         };
 
         // Unmount if we mounted
         if did_mount && auto_unmount && usb_uuid.is_some() {
             self.unmount_standalone(&mount_point).await;
+        }
+
+        // If we couldn't get destination space info, return an error
+        if destination_free == 0 && destination_total == 0 {
+            return Err(ProviderError::ConfigError(format!(
+                "Could not determine free space at destination '{}'. Is the drive mounted?",
+                mount_point
+            )));
         }
 
         // Add 5% safety margin
