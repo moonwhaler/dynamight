@@ -94,6 +94,7 @@ create_package() {
     # Copy scripts
     mkdir -p "$pkg_dir/scripts"
     cp "$SCRIPT_DIR/install.sh" "$pkg_dir/scripts/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/update.sh" "$pkg_dir/scripts/" 2>/dev/null || true
 
     # Copy systemd service file
     cp "$SCRIPT_DIR/dynamight.service" "$pkg_dir/" 2>/dev/null || true
@@ -148,6 +149,14 @@ System Service Installation:
 4. Open http://your-server:8080 in your browser
 5. Complete the initial setup to create your admin account
 
+Updating an Existing Installation:
+1. Extract the new release
+2. Run: sudo ./scripts/update.sh
+   - Creates automatic backup before updating
+   - Rolls back automatically if service fails to start
+3. To rollback manually: sudo ./scripts/update.sh rollback
+4. To list backups: ./scripts/update.sh list
+
 First-Time Setup:
   On first launch, Dynamight will prompt you to create an admin
   account through the web interface. Choose a strong password!
@@ -186,12 +195,16 @@ show_summary() {
     echo "  Package: $BUILD_DIR/${PACKAGE_NAME}.tar.gz"
     echo "  Size:    $size"
     echo ""
-    echo "To deploy:"
+    echo "To deploy (new installation):"
     echo "  1. Copy ${PACKAGE_NAME}.tar.gz to your server"
     echo "  2. Extract: tar -xzf ${PACKAGE_NAME}.tar.gz"
     echo "  3. cd ${PACKAGE_NAME}"
     echo "  4. Run: sudo ./scripts/install.sh"
     echo "     or manually: ./run.sh"
+    echo ""
+    echo "To update existing installation:"
+    echo "  1. Copy and extract as above"
+    echo "  2. Run: sudo ./scripts/update.sh"
     echo ""
 }
 
