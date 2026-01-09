@@ -9,6 +9,7 @@ set -e
 # Configuration (must match install.sh)
 INSTALL_DIR="/opt/dynamight"
 CONFIG_DIR="/etc/dynamight"
+DATA_DIR="/var/lib/dynamight"
 BACKUP_DIR="/opt/dynamight-backups"
 MAX_BACKUPS=3
 SERVICE_NAME="dynamight"
@@ -85,6 +86,16 @@ create_backup() {
     # Backup migrations
     if [[ -d "$INSTALL_DIR/migrations" ]]; then
         cp -r "$INSTALL_DIR/migrations" "$backup_path/"
+    fi
+
+    # Backup database files
+    if [[ -f "$DATA_DIR/dynamight.db" ]]; then
+        log_info "Backing up database..."
+        cp "$DATA_DIR/dynamight.db" "$backup_path/"
+        # Also backup SQLite WAL files if they exist
+        [[ -f "$DATA_DIR/dynamight.db-wal" ]] && cp "$DATA_DIR/dynamight.db-wal" "$backup_path/"
+        [[ -f "$DATA_DIR/dynamight.db-shm" ]] && cp "$DATA_DIR/dynamight.db-shm" "$backup_path/"
+        log_success "Database backed up"
     fi
 
     # Store version info
@@ -292,9 +303,39 @@ do_update() {
     create_backup
     stop_service
     install_new_files
-    start_service
 
-    if check_service_health; then
+    # Only restart and health check if service was running before
+    if [[ "$SERVICE_WAS_RUNNING" == true ]]; then
+        start_service
+
+        if check_service_health; then
+            cleanup_old_backups
+            echo ""
+            echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+            echo -e "${GREEN}║            Update Successful!                    ║${NC}"
+            echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "  Previous version: $old_version"
+            echo "  Current version:  $new_version"
+            echo "  Backup saved:     $BACKUP_DIR/$BACKUP_TIMESTAMP"
+            echo ""
+            echo "  View logs: journalctl -u $SERVICE_NAME -f"
+            echo ""
+        else
+            log_error "Update failed! Service is not healthy."
+            log_warn "Attempting automatic rollback..."
+
+            if rollback "$BACKUP_DIR/$BACKUP_TIMESTAMP"; then
+                log_success "Automatic rollback succeeded"
+                log_warn "Please check the new binary for issues before retrying"
+            else
+                log_error "Automatic rollback failed!"
+                log_error "Manual intervention required"
+            fi
+            exit 1
+        fi
+    else
+        # Service was not running, just complete the update without starting
         cleanup_old_backups
         echo ""
         echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
@@ -305,20 +346,9 @@ do_update() {
         echo "  Current version:  $new_version"
         echo "  Backup saved:     $BACKUP_DIR/$BACKUP_TIMESTAMP"
         echo ""
-        echo "  View logs: journalctl -u $SERVICE_NAME -f"
+        log_warn "Service was not running before update and was not started."
+        echo "  Start manually: sudo systemctl start $SERVICE_NAME"
         echo ""
-    else
-        log_error "Update failed! Service is not healthy."
-        log_warn "Attempting automatic rollback..."
-
-        if rollback "$BACKUP_DIR/$BACKUP_TIMESTAMP"; then
-            log_success "Automatic rollback succeeded"
-            log_warn "Please check the new binary for issues before retrying"
-        else
-            log_error "Automatic rollback failed!"
-            log_error "Manual intervention required"
-        fi
-        exit 1
     fi
 }
 
