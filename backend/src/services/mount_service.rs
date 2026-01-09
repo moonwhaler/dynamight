@@ -24,6 +24,7 @@ pub struct UsbDrive {
     pub size: Option<String>,
     pub mountpoint: Option<String>,
     pub label: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +53,8 @@ struct LsblkDevice {
     mountpoint: Option<String>,
     #[serde(default)]
     label: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
     #[serde(default)]
     tran: Option<String>,
     #[serde(default)]
@@ -153,7 +156,7 @@ impl MountService {
             .args([
                 "-J",
                 "-o",
-                "NAME,UUID,FSTYPE,SIZE,MOUNTPOINT,LABEL,TRAN",
+                "NAME,UUID,FSTYPE,SIZE,MOUNTPOINT,LABEL,MODEL,TRAN",
             ])
             .output()?;
 
@@ -169,6 +172,9 @@ impl MountService {
         for device in lsblk.blockdevices {
             // Check if it's a USB device
             if device.tran.as_deref() == Some("usb") {
+                // Trim whitespace from model (lsblk often pads with spaces)
+                let device_model = device.model.map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+
                 // Get partitions
                 if let Some(children) = device.children {
                     for partition in children {
@@ -180,6 +186,8 @@ impl MountService {
                                 size: partition.size,
                                 mountpoint: partition.mountpoint,
                                 label: partition.label,
+                                // Model comes from parent device, not partition
+                                model: device_model.clone(),
                             });
                         }
                     }
@@ -192,6 +200,7 @@ impl MountService {
                         size: device.size,
                         mountpoint: device.mountpoint,
                         label: device.label,
+                        model: device_model,
                     });
                 }
             }

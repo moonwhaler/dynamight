@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { LocalDestinationConfig, UsbDrive } from '../../../lib/types';
   import { api } from '../../../lib/api';
+  import { getDriveDisplayName } from '$lib/utils/driveUtils';
   import SinglePathSelector from '../SinglePathSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import BrowseModal from '../../filebrowser/BrowseModal.svelte';
@@ -96,7 +97,7 @@
         <option value={null}>{m.local_no_usb_mount()}</option>
         {#each drives as drive}
           <option value={drive.uuid}>
-            {drive.label || drive.name} ({drive.uuid.slice(0, 8)}...) - {drive.size}
+            {getDriveDisplayName(drive)} ({drive.uuid.slice(0, 8)}...) - {drive.size}
             {#if drive.mountpoint}({m.filebrowser_mounted()}){/if}
           </option>
         {/each}

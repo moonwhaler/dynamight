@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UsbDrive } from '$lib/types';
+  import { getDriveDisplayName, getDriveFullName } from '$lib/utils/driveUtils';
   import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
@@ -180,8 +181,11 @@
 
               <!-- Drive info -->
               <div class="min-w-0">
-                <div class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-32">
-                  {drive.label || drive.name}
+                <div
+                  class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-32"
+                  title={getDriveFullName(drive)}
+                >
+                  {getDriveDisplayName(drive)}
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                   {drive.size || ''}{drive.fstype ? ` • ${drive.fstype}` : ''}

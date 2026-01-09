@@ -106,12 +106,32 @@ check_dependencies() {
 }
 
 setup_config() {
-    local config_file="$PROJECT_DIR/dynamight.toml"
-    local example_file="$PROJECT_DIR/dynamight.toml.example"
+    local config_file=""
+    local example_file=""
 
-    if [[ ! -f "$config_file" ]]; then
-        if [[ -f "$example_file" ]]; then
-            log_warn "dynamight.toml not found, copying from dynamight.toml.example"
+    # Look for config file with fallbacks:
+    # 1. Project root directory
+    # 2. Backend directory
+    if [[ -f "$PROJECT_DIR/dynamight.toml" ]]; then
+        config_file="$PROJECT_DIR/dynamight.toml"
+        log_info "Found config at: $config_file"
+    elif [[ -f "$PROJECT_DIR/backend/dynamight.toml" ]]; then
+        config_file="$PROJECT_DIR/backend/dynamight.toml"
+        log_info "Found config at: $config_file"
+    fi
+
+    # Look for example file with same fallbacks
+    if [[ -f "$PROJECT_DIR/dynamight.toml.example" ]]; then
+        example_file="$PROJECT_DIR/dynamight.toml.example"
+    elif [[ -f "$PROJECT_DIR/backend/dynamight.toml.example" ]]; then
+        example_file="$PROJECT_DIR/backend/dynamight.toml.example"
+    fi
+
+    if [[ -z "$config_file" ]]; then
+        if [[ -n "$example_file" ]]; then
+            # Create config in project root by default
+            config_file="$PROJECT_DIR/dynamight.toml"
+            log_warn "dynamight.toml not found, copying from $example_file"
             cp "$example_file" "$config_file"
 
             # Generate a random JWT secret for development
@@ -129,10 +149,13 @@ setup_config() {
 
             log_success "Generated development config with random JWT secret"
         else
-            log_error "No config file found. Please create dynamight.toml from dynamight.toml.example"
+            log_error "No config file found. Please create dynamight.toml in project root or backend directory"
             exit 1
         fi
     fi
+
+    # Export config path for the backend to use
+    export DYNAMIGHT_CONFIG="$config_file"
 
     # Set development-specific overrides via environment variables
     export HOST="${HOST:-127.0.0.1}"

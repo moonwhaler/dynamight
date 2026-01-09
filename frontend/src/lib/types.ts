@@ -279,6 +279,7 @@ export interface UsbDrive {
   size: string | null;
   mountpoint: string | null;
   label: string | null;
+  model: string | null;
 }
 
 export interface DirectoryEntry {
