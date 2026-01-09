@@ -1,31 +1,18 @@
 [Unit]
 Description=Dynamight Backup Management System
-Documentation=https://github.com/your-repo/dynamight
+Documentation=https://github.com/moonwhaler/dynamight
 After=network.target
 
 [Service]
 Type=simple
-User=dynamight
-Group=dynamight
 WorkingDirectory=/opt/dynamight
-EnvironmentFile=/etc/dynamight/.env
+Environment=DYNAMIGHT_CONFIG=/etc/dynamight/dynamight.toml
+Environment=RUST_LOG=info,dynamight=debug
 ExecStart=/opt/dynamight/dynamight
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
 TimeoutStopSec=30
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-ReadWritePaths=/var/lib/dynamight /var/log/dynamight
-
-# Allow mounting drives (required for backup functionality)
-# Remove these lines if running in Docker or not using mount features
-CapabilityBoundingSet=CAP_SYS_ADMIN
-AmbientCapabilities=CAP_SYS_ADMIN
 
 # Logging
 StandardOutput=journal
