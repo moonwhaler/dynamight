@@ -223,6 +223,11 @@ export interface Job {
   updated_at: string;
   last_run_status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | null;
   last_run_at?: string | null;
+
+  // Destination storage info (updated after job runs)
+  dest_storage_free?: number | null;
+  dest_storage_total?: number | null;
+  dest_storage_updated_at?: string | null;
 }
 
 export interface Schedule {
@@ -280,6 +285,7 @@ export interface UsbDrive {
   mountpoint: string | null;
   label: string | null;
   model: string | null;
+  available: string | null;
 }
 
 export interface DirectoryEntry {

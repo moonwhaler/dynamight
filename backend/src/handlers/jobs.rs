@@ -223,7 +223,7 @@ pub async fn create_job(
     .bind(&req.description)
     .bind(req.enabled.unwrap_or(true))
     .bind(&req.usb_uuid)
-    .bind(&req.mount_point)
+    .bind(req.mount_point.as_deref().unwrap_or(""))
     .bind(req.auto_mount.unwrap_or(true))
     .bind(req.auto_unmount.unwrap_or(true))
     .bind(&source_dirs_json)
@@ -256,7 +256,10 @@ pub async fn create_job(
                 None => ApiError::new(ErrorCode::JobCreateFailed).into_response(),
             }
         }
-        Err(_) => ApiError::new(ErrorCode::JobCreateFailed).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to create job: {:?}", e);
+            ApiError::new(ErrorCode::JobCreateFailed).into_response()
+        }
     }
 }
 
@@ -408,7 +411,10 @@ pub async fn update_job(
                 None => ApiError::new(ErrorCode::JobUpdateFailed).into_response(),
             }
         }
-        Err(_) => ApiError::new(ErrorCode::JobUpdateFailed).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update job {}: {:?}", id, e);
+            ApiError::new(ErrorCode::JobUpdateFailed).into_response()
+        }
     }
 }
 
@@ -540,6 +546,11 @@ pub async fn run_job(
             .bind(run_id)
             .execute(&db)
             .await;
+
+            // Update storage info after successful completion
+            if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
+                let _ = backup_service.update_storage_info(id, &job).await;
+            }
         }
 
         // Cleanup old runs

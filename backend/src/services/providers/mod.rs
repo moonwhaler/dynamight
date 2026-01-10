@@ -36,6 +36,18 @@ pub struct SyncResult {
     pub error_message: Option<String>,
 }
 
+/// Storage quota/space information from a destination
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StorageInfo {
+    /// Free space in bytes (None if not available/unlimited)
+    pub free: Option<u64>,
+    /// Total space in bytes (None if not available/unlimited)
+    pub total: Option<u64>,
+    /// Whether storage info is supported by this provider
+    #[serde(default)]
+    pub supported: bool,
+}
+
 /// Progress update during sync (for future use with progress callbacks)
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -190,6 +202,17 @@ pub trait SyncProvider: Send + Sync {
             details: None,
             host_key_fingerprint: None,
         })
+    }
+
+    /// Get storage info for the destination
+    /// Returns storage quota/free space information if available
+    /// Default implementation returns unsupported
+    async fn get_storage_info(
+        &self,
+        _destination: &DestinationConfig,
+        _credential: Option<&CredentialData>,
+    ) -> Result<StorageInfo, ProviderError> {
+        Ok(StorageInfo::default())
     }
 
     /// Check if a run has been cancelled (providers should check this periodically)

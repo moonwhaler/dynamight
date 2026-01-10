@@ -115,6 +115,18 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Storage info migrations (004_storage_info.sql)
+    // Destination storage info for job cards display
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN dest_storage_free INTEGER DEFAULT NULL")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN dest_storage_total INTEGER DEFAULT NULL")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN dest_storage_updated_at DATETIME DEFAULT NULL")
+        .execute(pool)
+        .await;
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }

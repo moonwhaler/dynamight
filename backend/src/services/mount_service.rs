@@ -25,6 +25,7 @@ pub struct UsbDrive {
     pub mountpoint: Option<String>,
     pub label: Option<String>,
     pub model: Option<String>,
+    pub available: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +151,105 @@ impl MountService {
         }
     }
 
+    /// Get available space for a mounted filesystem using df
+    fn get_available_space_mounted(mountpoint: &str) -> Option<String> {
+        let output = Command::new("df")
+            .args(["-h", "--output=avail", mountpoint])
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        // df output has a header line, so take the second line
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .nth(1)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Get available space for an unmounted ext2/3/4 filesystem by reading the superblock
+    fn get_available_space_from_device(device_name: &str, fstype: Option<&str>) -> Option<String> {
+        // Only support ext filesystems for now (most common on Linux USB drives)
+        let fs = fstype?;
+        if !fs.starts_with("ext") {
+            return None;
+        }
+
+        let device_path = format!("/dev/{}", device_name);
+        let output = Command::new("dumpe2fs")
+            .args(["-h", &device_path])
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Parse Block size, Block count, and Free blocks from dumpe2fs output
+        let mut block_size: Option<u64> = None;
+        let mut free_blocks: Option<u64> = None;
+
+        for line in stdout.lines() {
+            if line.starts_with("Block size:") {
+                block_size = line
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.trim().parse().ok());
+            } else if line.starts_with("Free blocks:") {
+                free_blocks = line
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.trim().parse().ok());
+            }
+        }
+
+        // Calculate free space in bytes, then format human-readable
+        let free_bytes = free_blocks? * block_size?;
+        Some(Self::format_bytes(free_bytes))
+    }
+
+    /// Format bytes as human-readable string (matches df -h output style)
+    fn format_bytes(bytes: u64) -> String {
+        const KIB: u64 = 1024;
+        const MIB: u64 = KIB * 1024;
+        const GIB: u64 = MIB * 1024;
+        const TIB: u64 = GIB * 1024;
+
+        if bytes >= TIB {
+            format!("{:.1}T", bytes as f64 / TIB as f64)
+        } else if bytes >= GIB {
+            format!("{:.1}G", bytes as f64 / GIB as f64)
+        } else if bytes >= MIB {
+            format!("{:.1}M", bytes as f64 / MIB as f64)
+        } else if bytes >= KIB {
+            format!("{:.1}K", bytes as f64 / KIB as f64)
+        } else {
+            format!("{}B", bytes)
+        }
+    }
+
+    /// Get available space - tries mounted path first, falls back to reading device superblock
+    fn get_available_space(
+        mountpoint: Option<&str>,
+        device_name: &str,
+        fstype: Option<&str>,
+    ) -> Option<String> {
+        // If mounted, use df (faster and works for all filesystem types)
+        if let Some(mp) = mountpoint {
+            if let Some(space) = Self::get_available_space_mounted(mp) {
+                return Some(space);
+            }
+        }
+
+        // For unmounted drives, try reading the superblock directly
+        Self::get_available_space_from_device(device_name, fstype)
+    }
+
     /// List USB drives
     pub fn list_usb_drives(&self) -> Result<Vec<UsbDrive>, MountError> {
         let output = Command::new("lsblk")
@@ -179,6 +279,11 @@ impl MountService {
                 if let Some(children) = device.children {
                     for partition in children {
                         if let Some(uuid) = partition.uuid {
+                            let available = Self::get_available_space(
+                                partition.mountpoint.as_deref(),
+                                &partition.name,
+                                partition.fstype.as_deref(),
+                            );
                             drives.push(UsbDrive {
                                 uuid,
                                 name: partition.name,
@@ -188,11 +293,17 @@ impl MountService {
                                 label: partition.label,
                                 // Model comes from parent device, not partition
                                 model: device_model.clone(),
+                                available,
                             });
                         }
                     }
                 } else if let Some(uuid) = device.uuid {
                     // Device itself has a filesystem
+                    let available = Self::get_available_space(
+                        device.mountpoint.as_deref(),
+                        &device.name,
+                        device.fstype.as_deref(),
+                    );
                     drives.push(UsbDrive {
                         uuid,
                         name: device.name,
@@ -201,6 +312,7 @@ impl MountService {
                         mountpoint: device.mountpoint,
                         label: device.label,
                         model: device_model,
+                        available,
                     });
                 }
             }

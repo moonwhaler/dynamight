@@ -1,6 +1,6 @@
 //! WebDAV sync provider (Nextcloud, ownCloud, etc.)
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
+use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -270,6 +270,99 @@ impl SyncProvider for WebDavProvider {
 
         Ok(result)
     }
+
+    async fn get_storage_info(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<StorageInfo, ProviderError> {
+        let (base_url, remote_path) = match destination {
+            DestinationConfig::WebDav { url, remote_path } => (url.clone(), remote_path.clone()),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        let (username, password) = match credential {
+            Some(CredentialData::WebDav { username, password }) => (username.clone(), password.clone()),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        let check_url = if remote_path.is_empty() {
+            base_url.trim_end_matches('/').to_string()
+        } else {
+            format!("{}/{}", base_url.trim_end_matches('/'), remote_path.trim_start_matches('/'))
+        };
+
+        // RFC 4331 quota properties
+        let propfind_body = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:quota-available-bytes/>
+    <D:quota-used-bytes/>
+  </D:prop>
+</D:propfind>"#;
+
+        let response = self
+            .client
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").expect("PROPFIND is a valid HTTP method"),
+                &check_url,
+            )
+            .basic_auth(&username, Some(&password))
+            .header("Depth", "0")
+            .header("Content-Type", "application/xml")
+            .body(propfind_body)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 207 => {
+                let body = resp.text().await.unwrap_or_default();
+
+                // Simple XML parsing for quota values
+                let available = extract_xml_value(&body, "quota-available-bytes");
+                let used = extract_xml_value(&body, "quota-used-bytes");
+
+                match (available, used) {
+                    (Some(avail), Some(u)) => {
+                        let total = avail.saturating_add(u);
+                        Ok(StorageInfo {
+                            free: Some(avail),
+                            total: Some(total),
+                            supported: true,
+                        })
+                    }
+                    (Some(avail), None) => Ok(StorageInfo {
+                        free: Some(avail),
+                        total: None,
+                        supported: true,
+                    }),
+                    _ => Ok(StorageInfo::default()),
+                }
+            }
+            _ => Ok(StorageInfo::default()),
+        }
+    }
+}
+
+/// Simple XML value extraction helper for WebDAV quota properties
+fn extract_xml_value(xml: &str, tag: &str) -> Option<u64> {
+    // Look for <D:tag>value</D:tag> or <tag>value</tag> or <d:tag>value</d:tag>
+    let patterns = [
+        format!(r"<D:{}[^>]*>(\d+)</D:{}>", tag, tag),
+        format!(r"<d:{}[^>]*>(\d+)</d:{}>", tag, tag),
+        format!(r"<{}[^>]*>(\d+)</{}>", tag, tag),
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(caps) = re.captures(xml) {
+                if let Some(m) = caps.get(1) {
+                    return m.as_str().parse().ok();
+                }
+            }
+        }
+    }
+    None
 }
 
 impl WebDavProvider {

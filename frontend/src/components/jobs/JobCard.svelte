@@ -142,6 +142,14 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
+  // Storage info derived values
+  const hasStorageInfo = $derived(job.dest_storage_free != null && job.dest_storage_total != null);
+  const storagePercentage = $derived(
+    job.dest_storage_free != null && job.dest_storage_total != null && job.dest_storage_total > 0
+      ? Math.round(((job.dest_storage_total - job.dest_storage_free) / job.dest_storage_total) * 100)
+      : 0
+  );
+
   async function handleCheckSpace() {
     if (checkingSpace || isRunning) return;
     checkingSpace = true;
@@ -220,6 +228,32 @@
       </svg>
       <span class="truncate">{job.mount_point}/{job.backup_subdir}</span>
     </div>
+    {#if hasStorageInfo && job.dest_storage_total}
+      <div
+        class="flex items-center gap-2"
+        title={m.storage_tooltip({ free: formatBytes(job.dest_storage_free ?? 0), total: formatBytes(job.dest_storage_total) })}
+      >
+        <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+          />
+        </svg>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between text-xs mb-0.5">
+            <span class="truncate">{formatBytes(job.dest_storage_free ?? 0)} {m.storage_free_short()}</span>
+          </div>
+          <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+            <div
+              class="h-1.5 rounded-full transition-all {storagePercentage >= 90 ? 'bg-red-500' : storagePercentage >= 75 ? 'bg-orange-500' : 'bg-green-500'}"
+              style="width: {storagePercentage}%"
+            ></div>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="mt-4 flex items-center justify-between">

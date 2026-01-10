@@ -36,6 +36,11 @@ pub struct Job {
     pub sync_options: Option<String>,       // JSON
     pub credential_id: Option<i64>,
 
+    // Destination storage info (updated after job runs)
+    pub dest_storage_free: Option<i64>,
+    pub dest_storage_total: Option<i64>,
+    pub dest_storage_updated_at: Option<DateTime<Utc>>,
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -203,6 +208,14 @@ pub struct JobResponse {
     pub last_run_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<DateTime<Utc>>,
+
+    // Destination storage info
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dest_storage_free: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dest_storage_total: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dest_storage_updated_at: Option<DateTime<Utc>>,
 }
 
 impl From<Job> for JobResponse {
@@ -265,6 +278,9 @@ impl From<Job> for JobResponse {
             updated_at: job.updated_at,
             last_run_status: None,
             last_run_at: None,
+            dest_storage_free: job.dest_storage_free,
+            dest_storage_total: job.dest_storage_total,
+            dest_storage_updated_at: job.dest_storage_updated_at,
         }
     }
 }

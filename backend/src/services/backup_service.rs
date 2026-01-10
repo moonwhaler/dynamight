@@ -381,4 +381,45 @@ impl BackupService {
             .await?;
         Ok(result.rows_affected())
     }
+
+    /// Update destination storage info for a job after successful completion
+    pub async fn update_storage_info(&self, job_id: i64, job: &Job) -> anyhow::Result<()> {
+        let destination = job.get_destination_config();
+        let provider = providers::create_provider(&destination);
+
+        // Load credentials if needed
+        let credential = if let Some(cred_id) = job.credential_id {
+            self.credential_service.get_decrypted(cred_id).await.ok()
+        } else {
+            None
+        };
+
+        // Get storage info from provider
+        let storage_info = provider
+            .get_storage_info(&destination, credential.as_ref())
+            .await;
+
+        if let Ok(info) = storage_info {
+            if info.supported {
+                let _ = sqlx::query(
+                    "UPDATE jobs SET dest_storage_free = ?, dest_storage_total = ?, dest_storage_updated_at = ? WHERE id = ?",
+                )
+                .bind(info.free.map(|v| v as i64))
+                .bind(info.total.map(|v| v as i64))
+                .bind(Utc::now())
+                .bind(job_id)
+                .execute(&self.db)
+                .await;
+
+                tracing::info!(
+                    "Updated storage info for job {}: free={:?}, total={:?}",
+                    job_id,
+                    info.free,
+                    info.total
+                );
+            }
+        }
+
+        Ok(())
+    }
 }

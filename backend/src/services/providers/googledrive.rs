@@ -1,6 +1,6 @@
 //! Google Drive sync provider using Google Drive API v3
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
+use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -320,6 +320,77 @@ impl SyncProvider for GoogleDriveProvider {
         .await;
 
         Ok(result)
+    }
+
+    async fn get_storage_info(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<StorageInfo, ProviderError> {
+        let access_token = match credential {
+            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        // For shared drives, quota info is not meaningful (shared drive quota is different)
+        let shared_drive_id = match destination {
+            DestinationConfig::GoogleDrive { shared_drive_id, .. } => shared_drive_id.clone(),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        if shared_drive_id.is_some() {
+            return Ok(StorageInfo {
+                free: None,
+                total: None,
+                supported: false,
+            });
+        }
+
+        let url = format!("{}/about?fields=storageQuota", DRIVE_API_BASE);
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&access_token)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                #[derive(Deserialize)]
+                struct AboutResponse {
+                    #[serde(rename = "storageQuota")]
+                    storage_quota: Option<StorageQuota>,
+                }
+                #[derive(Deserialize)]
+                struct StorageQuota {
+                    limit: Option<String>,
+                    usage: Option<String>,
+                }
+
+                match resp.json::<AboutResponse>().await {
+                    Ok(about) => {
+                        if let Some(quota) = about.storage_quota {
+                            let total = quota.limit.and_then(|s| s.parse::<u64>().ok());
+                            let used = quota.usage.and_then(|s| s.parse::<u64>().ok());
+                            let free = match (total, used) {
+                                (Some(t), Some(u)) => Some(t.saturating_sub(u)),
+                                _ => None,
+                            };
+
+                            Ok(StorageInfo {
+                                free,
+                                total,
+                                supported: true,
+                            })
+                        } else {
+                            Ok(StorageInfo::default())
+                        }
+                    }
+                    Err(_) => Ok(StorageInfo::default()),
+                }
+            }
+            _ => Ok(StorageInfo::default()),
+        }
     }
 }
 

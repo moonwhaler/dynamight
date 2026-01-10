@@ -1,6 +1,6 @@
 //! OneDrive sync provider using Microsoft Graph API
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
+use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -320,6 +320,65 @@ impl SyncProvider for OneDriveProvider {
         .await;
 
         Ok(result)
+    }
+
+    async fn get_storage_info(
+        &self,
+        destination: &DestinationConfig,
+        credential: Option<&CredentialData>,
+    ) -> Result<StorageInfo, ProviderError> {
+        let access_token = match credential {
+            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        let drive_id = match destination {
+            DestinationConfig::OneDrive { drive_id, .. } => drive_id.clone(),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        let url = if let Some(id) = drive_id {
+            format!("{}/drives/{}", GRAPH_API_BASE, id)
+        } else {
+            format!("{}/me/drive", GRAPH_API_BASE)
+        };
+
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&access_token)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                #[derive(Deserialize)]
+                struct DriveResponse {
+                    quota: Option<Quota>,
+                }
+                #[derive(Deserialize)]
+                struct Quota {
+                    total: Option<u64>,
+                    remaining: Option<u64>,
+                }
+
+                match resp.json::<DriveResponse>().await {
+                    Ok(drive) => {
+                        if let Some(quota) = drive.quota {
+                            Ok(StorageInfo {
+                                free: quota.remaining,
+                                total: quota.total,
+                                supported: true,
+                            })
+                        } else {
+                            Ok(StorageInfo::default())
+                        }
+                    }
+                    Err(_) => Ok(StorageInfo::default()),
+                }
+            }
+            _ => Ok(StorageInfo::default()),
+        }
     }
 }
 

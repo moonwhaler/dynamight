@@ -1,6 +1,6 @@
 //! Rsync-based sync provider for local and USB destinations
 
-use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult};
+use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult};
 use crate::models::{CredentialData, DestinationConfig, LogLevel, SyncOptions};
 use async_trait::async_trait;
 #[cfg(unix)]
@@ -816,5 +816,69 @@ impl SyncProvider for RsyncProvider {
     async fn is_cancelled(&self, _run_id: i64) -> bool {
         // Cancellation is now handled via ctx.check_cancelled()
         false
+    }
+
+    async fn get_storage_info(
+        &self,
+        destination: &DestinationConfig,
+        _credential: Option<&CredentialData>,
+    ) -> Result<StorageInfo, ProviderError> {
+        let mount_point = match destination {
+            DestinationConfig::Local { mount_point, .. } => mount_point.clone(),
+            _ => return Ok(StorageInfo::default()),
+        };
+
+        // Use df to get storage info
+        let output = Command::new("df")
+            .args(["--block-size=1", "--output=avail,size", &mount_point])
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let mut lines = stdout.lines();
+                lines.next(); // Skip header
+                if let Some(data_line) = lines.next() {
+                    let parts: Vec<&str> = data_line.split_whitespace().collect();
+                    let free: u64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    if free > 0 || total > 0 {
+                        return Ok(StorageInfo {
+                            free: Some(free),
+                            total: Some(total),
+                            supported: true,
+                        });
+                    }
+                }
+                // Fallback to POSIX df if --output failed
+                let fallback = Command::new("df")
+                    .args(["-B1", &mount_point])
+                    .output()
+                    .await;
+
+                if let Ok(fb) = fallback {
+                    if fb.status.success() {
+                        let fb_stdout = String::from_utf8_lossy(&fb.stdout);
+                        let mut lines = fb_stdout.lines();
+                        lines.next(); // Skip header
+                        if let Some(data_line) = lines.next() {
+                            let parts: Vec<&str> = data_line.split_whitespace().collect();
+                            let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                            let free: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                            if free > 0 || total > 0 {
+                                return Ok(StorageInfo {
+                                    free: Some(free),
+                                    total: Some(total),
+                                    supported: true,
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(StorageInfo::default())
+            }
+            _ => Ok(StorageInfo::default()),
+        }
     }
 }

@@ -583,6 +583,7 @@
   "filebrowser_select_location": "Speicherort auswählen",
   "filebrowser_select_location_desc": "Wählen Sie oben ein USB-Laufwerk oder einen lokalen Pfad aus.",
   "filebrowser_refresh_drives": "Laufwerke aktualisieren",
+  "filebrowser_free_space": "{space} frei",
 
   "error_file_not_found": "Datei nicht gefunden",
   "error_not_a_file": "Verzeichnisse können nicht heruntergeladen werden",
@@ -778,5 +779,8 @@
   "day_wednesday": "Mittwoch",
   "day_thursday": "Donnerstag",
   "day_friday": "Freitag",
-  "day_saturday": "Samstag"
+  "day_saturday": "Samstag",
+
+  "storage_free_short": "frei",
+  "storage_tooltip": "{free} frei von {total}"
 }

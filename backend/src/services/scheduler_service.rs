@@ -215,6 +215,11 @@ impl SchedulerService {
                     .bind(run_id)
                     .execute(&db)
                     .await;
+
+                    // Update storage info after successful completion
+                    if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
+                        let _ = backup_service.update_storage_info(schedule.job_id, &job).await;
+                    }
                 }
 
                 // Cleanup old runs

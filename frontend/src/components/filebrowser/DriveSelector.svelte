@@ -188,7 +188,7 @@
                   {getDriveDisplayName(drive)}
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">
-                  {drive.size || ''}{drive.fstype ? ` • ${drive.fstype}` : ''}
+                  {drive.size || ''}{drive.fstype ? ` • ${drive.fstype}` : ''}{drive.available ? ` • ${m.filebrowser_free_space({ space: drive.available })}` : ''}
                 </div>
               </div>
 

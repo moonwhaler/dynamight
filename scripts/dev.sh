@@ -162,7 +162,8 @@ setup_config() {
     export PORT="${PORT:-3000}"
     export STATIC_FILES_DIR="${STATIC_FILES_DIR:-frontend/dist}"
     export SECURE_COOKIES="${SECURE_COOKIES:-false}"
-    export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
+    export RUST_LOG="${RUST_LOG:-info,dynamight=debug,tower_http=debug,sqlx=warn}"
+    export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 }
 
 install_frontend_deps() {
