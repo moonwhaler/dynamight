@@ -1,6 +1,6 @@
 use crate::models::{DestinationConfig, Job, JobRunStatus, LogLevel, LogMessage};
 use crate::services::credential_service::CredentialService;
-use crate::services::providers::{self, RsyncProvider, SyncContext, ProviderError};
+use crate::services::providers::{self, RsyncProvider, StorageInfo, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -12,6 +12,8 @@ pub struct JobResult {
     pub files_transferred: i64,
     pub bytes_transferred: i64,
     pub error_count: i32,
+    /// Storage info captured during sync (before unmounting for USB drives)
+    pub storage_info: Option<StorageInfo>,
 }
 
 pub struct BackupService {
@@ -299,6 +301,7 @@ impl BackupService {
                 files_transferred: result.files_transferred,
                 bytes_transferred: result.bytes_transferred,
                 error_count: result.error_count,
+                storage_info: result.storage_info,
             }),
             Err(ProviderError::Cancelled) => {
                 self.log(run_id, LogLevel::Warning, "Job was cancelled", "system").await;
@@ -383,21 +386,26 @@ impl BackupService {
     }
 
     /// Update destination storage info for a job after successful completion
-    pub async fn update_storage_info(&self, job_id: i64, job: &Job) -> anyhow::Result<()> {
-        let destination = job.get_destination_config();
-        let provider = providers::create_provider(&destination);
-
-        // Load credentials if needed
-        let credential = if let Some(cred_id) = job.credential_id {
-            self.credential_service.get_decrypted(cred_id).await.ok()
+    /// If `pre_captured` is Some, uses that instead of fetching from the provider
+    /// (important for USB drives that get unmounted after sync)
+    pub async fn update_storage_info(&self, job_id: i64, job: &Job, pre_captured: Option<StorageInfo>) -> anyhow::Result<()> {
+        // Use pre-captured storage info if available (e.g., captured before unmounting USB)
+        let storage_info = if let Some(info) = pre_captured {
+            Ok(info)
         } else {
-            None
-        };
+            // Fall back to fetching from provider (for providers that don't unmount)
+            let destination = job.get_destination_config();
+            let provider = providers::create_provider(&destination);
 
-        // Get storage info from provider
-        let storage_info = provider
-            .get_storage_info(&destination, credential.as_ref())
-            .await;
+            // Load credentials if needed
+            let credential = if let Some(cred_id) = job.credential_id {
+                self.credential_service.get_decrypted(cred_id).await.ok()
+            } else {
+                None
+            };
+
+            provider.get_storage_info(&destination, credential.as_ref()).await
+        };
 
         if let Ok(info) = storage_info {
             if info.supported {

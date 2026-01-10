@@ -34,6 +34,10 @@ pub struct SyncResult {
     pub files_deleted: i64,
     pub error_count: i32,
     pub error_message: Option<String>,
+    /// Storage info captured while destination was still accessible
+    /// (e.g., before unmounting a USB drive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_info: Option<StorageInfo>,
 }
 
 /// Storage quota/space information from a destination

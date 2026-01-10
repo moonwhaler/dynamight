@@ -52,6 +52,11 @@ impl RsyncProvider {
     fn build_rsync_args(&self, ctx: &SyncContext, fstype: &str) -> Vec<String> {
         let mut args = vec![];
 
+        // Force line-buffered output so logs stream in real-time
+        // (without this, rsync uses block buffering when writing to a pipe,
+        // causing long delays on slow destinations like USB drives)
+        args.push("--outbuf=L".to_string());
+
         // Verbosity options
         match ctx.options.verbosity.as_str() {
             "quiet" => {
@@ -793,6 +798,13 @@ impl SyncProvider for RsyncProvider {
 
             if ctx.check_cancelled() {
                 return Err(ProviderError::Cancelled);
+            }
+        }
+
+        // Capture storage info BEFORE unmounting (so we get the USB drive's space, not the underlying filesystem)
+        if let Ok(info) = self.get_storage_info(&ctx.destination, None).await {
+            if info.supported {
+                result.storage_info = Some(info);
             }
         }
 

@@ -217,8 +217,10 @@ impl SchedulerService {
                     .await;
 
                     // Update storage info after successful completion
+                    // Use pre-captured storage_info from the sync result (captured before unmounting USB drives)
                     if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
-                        let _ = backup_service.update_storage_info(schedule.job_id, &job).await;
+                        let storage_info = result.as_ref().ok().and_then(|r| r.storage_info.clone());
+                        let _ = backup_service.update_storage_info(schedule.job_id, &job, storage_info).await;
                     }
                 }
 
