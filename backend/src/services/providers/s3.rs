@@ -287,6 +287,13 @@ impl S3Provider {
                 continue;
             }
 
+            // Check excluded directories
+            let full_path = path.to_string_lossy().to_string();
+            if path.is_dir() && ctx.options.exclude_dirs.iter().any(|ex| full_path == *ex || full_path.starts_with(&format!("{}/", ex))) {
+                ctx.log_info(&format!("Skipping excluded directory: {}", full_path), "s3").await;
+                continue;
+            }
+
             if path.is_dir() {
                 let new_prefix = format!("{}/{}", key_prefix, file_name);
                 Box::pin(self.sync_directory(client, path.to_str().unwrap(), bucket, &new_prefix, storage_class, ctx, result)).await?;

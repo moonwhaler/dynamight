@@ -133,9 +133,14 @@ pub struct SyncOptions {
     #[serde(default)]
     pub delete_extraneous: bool,
 
-    /// Patterns to exclude from sync
+    /// Patterns to exclude from sync (e.g., "*.tmp", ".cache")
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
+
+    /// Specific source directories to exclude from sync (absolute paths)
+    /// These must be children of source_dirs
+    #[serde(default)]
+    pub exclude_dirs: Vec<String>,
 
     /// Bandwidth limit in KB/s (0 = unlimited)
     #[serde(default)]
@@ -163,6 +168,7 @@ impl Default for SyncOptions {
         Self {
             delete_extraneous: false,
             exclude_patterns: Vec::new(),
+            exclude_dirs: Vec::new(),
             bandwidth_limit_kbps: None,
             dry_run: false,
             verbosity: "normal".to_string(),
@@ -192,6 +198,7 @@ impl SyncOptions {
         Self {
             delete_extraneous: sync_deletes,
             exclude_patterns: rsync_excludes,
+            exclude_dirs: Vec::new(),
             bandwidth_limit_kbps: bandwidth_limit,
             dry_run,
             verbosity,

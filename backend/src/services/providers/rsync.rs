@@ -374,9 +374,21 @@ impl RsyncProvider {
             // Create destination if it doesn't exist (for accurate dry-run)
             let _ = tokio::fs::create_dir_all(&dest).await;
 
+            // Build exclude args for directories specific to this source
+            let mut args_with_excludes = rsync_args.clone();
+            for exclude_dir in &options.exclude_dirs {
+                let exclude_path = std::path::Path::new(exclude_dir);
+                let source_path = std::path::Path::new(source_dir);
+                if let Ok(relative) = exclude_path.strip_prefix(source_path) {
+                    let rel_str = relative.to_string_lossy();
+                    args_with_excludes.push(format!("--exclude=/{}", rel_str));
+                    args_with_excludes.push(format!("--exclude=/{}/**", rel_str));
+                }
+            }
+
             // Get transfer size via rsync dry-run
             let transfer_size = self
-                .get_transfer_size(source_dir, &dest, &rsync_args)
+                .get_transfer_size(source_dir, &dest, &args_with_excludes)
                 .await
                 .unwrap_or(source_size); // Fall back to source size if dry-run fails
 
@@ -643,9 +655,23 @@ impl SyncProvider for RsyncProvider {
                 return Err(ProviderError::Cancelled);
             }
 
+            // Build exclude args for directories specific to this source
+            let mut source_exclude_args: Vec<String> = Vec::new();
+            for exclude_dir in &ctx.options.exclude_dirs {
+                let exclude_path = std::path::Path::new(exclude_dir);
+                let source_path = std::path::Path::new(source_dir);
+                if let Ok(relative) = exclude_path.strip_prefix(source_path) {
+                    let rel_str = relative.to_string_lossy();
+                    // Exclude the directory and its contents
+                    source_exclude_args.push(format!("--exclude=/{}", rel_str));
+                    source_exclude_args.push(format!("--exclude=/{}/**", rel_str));
+                }
+            }
+
             // Run rsync
             let mut cmd = Command::new("rsync");
             cmd.args(&rsync_args)
+                .args(&source_exclude_args)
                 .arg(format!("{}/", source_dir))
                 .arg(format!("{}/", dest))
                 .stdout(Stdio::piped())

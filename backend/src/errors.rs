@@ -68,6 +68,7 @@ pub enum ErrorCode {
     SourceDirsRequired,
     CredentialsRequired,
     SourceDirsDuplicateBasenames,
+    ExcludeDirNotInSource,
 
     // System errors
     PathNotAllowed,
@@ -200,6 +201,13 @@ impl ApiError {
         Self::with_params(
             ErrorCode::SourceDirsDuplicateBasenames,
             json!({ "duplicates": duplicates }),
+        )
+    }
+
+    pub fn exclude_dir_not_in_source(exclude_dir: &str) -> Self {
+        Self::with_params(
+            ErrorCode::ExcludeDirNotInSource,
+            json!({ "exclude_dir": exclude_dir }),
         )
     }
 

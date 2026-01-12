@@ -114,6 +114,7 @@ export interface SourceSizeInfo {
 export interface SyncOptions {
   delete_extraneous: boolean;
   exclude_patterns: string[];
+  exclude_dirs: string[];
   bandwidth_limit_kbps?: number | null;
   dry_run: boolean;
   verbosity: 'quiet' | 'normal' | 'verbose';
@@ -389,6 +390,7 @@ export function createDefaultSyncOptions(): SyncOptions {
   return {
     delete_extraneous: false,
     exclude_patterns: [],
+    exclude_dirs: [],
     bandwidth_limit_kbps: null,
     dry_run: false,
     verbosity: 'normal',

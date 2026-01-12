@@ -486,7 +486,7 @@
 
       <!-- Sync Options -->
       <div class="card p-6">
-        <SyncOptionsComponent bind:options={syncOptions} {destinationType} {capabilities} />
+        <SyncOptionsComponent bind:options={syncOptions} {destinationType} {capabilities} {sourceDirs} />
       </div>
 
       <!-- Schedule -->

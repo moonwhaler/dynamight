@@ -102,6 +102,7 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
       const names = Array.isArray(duplicates) ? duplicates.join(', ') : String(duplicates ?? '');
       return m.error_source_dirs_duplicate_basenames({ names });
     },
+    EXCLUDE_DIR_NOT_IN_SOURCE: () => m.error_exclude_dir_not_in_source(),
     CREDENTIALS_REQUIRED: () => m.job_validation_credentials_required(),
 
     // System errors

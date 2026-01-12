@@ -101,6 +101,23 @@ fn validate_source_dirs_unique_basenames(source_dirs: &[String]) -> Result<(), V
     }
 }
 
+/// Validates that all exclude_dirs are children of source_dirs.
+/// Returns Ok(()) if all exclude_dirs are valid children, or Err with the invalid path.
+fn validate_exclude_dirs(source_dirs: &[String], exclude_dirs: &[String]) -> Result<(), String> {
+    for exclude_dir in exclude_dirs {
+        // Check that exclude_dir is a strict child of at least one source_dir
+        let is_valid_child = source_dirs.iter().any(|source| {
+            // Must start with source + "/" and not be equal to source
+            exclude_dir.starts_with(&format!("{}/", source)) && exclude_dir != source
+        });
+
+        if !is_valid_child {
+            return Err(exclude_dir.clone());
+        }
+    }
+    Ok(())
+}
+
 /// Validates display fields (name, description) for basic safety.
 /// Checks for length limits and control characters.
 /// Set `allow_empty` to true for optional fields like description.
@@ -208,6 +225,15 @@ pub async fn create_job(
     // Validate source directories have unique basenames (to prevent sync conflicts)
     if let Err(duplicates) = validate_source_dirs_unique_basenames(&req.source_dirs) {
         return ApiError::source_dirs_duplicate_basenames(duplicates).into_response();
+    }
+
+    // Validate exclude_dirs are children of source_dirs
+    if let Some(ref sync_options) = req.sync_options {
+        if !sync_options.exclude_dirs.is_empty() {
+            if let Err(invalid_path) = validate_exclude_dirs(&req.source_dirs, &sync_options.exclude_dirs) {
+                return ApiError::exclude_dir_not_in_source(&invalid_path).into_response();
+            }
+        }
     }
 
     // Validate rsync exclude patterns
@@ -341,6 +367,22 @@ pub async fn update_job(
         // Validate source directories have unique basenames (to prevent sync conflicts)
         if let Err(duplicates) = validate_source_dirs_unique_basenames(source_dirs) {
             return ApiError::source_dirs_duplicate_basenames(duplicates).into_response();
+        }
+    }
+
+    // Validate exclude_dirs are children of source_dirs (if sync_options provided)
+    if let Some(ref sync_options) = req.sync_options {
+        if !sync_options.exclude_dirs.is_empty() {
+            // Use provided source_dirs or fall back to existing ones
+            let source_dirs_for_validation: Vec<String> = if let Some(ref sd) = req.source_dirs {
+                sd.clone()
+            } else {
+                existing.source_dirs_vec()
+            };
+
+            if let Err(invalid_path) = validate_exclude_dirs(&source_dirs_for_validation, &sync_options.exclude_dirs) {
+                return ApiError::exclude_dir_not_in_source(&invalid_path).into_response();
+            }
         }
     }
 

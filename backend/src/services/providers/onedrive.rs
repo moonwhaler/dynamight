@@ -525,6 +525,13 @@ impl OneDriveProvider {
                 continue;
             }
 
+            // Check excluded directories
+            let full_path = path.to_string_lossy().to_string();
+            if path.is_dir() && ctx.options.exclude_dirs.iter().any(|ex| full_path == *ex || full_path.starts_with(&format!("{}/", ex))) {
+                ctx.log_info(&format!("Skipping excluded directory: {}", full_path), "onedrive").await;
+                continue;
+            }
+
             let remote_path = format!("{}/{}", remote_dir, file_name);
 
             if path.is_dir() {
