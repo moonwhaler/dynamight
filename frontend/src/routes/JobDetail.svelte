@@ -45,7 +45,6 @@
   let loadedJobId = $state<string | null>(null);
   let activeRunId = $state<number | null>(null);
   let running = $state(false);
-  let cloning = $state(false);
   let checkingSpace = $state(false);
   let capabilities = $state<ProviderCapabilities | null>(null);
 
@@ -64,6 +63,38 @@
   // Pending schedules for new jobs (cron expressions stored until job is created)
   let pendingSchedules = $state<string[]>([]);
 
+  function getCloneIdFromUrl(): number | null {
+    const hash = window.location.hash;
+    const match = hash.match(/[?&]clone=(\d+)/);
+    return match ? parseInt(match[1]) : null;
+  }
+
+  async function generateCloneName(baseName: string): Promise<string> {
+    // Strip existing clone suffix
+    const cleanName = baseName.replace(/\s*\(clone(?:\s+\d+)?\)\s*$/, '').trim();
+
+    // Get all existing job names to find a unique clone name
+    const jobs = await api.jobs.list();
+    const existingNames = new Set(jobs.map(j => j.name));
+
+    const firstAttempt = `${cleanName} (clone)`;
+    if (!existingNames.has(firstAttempt)) {
+      return firstAttempt;
+    }
+
+    // Find next available number
+    let counter = 2;
+    while (counter < 100) {
+      const candidate = `${cleanName} (clone ${counter})`;
+      if (!existingNames.has(candidate)) {
+        return candidate;
+      }
+      counter++;
+    }
+
+    return `${cleanName} (clone ${Date.now()})`;
+  }
+
   async function loadData() {
     loading = true;
 
@@ -76,7 +107,21 @@
       drives = drivesResult;
       credentials = credentialsResult;
 
-      if (!isNew && params.id && params.id !== loadedJobId) {
+      // Check if this is a clone operation
+      const cloneId = getCloneIdFromUrl();
+      if (isNew && cloneId) {
+        const sourceJob = await api.jobs.get(cloneId);
+        const sourceSchedules = await api.schedules.list(cloneId);
+
+        // Load job data but generate a new name
+        loadJob(sourceJob);
+        name = await generateCloneName(sourceJob.name);
+
+        // Convert schedules to pending cron expressions for the new job
+        pendingSchedules = sourceSchedules
+          .filter(s => s.enabled)
+          .map(s => s.cron_expression);
+      } else if (!isNew && params.id && params.id !== loadedJobId) {
         loadedJobId = params.id;
         const job = await api.jobs.get(parseInt(params.id));
         loadJob(job);
@@ -273,18 +318,9 @@
     activeRunId = null;
   }
 
-  async function handleClone() {
-    if (cloning) return;
-    cloning = true;
-    try {
-      const clonedJob = await api.jobs.clone(parseInt(params.id!));
-      jobsStore.addJob(clonedJob);
-      push(`/jobs/${clonedJob.id}`);
-    } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : m.job_error_clone(), variant: 'error' });
-    } finally {
-      cloning = false;
-    }
+  function handleClone() {
+    // Navigate to new job page with clone parameter - job is not saved until user confirms
+    push(`/jobs/new?clone=${params.id}`);
   }
 
   function formatBytes(bytes: number): string {
@@ -337,8 +373,8 @@
         <button onclick={handleRun} disabled={running} class="btn btn-secondary flex-1 sm:flex-none">
           {running ? m.job_btn_starting() : m.job_btn_run_now()}
         </button>
-        <button onclick={handleClone} disabled={cloning} class="btn btn-secondary flex-1 sm:flex-none">
-          {cloning ? m.job_btn_cloning() : m.common_clone()}
+        <button onclick={handleClone} class="btn btn-secondary flex-1 sm:flex-none">
+          {m.common_clone()}
         </button>
         <button onclick={handleDelete} class="btn btn-danger flex-1 sm:flex-none">{m.common_delete()}</button>
       </div>

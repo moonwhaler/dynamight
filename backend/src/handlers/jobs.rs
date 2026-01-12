@@ -746,6 +746,13 @@ pub async fn clone_job(
     match result {
         Ok(r) => {
             let new_id = r.last_insert_rowid();
+
+            // Clone schedules from the original job
+            if let Err(e) = clone_job_schedules(&state.db, id, new_id).await {
+                tracing::error!("Failed to clone schedules for job {}: {:?}", id, e);
+                // Continue anyway - the job was created, just without schedules
+            }
+
             let new_job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
                 .bind(new_id)
                 .fetch_optional(&state.db)
@@ -759,6 +766,61 @@ pub async fn clone_job(
         }
         Err(_) => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
     }
+}
+
+async fn clone_job_schedules(
+    db: &sqlx::SqlitePool,
+    original_job_id: i64,
+    new_job_id: i64,
+) -> Result<(), sqlx::Error> {
+    use cron::Schedule as CronSchedule;
+    use std::str::FromStr;
+
+    // Fetch all schedules for the original job
+    let schedules: Vec<crate::models::Schedule> =
+        sqlx::query_as("SELECT * FROM schedules WHERE job_id = ?")
+            .bind(original_job_id)
+            .fetch_all(db)
+            .await?;
+
+    // Clone each schedule
+    for schedule in schedules {
+        // Recalculate next_run_at for enabled schedules
+        let next_run = if schedule.enabled {
+            let cron_with_seconds = if schedule.cron_expression.split_whitespace().count() == 5 {
+                format!("0 {}", schedule.cron_expression)
+            } else {
+                schedule.cron_expression.clone()
+            };
+            CronSchedule::from_str(&cron_with_seconds)
+                .ok()
+                .and_then(|s| s.upcoming(Utc).next())
+        } else {
+            None
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO schedules (
+                job_id, enabled, cron_expression,
+                schedule_type, time_of_day, day_of_week, day_of_month,
+                next_run_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(new_job_id)
+        .bind(schedule.enabled)
+        .bind(&schedule.cron_expression)
+        .bind(&schedule.schedule_type)
+        .bind(&schedule.time_of_day)
+        .bind(schedule.day_of_week)
+        .bind(schedule.day_of_month)
+        .bind(next_run)
+        .execute(db)
+        .await?;
+    }
+
+    Ok(())
 }
 
 async fn generate_unique_clone_name(db: &sqlx::SqlitePool, base_name: &str) -> String {
