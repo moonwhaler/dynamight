@@ -37,6 +37,10 @@ interface FileBrowserState {
   // Loading states
   loading: boolean;
   downloading: string | null;
+  deleting: string | null;
+
+  // Delete verification
+  deleteVerifiedUntil: number | null; // Unix timestamp in seconds
 
   // USB Drives
   drives: UsbDrive[];
@@ -113,6 +117,8 @@ function createFileBrowserStore() {
     entries: [],
     loading: false,
     downloading: null,
+    deleting: null,
+    deleteVerifiedUntil: null,
     drives: [],
     loadingDrives: false,
     allowedPaths: [],
@@ -331,6 +337,99 @@ function createFileBrowserStore() {
       }
     },
 
+    // Delete verification and file deletion
+    async checkDeleteStatus(): Promise<void> {
+      try {
+        const result = await api.system.deleteStatus();
+        update((s) => ({
+          ...s,
+          deleteVerifiedUntil: result.verified && result.expires_at ? result.expires_at : null,
+        }));
+      } catch {
+        update((s) => ({ ...s, deleteVerifiedUntil: null }));
+      }
+    },
+
+    isDeleteVerified(): boolean {
+      let verified = false;
+      update((s) => {
+        const now = Math.floor(Date.now() / 1000);
+        verified = s.deleteVerifiedUntil !== null && s.deleteVerifiedUntil > now;
+        return s;
+      });
+      return verified;
+    },
+
+    async verifyDeleteAccess(password: string, totpCode?: string): Promise<boolean> {
+      try {
+        const result = await api.system.verifyDeleteAccess(password, totpCode);
+        if (result.verified) {
+          update((s) => ({ ...s, deleteVerifiedUntil: result.expires_at }));
+          return true;
+        }
+        return false;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(m.error_delete_verification_failed());
+        showToast({ message, variant: 'error' });
+        return false;
+      }
+    },
+
+    async deleteEntry(path: string): Promise<'success' | 'verification_required' | 'error'> {
+      // Check if currently verified
+      const now = Math.floor(Date.now() / 1000);
+      let verifiedUntil: number | null = null;
+      update((s) => {
+        verifiedUntil = s.deleteVerifiedUntil;
+        return s;
+      });
+
+      if (!verifiedUntil || verifiedUntil <= now) {
+        return 'verification_required';
+      }
+
+      update((s) => ({ ...s, deleting: path }));
+
+      try {
+        const result = await api.system.deleteFile(path);
+
+        // Update verification timestamp (it was refreshed on the server)
+        await this.checkDeleteStatus();
+
+        // Refresh current directory
+        let currentPath = '';
+        update((s) => {
+          currentPath = s.currentPath;
+          return { ...s, deleting: null };
+        });
+        if (currentPath) {
+          await this.browsePath(currentPath);
+        }
+
+        // Show success message
+        const successMessage = result.is_dir
+          ? String(m.filebrowser_delete_success_folder())
+          : String(m.filebrowser_delete_success());
+        showToast({ message: successMessage, variant: 'success' });
+
+        return 'success';
+      } catch (e) {
+        update((s) => ({ ...s, deleting: null }));
+
+        // Check if verification is required
+        if (e instanceof Error && e.message.includes('verification')) {
+          update((s) => ({ ...s, deleteVerifiedUntil: null }));
+          return 'verification_required';
+        }
+
+        showToast({
+          message: e instanceof Error ? e.message : String(m.error_delete_failed()),
+          variant: 'error',
+        });
+        return 'error';
+      }
+    },
+
     // View preferences
     setViewMode(mode: ViewMode): void {
       savePreference(STORAGE_KEYS.viewMode, mode);
@@ -366,6 +465,8 @@ function createFileBrowserStore() {
     reset(): void {
       set({
         ...initialState,
+        deleting: null,
+        deleteVerifiedUntil: null,
         viewMode: loadPreference(STORAGE_KEYS.viewMode, 'list'),
         sortBy: loadPreference(STORAGE_KEYS.sortBy, 'name'),
         sortOrder: loadPreference(STORAGE_KEYS.sortOrder, 'asc'),

@@ -8,7 +8,9 @@
     viewMode: 'list' | 'grid';
     onNavigate: (path: string) => void;
     onDownload: (path: string) => void;
+    onDelete?: (path: string, name: string, isDir: boolean) => void;
     downloading?: string | null;
+    deleting?: string | null;
     selectable?: boolean;
     selected?: boolean;
     onSelect?: (path: string) => void;
@@ -19,7 +21,9 @@
     viewMode,
     onNavigate,
     onDownload,
+    onDelete,
     downloading = null,
+    deleting = null,
     selectable = false,
     selected = false,
     onSelect,
@@ -27,6 +31,7 @@
 
   const iconInfo = $derived(getFileIcon(entry.extension, entry.is_dir));
   const isDownloading = $derived(downloading === entry.path);
+  const isDeleting = $derived(deleting === entry.path);
 
   function handleClick() {
     if (entry.is_dir) {
@@ -39,6 +44,11 @@
   function handleDownload(e: Event) {
     e.stopPropagation();
     onDownload(entry.path);
+  }
+
+  function handleDelete(e: Event) {
+    e.stopPropagation();
+    onDelete?.(entry.path, entry.name, entry.is_dir);
   }
 </script>
 
@@ -106,48 +116,89 @@
     </td>
 
     <td class="px-4 py-2.5 text-right">
-      {#if !entry.is_dir}
-        <button
-          type="button"
-          onclick={handleDownload}
-          disabled={isDownloading}
-          class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
-          title={m.filebrowser_download()}
-        >
-          {#if isDownloading}
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          {:else}
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-          {/if}
-        </button>
-      {/if}
+      <div class="flex items-center justify-end gap-1">
+        {#if !entry.is_dir}
+          <button
+            type="button"
+            onclick={handleDownload}
+            disabled={isDownloading || isDeleting}
+            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
+            title={m.filebrowser_download()}
+          >
+            {#if isDownloading}
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            {:else}
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            {/if}
+          </button>
+        {/if}
+        {#if onDelete}
+          <button
+            type="button"
+            onclick={handleDelete}
+            disabled={isDownloading || isDeleting}
+            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+            title={m.filebrowser_delete()}
+          >
+            {#if isDeleting}
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            {:else}
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            {/if}
+          </button>
+        {/if}
+      </div>
     </td>
   </tr>
 {:else}
   <!-- Grid view card -->
   {#if entry.is_dir}
-    <button
-      type="button"
-      onclick={handleClick}
-      class="card p-4 flex flex-col items-center gap-2 hover:shadow-md transition-shadow text-center cursor-pointer {selected ? 'ring-2 ring-primary-500' : ''}"
-    >
-      <!-- Icon -->
-      <div class="w-12 h-12 flex items-center justify-center">
-        <svg class="w-10 h-10 {iconInfo.color}" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-        </svg>
-      </div>
+    <div class="card p-4 flex flex-col items-center gap-2 text-center relative {selected ? 'ring-2 ring-primary-500' : ''}">
+      <!-- Click area for navigation -->
+      <button
+        type="button"
+        onclick={handleClick}
+        class="w-full flex flex-col items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+      >
+        <!-- Icon -->
+        <div class="w-12 h-12 flex items-center justify-center">
+          <svg class="w-10 h-10 {iconInfo.color}" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+          </svg>
+        </div>
 
-      <!-- Name -->
-      <span class="text-sm text-gray-900 dark:text-white truncate w-full font-medium">
-        {entry.name}
-      </span>
-    </button>
+        <!-- Name -->
+        <span class="text-sm text-gray-900 dark:text-white truncate w-full font-medium">
+          {entry.name}
+        </span>
+      </button>
+
+      <!-- Delete button for folders -->
+      {#if onDelete}
+        <button
+          type="button"
+          onclick={handleDelete}
+          disabled={isDeleting}
+          class="mt-1 px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+        >
+          {#if isDeleting}
+            {m.filebrowser_deleting()}
+          {:else}
+            {m.filebrowser_delete()}
+          {/if}
+        </button>
+      {/if}
+    </div>
   {:else}
     <div class="card p-4 flex flex-col items-center gap-2 text-center {selected ? 'ring-2 ring-primary-500' : ''}">
       <!-- Icon -->
@@ -167,19 +218,35 @@
         {formatFileSize(entry.size)}
       </span>
 
-      <!-- Download button -->
-      <button
-        type="button"
-        onclick={handleDownload}
-        disabled={isDownloading}
-        class="mt-1 px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
-      >
-        {#if isDownloading}
-          {m.filebrowser_downloading()}
-        {:else}
-          {m.filebrowser_download()}
+      <!-- Action buttons -->
+      <div class="mt-1 flex gap-2">
+        <button
+          type="button"
+          onclick={handleDownload}
+          disabled={isDownloading || isDeleting}
+          class="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
+        >
+          {#if isDownloading}
+            {m.filebrowser_downloading()}
+          {:else}
+            {m.filebrowser_download()}
+          {/if}
+        </button>
+        {#if onDelete}
+          <button
+            type="button"
+            onclick={handleDelete}
+            disabled={isDownloading || isDeleting}
+            class="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+          >
+            {#if isDeleting}
+              {m.filebrowser_deleting()}
+            {:else}
+              {m.filebrowser_delete()}
+            {/if}
+          </button>
         {/if}
-      </button>
+      </div>
     </div>
   {/if}
 {/if}

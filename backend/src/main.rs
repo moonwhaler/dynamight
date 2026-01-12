@@ -13,9 +13,11 @@ use axum::{
     Router,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use std::time::Instant;
+use tokio::sync::{broadcast, RwLock};
 use axum::http::{header, HeaderValue, Method};
 use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -33,6 +35,9 @@ pub struct AppState {
     pub rate_limit_service: Arc<RateLimitService>,
     pub credential_service: Arc<CredentialService>,
     pub log_tx: broadcast::Sender<models::LogMessage>,
+    /// Tracks when each user last verified their credentials for file deletion.
+    /// Maps user_id -> last verification timestamp.
+    pub delete_verifications: RwLock<HashMap<i64, Instant>>,
 }
 
 use tower::ServiceBuilder;
@@ -269,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limit_service,
         credential_service,
         log_tx,
+        delete_verifications: RwLock::new(HashMap::new()),
     });
 
     // Start scheduler
@@ -325,6 +331,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/allowed-paths", get(handlers::system::allowed_paths))
         .route("/system/download", get(handlers::system::download_file))
         .route("/system/generate-mount-point", post(handlers::system::generate_mount_point))
+        .route("/system/verify-delete-access", post(handlers::system::verify_delete_access))
+        .route("/system/delete", delete(handlers::system::delete_path))
+        .route("/system/delete-status", get(handlers::system::delete_status))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
         // Credentials

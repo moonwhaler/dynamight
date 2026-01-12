@@ -11,9 +11,11 @@
     sortOrder: SortOrder;
     loading: boolean;
     downloading?: string | null;
+    deleting?: string | null;
     error?: string | null;
     onNavigate: (path: string) => void;
     onDownload: (path: string) => void;
+    onDelete?: (path: string, name: string, isDir: boolean) => void;
     onSortChange?: (field: SortField) => void;
     onSortOrderToggle?: () => void;
     selectable?: boolean;
@@ -28,9 +30,11 @@
     sortOrder,
     loading,
     downloading = null,
+    deleting = null,
     error = null,
     onNavigate,
     onDownload,
+    onDelete,
     onSortChange,
     onSortOrderToggle,
     selectable = false,
@@ -131,7 +135,9 @@
             {viewMode}
             {onNavigate}
             {onDownload}
+            {onDelete}
             {downloading}
+            {deleting}
             {selectable}
             selected={selectedPath === entry.path}
             {onSelect}
@@ -149,7 +155,9 @@
         {viewMode}
         {onNavigate}
         {onDownload}
+        {onDelete}
         {downloading}
+        {deleting}
         {selectable}
         selected={selectedPath === entry.path}
         {onSelect}

@@ -33,6 +33,12 @@
   let logsLoading = $state(false);
   let initialMaxRuns = $state<number | null>(null);
 
+  // Delete verification window state
+  let deleteVerificationWindow = $state<number | null>(null);
+  let deleteVerificationInput = $state('');
+  let deleteVerificationLoading = $state(false);
+  let initialDeleteVerificationWindow = $state<number | null>(null);
+
   function resetPasswordForm() {
     currentPassword = '';
     newPassword = '';
@@ -63,6 +69,9 @@
       maxRunsPerJob = settings.max_runs_per_job;
       initialMaxRuns = settings.max_runs_per_job;
       maxRunsInput = settings.max_runs_per_job?.toString() ?? '';
+      deleteVerificationWindow = settings.delete_verification_window_minutes;
+      initialDeleteVerificationWindow = settings.delete_verification_window_minutes;
+      deleteVerificationInput = settings.delete_verification_window_minutes?.toString() ?? '5';
     } catch (err) {
       console.error('Failed to load settings:', err);
     }
@@ -136,11 +145,16 @@
     }
   }
 
-  async function handleLogsSave() {
+  async function handleLogsChange() {
     const value = maxRunsInput.trim() === '' ? null : parseInt(maxRunsInput, 10);
 
     if (value !== null && (isNaN(value) || value < 1)) {
       showToast({ message: m.settings_retention_invalid(), variant: 'error' });
+      maxRunsInput = initialMaxRuns?.toString() ?? '';
+      return;
+    }
+
+    if (value === initialMaxRuns) {
       return;
     }
 
@@ -152,8 +166,36 @@
       showToast({ message: m.settings_saved(), variant: 'success' });
     } catch (err) {
       showToast({ message: err instanceof Error ? err.message : m.settings_save_error(), variant: 'error' });
+      maxRunsInput = initialMaxRuns?.toString() ?? '';
     } finally {
       logsLoading = false;
+    }
+  }
+
+  async function handleDeleteVerificationChange() {
+    const value = parseInt(deleteVerificationInput, 10);
+
+    if (isNaN(value) || value < 1 || value > 60) {
+      showToast({ message: m.settings_delete_verification_invalid(), variant: 'error' });
+      deleteVerificationInput = initialDeleteVerificationWindow?.toString() ?? '5';
+      return;
+    }
+
+    if (value === initialDeleteVerificationWindow) {
+      return;
+    }
+
+    deleteVerificationLoading = true;
+    try {
+      await api.settings.update({ delete_verification_window_minutes: value });
+      deleteVerificationWindow = value;
+      initialDeleteVerificationWindow = value;
+      showToast({ message: m.settings_saved(), variant: 'success' });
+    } catch (err) {
+      showToast({ message: err instanceof Error ? err.message : m.settings_save_error(), variant: 'error' });
+      deleteVerificationInput = initialDeleteVerificationWindow?.toString() ?? '5';
+    } finally {
+      deleteVerificationLoading = false;
     }
   }
 
@@ -168,11 +210,7 @@
     }
   }
 
-  let hasLogsChanges = $derived(() => {
-    const currentValue = maxRunsInput.trim() === '' ? null : parseInt(maxRunsInput, 10);
-    if (isNaN(currentValue as number)) return false;
-    return currentValue !== initialMaxRuns;
-  });
+
 
   const tabs = [
     {
@@ -358,6 +396,45 @@
                     </div>
                   </label>
 
+                </div>
+
+                <!-- File Browser Section -->
+                <div class="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.settings_filebrowser_title()}</h4>
+
+                  <div class="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                      <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-red-100 dark:bg-red-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                          <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_delete_verification_label()}</div>
+                          <p class="text-xs text-gray-500 dark:text-gray-400">{m.settings_delete_verification_desc()}</p>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max="60"
+                          bind:value={deleteVerificationInput}
+                          onchange={handleDeleteVerificationChange}
+                          disabled={deleteVerificationLoading}
+                          class="input w-20 text-sm text-center"
+                        />
+                        <span class="text-sm text-gray-500 dark:text-gray-400">{m.settings_delete_verification_minutes()}</span>
+                        {#if deleteVerificationLoading}
+                          <svg class="w-4 h-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- Language & Region Section -->
@@ -591,32 +668,26 @@
 
                 <div>
                   <label for="max-runs" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">{m.settings_retention_max_runs()}</label>
-                  <div class="flex gap-3">
+                  <div class="flex gap-3 items-center">
                     <div class="relative flex-1">
                       <input
                         id="max-runs"
                         type="text"
                         inputmode="numeric"
                         bind:value={maxRunsInput}
+                        onchange={handleLogsChange}
+                        disabled={logsLoading}
                         class="input pr-14"
                         placeholder={m.settings_retention_placeholder()}
                       />
                       <span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 dark:text-gray-500">{m.settings_retention_unit()}</span>
                     </div>
-                    <button
-                      onclick={handleLogsSave}
-                      disabled={logsLoading || !hasLogsChanges()}
-                      class="btn btn-primary px-6 py-2 disabled:opacity-50"
-                    >
-                      {#if logsLoading}
-                        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      {:else}
-                        {m.common_save()}
-                      {/if}
-                    </button>
+                    {#if logsLoading}
+                      <svg class="w-4 h-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    {/if}
                   </div>
                   <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
                     {m.settings_retention_help()}

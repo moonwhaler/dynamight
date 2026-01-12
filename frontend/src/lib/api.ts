@@ -108,6 +108,9 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     NOT_A_FILE: () => m.error_not_a_file(),
     FILE_TOO_LARGE: () => m.error_file_too_large(),
     DOWNLOAD_FAILED: () => m.error_download_failed(),
+    DELETE_FAILED: () => m.error_delete_failed(),
+    DELETE_VERIFICATION_REQUIRED: () => m.error_delete_verification_required(),
+    DELETE_VERIFICATION_FAILED: () => m.error_delete_verification_failed(),
 
     // Run errors
     RUN_NOT_FOUND: () => m.error_generic(),
@@ -284,8 +287,14 @@ export const api = {
   },
 
   settings: {
-    get: () => request<{ max_runs_per_job: number | null }>('/settings'),
-    update: (settings: { max_runs_per_job: number | null }) =>
+    get: () => request<{
+      max_runs_per_job: number | null;
+      delete_verification_window_minutes: number | null;
+    }>('/settings'),
+    update: (settings: {
+      max_runs_per_job?: number | null;
+      delete_verification_window_minutes?: number | null;
+    }) =>
       request<{ success: boolean }>('/settings', {
         method: 'PUT',
         body: JSON.stringify(settings),
@@ -322,6 +331,19 @@ export const api = {
     // Direct URL for browser-native file download
     downloadUrl: (path: string) =>
       `${API_BASE}/system/download?path=${encodeURIComponent(path)}`,
+    // Delete verification and file deletion
+    verifyDeleteAccess: (password: string, totpCode?: string) =>
+      request<{ verified: boolean; expires_at: number }>('/system/verify-delete-access', {
+        method: 'POST',
+        body: JSON.stringify({ password, totp_code: totpCode }),
+      }),
+    deleteFile: (path: string) =>
+      request<{ success: boolean; path: string; is_dir: boolean }>('/system/delete', {
+        method: 'DELETE',
+        body: JSON.stringify({ path }),
+      }),
+    deleteStatus: () =>
+      request<{ verified: boolean; expires_at?: number }>('/system/delete-status'),
   },
 
   credentials: {

@@ -1,17 +1,22 @@
 use axum::{
     body::Body,
-    extract::{Query, State},
-    http::{header, StatusCode},
+    extract::{ConnectInfo, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio_util::io::ReaderStream;
 
 use crate::errors::{ApiError, ErrorCode};
+use crate::extractors::AuthClaims;
+use crate::handlers::auth::extract_client_ip;
+use crate::services::{AuthService, TotpService};
 use crate::AppState;
 
 /// Check if a path is within one of the allowed base paths.
@@ -341,4 +346,279 @@ pub async fn generate_mount_point(
     Json(json!({
         "mount_point": mount_point
     }))
+}
+
+// ============================================================================
+// Delete verification and file deletion endpoints
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct VerifyDeleteRequest {
+    pub password: String,
+    pub totp_code: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct VerifyDeleteResponse {
+    pub verified: bool,
+    pub expires_at: u64,
+}
+
+/// Get the delete verification window in minutes from settings, defaulting to 5
+async fn get_delete_verification_window(state: &AppState) -> u64 {
+    let db_value: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = 'delete_verification_window_minutes'"
+    )
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    db_value
+        .and_then(|(value,)| value.parse::<u64>().ok())
+        .unwrap_or(5)
+}
+
+/// POST /system/verify-delete-access - Verify user credentials for file deletion
+/// Requires password and optionally TOTP code if 2FA is enabled.
+/// On success, stores a verification timestamp that allows subsequent deletes
+/// within the configured time window without re-verification.
+pub async fn verify_delete_access(
+    State(state): State<Arc<AppState>>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    AuthClaims(claims): AuthClaims,
+    Json(req): Json<VerifyDeleteRequest>,
+) -> impl IntoResponse {
+    let user_id = claims.sub;
+    let ip = extract_client_ip(
+        &headers,
+        connect_info.as_ref().map(|c| &c.0),
+        &state.config.trusted_proxies,
+    );
+
+    // Check rate limit
+    if let Err(e) = state.rate_limit_service.check_rate_limit(&ip) {
+        return ApiError::rate_limited(e.retry_after_secs as u64).into_response();
+    }
+
+    // Get user from database
+    let user: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT password_hash, totp_secret FROM users WHERE id = ?"
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let (password_hash, totp_secret) = match user {
+        Some(u) => u,
+        None => {
+            state.rate_limit_service.record_failure(&ip);
+            return ApiError::user_not_found().into_response();
+        }
+    };
+
+    // Verify password
+    let password_valid = AuthService::verify_password(&req.password, &password_hash).unwrap_or(false);
+    if !password_valid {
+        state.rate_limit_service.record_failure(&ip);
+        return ApiError::delete_verification_failed().into_response();
+    }
+
+    // If TOTP is enabled, verify the code
+    if let Some(secret) = totp_secret {
+        let totp_code = match &req.totp_code {
+            Some(code) => code,
+            None => {
+                state.rate_limit_service.record_failure(&ip);
+                return ApiError::delete_verification_failed().into_response();
+            }
+        };
+
+        let totp_valid = TotpService::verify_code(&secret, totp_code).unwrap_or(false);
+        if !totp_valid {
+            state.rate_limit_service.record_failure(&ip);
+            return ApiError::delete_verification_failed().into_response();
+        }
+    }
+
+    // Clear rate limit on success
+    state.rate_limit_service.record_success(&ip);
+
+    // Get verification window from settings
+    let window_minutes = get_delete_verification_window(&state).await;
+    let now = Instant::now();
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + (window_minutes * 60);
+
+    // Store verification timestamp
+    {
+        let mut verifications = state.delete_verifications.write().await;
+        verifications.insert(user_id, now);
+    }
+
+    tracing::info!("User {} verified for delete access", user_id);
+
+    Json(VerifyDeleteResponse {
+        verified: true,
+        expires_at,
+    }).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct DeleteRequest {
+    pub path: String,
+}
+
+/// DELETE /system/delete - Delete a file or directory
+/// Requires prior verification via /system/verify-delete-access.
+/// Security measures:
+/// - Verification window check (user must have recently verified)
+/// - Two-stage path validation (before and after canonicalization)
+/// - Symlink attack prevention via canonicalization
+/// - Path traversal prevention
+pub async fn delete_path(
+    State(state): State<Arc<AppState>>,
+    AuthClaims(claims): AuthClaims,
+    Json(req): Json<DeleteRequest>,
+) -> impl IntoResponse {
+    let user_id = claims.sub;
+    let path_str = &req.path;
+
+    // 1. Check verification window
+    let window_minutes = get_delete_verification_window(&state).await;
+    let window_duration = Duration::from_secs(window_minutes * 60);
+
+    let is_verified = {
+        let verifications = state.delete_verifications.read().await;
+        if let Some(verified_at) = verifications.get(&user_id) {
+            verified_at.elapsed() < window_duration
+        } else {
+            false
+        }
+    };
+
+    if !is_verified {
+        return ApiError::delete_verification_required().into_response();
+    }
+
+    // 2. Basic validation
+    if path_str.is_empty() {
+        return ApiError::field_required("path").into_response();
+    }
+
+    // 3. Reject obvious traversal attempts
+    if path_str.contains("..") {
+        return ApiError::new(ErrorCode::PathTraversalNotAllowed).into_response();
+    }
+
+    let path = Path::new(path_str);
+
+    // 4. Pre-canonicalization check
+    if !is_path_allowed(path, &state.config.allowed_browse_paths) {
+        tracing::debug!("Delete denied for path '{}' - not in allowed paths", path_str);
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // 5. Canonicalize to resolve symlinks
+    let canonical = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!("Failed to canonicalize delete path '{}': {}", path_str, e);
+            return ApiError::file_not_found().into_response();
+        }
+    };
+
+    // 6. Post-canonicalization check (prevents symlink attacks)
+    if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
+        tracing::debug!(
+            "Delete denied for canonical path '{}' - not in allowed paths",
+            canonical.display()
+        );
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // 7. Get metadata to check if file or directory
+    let metadata = match std::fs::metadata(&canonical) {
+        Ok(m) => m,
+        Err(_) => return ApiError::file_not_found().into_response(),
+    };
+
+    // 8. Perform deletion
+    let result = if metadata.is_dir() {
+        std::fs::remove_dir_all(&canonical)
+    } else {
+        std::fs::remove_file(&canonical)
+    };
+
+    match result {
+        Ok(_) => {
+            // Reset verification timer after successful delete
+            {
+                let mut verifications = state.delete_verifications.write().await;
+                verifications.insert(user_id, Instant::now());
+            }
+
+            let item_type = if metadata.is_dir() { "directory" } else { "file" };
+            tracing::info!(
+                "User {} deleted {} '{}' (canonical: '{}')",
+                user_id,
+                item_type,
+                path_str,
+                canonical.display()
+            );
+
+            Json(json!({
+                "success": true,
+                "path": path_str,
+                "is_dir": metadata.is_dir()
+            })).into_response()
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to delete '{}' (canonical: '{}'): {}",
+                path_str,
+                canonical.display(),
+                e
+            );
+            ApiError::delete_failed().into_response()
+        }
+    }
+}
+
+/// GET /system/delete-status - Check if user has active delete verification
+pub async fn delete_status(
+    State(state): State<Arc<AppState>>,
+    AuthClaims(claims): AuthClaims,
+) -> impl IntoResponse {
+    let user_id = claims.sub;
+
+    let window_minutes = get_delete_verification_window(&state).await;
+    let window_duration = Duration::from_secs(window_minutes * 60);
+
+    let verifications = state.delete_verifications.read().await;
+
+    if let Some(verified_at) = verifications.get(&user_id) {
+        let elapsed = verified_at.elapsed();
+        if elapsed < window_duration {
+            let remaining_secs = (window_duration - elapsed).as_secs();
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + remaining_secs;
+
+            return Json(json!({
+                "verified": true,
+                "expires_at": expires_at
+            })).into_response();
+        }
+    }
+
+    Json(json!({
+        "verified": false
+    })).into_response()
 }

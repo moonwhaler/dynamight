@@ -5,6 +5,7 @@
   import BreadcrumbNav from '../components/filebrowser/BreadcrumbNav.svelte';
   import FileList from '../components/filebrowser/FileList.svelte';
   import DriveSelector from '../components/filebrowser/DriveSelector.svelte';
+  import DeleteConfirmDialog from '../components/filebrowser/DeleteConfirmDialog.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   // Subscribe to store
@@ -14,6 +15,12 @@
   let showNewFolderDialog = $state(false);
   let newFolderName = $state('');
   let newFolderError = $state('');
+
+  // Delete dialog state
+  let showDeleteDialog = $state(false);
+  let pendingDeletePath = $state('');
+  let pendingDeleteName = $state('');
+  let pendingDeleteIsDir = $state(false);
 
   onMount(() => {
     // Load drives and allowed paths
@@ -36,6 +43,32 @@
 
   function handleDownload(path: string) {
     fileBrowserStore.downloadFile(path);
+  }
+
+  // Delete handlers
+  async function handleDelete(path: string, name: string, isDir: boolean) {
+    // Check if already verified
+    if (fileBrowserStore.isDeleteVerified()) {
+      // Already verified, proceed with delete directly
+      await fileBrowserStore.deleteEntry(path);
+    } else {
+      // Need verification, show dialog
+      pendingDeletePath = path;
+      pendingDeleteName = name;
+      pendingDeleteIsDir = isDir;
+      showDeleteDialog = true;
+    }
+  }
+
+  function closeDeleteDialog() {
+    showDeleteDialog = false;
+    pendingDeletePath = '';
+    pendingDeleteName = '';
+    pendingDeleteIsDir = false;
+  }
+
+  function handleDeleteSuccess() {
+    closeDeleteDialog();
   }
 
   // Drive handlers
@@ -195,9 +228,11 @@
         sortOrder={browserState.sortOrder}
         loading={browserState.loading}
         downloading={browserState.downloading}
+        deleting={browserState.deleting}
         error={browserState.error}
         onNavigate={handleNavigate}
         onDownload={handleDownload}
+        onDelete={handleDelete}
         onSortChange={handleSortChange}
         onSortOrderToggle={handleSortOrderToggle}
       />
@@ -267,3 +302,13 @@
     </div>
   </div>
 {/if}
+
+<!-- Delete Confirmation Dialog -->
+<DeleteConfirmDialog
+  open={showDeleteDialog}
+  entryName={pendingDeleteName}
+  entryPath={pendingDeletePath}
+  isDirectory={pendingDeleteIsDir}
+  onClose={closeDeleteDialog}
+  onSuccess={handleDeleteSuccess}
+/>

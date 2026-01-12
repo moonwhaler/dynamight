@@ -83,6 +83,9 @@ pub enum ErrorCode {
     NotAFile,
     FileTooLarge,
     DownloadFailed,
+    DeleteFailed,
+    DeleteVerificationRequired,
+    DeleteVerificationFailed,
 
     // Run errors
     RunNotFound,
@@ -244,6 +247,18 @@ impl ApiError {
         Self::new(ErrorCode::DownloadFailed)
     }
 
+    pub fn delete_failed() -> Self {
+        Self::new(ErrorCode::DeleteFailed)
+    }
+
+    pub fn delete_verification_required() -> Self {
+        Self::new(ErrorCode::DeleteVerificationRequired)
+    }
+
+    pub fn delete_verification_failed() -> Self {
+        Self::new(ErrorCode::DeleteVerificationFailed)
+    }
+
     pub fn internal_error() -> Self {
         Self::new(ErrorCode::InternalError)
     }
@@ -302,7 +317,11 @@ impl IntoResponse for ApiError {
             | ErrorCode::TotpInvalidCode
             | ErrorCode::TotpNotEnabled
             | ErrorCode::NotAFile
-            | ErrorCode::FileTooLarge => StatusCode::BAD_REQUEST,
+            | ErrorCode::FileTooLarge
+            | ErrorCode::DeleteVerificationFailed => StatusCode::BAD_REQUEST,
+
+            // 428 Precondition Required - verification needed
+            ErrorCode::DeleteVerificationRequired => StatusCode::PRECONDITION_REQUIRED,
 
             // 500 Internal Server Error - everything else
             _ => StatusCode::INTERNAL_SERVER_ERROR,
