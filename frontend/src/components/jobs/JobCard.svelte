@@ -157,7 +157,7 @@
       const result = await api.jobs.checkSpace(job.id);
       if (result.fits) {
         showToast({
-          message: `${m.space_check_fits()}: ${formatBytes(result.transfer_size)} to transfer, ${formatBytes(result.destination_free)} free`,
+          message: `${m.space_check_fits()}: ${m.space_check_transfer_size()} ${formatBytes(result.transfer_size)}, ${m.space_check_free_space()} ${formatBytes(result.destination_free)}`,
           variant: 'success',
         });
       } else {
