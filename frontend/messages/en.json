@@ -765,6 +765,7 @@
   "exclude_dirs_select_to_add": "Select directories to exclude",
   "exclude_dirs_add_one": "Add 1 directory",
   "exclude_dirs_add_n": "Add {count} directories",
+  "exclude_dirs_browse": "Browse",
 
   "space_check_title": "Space Check",
   "space_check_help": "Verify the destination has enough free space before syncing.",

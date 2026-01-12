@@ -18,6 +18,9 @@
 
   let newExclude = $state('');
 
+  // Selected source directory for exclude browsing
+  let selectedExcludeSource = $state('');
+
   // Exclude directories browser state
   let showExcludeBrowser = $state(false);
   let excludeBrowserSourceDir = $state('');
@@ -187,6 +190,15 @@
       if (validExcludes.length !== options.exclude_dirs.length) {
         options.exclude_dirs = validExcludes;
       }
+    }
+  });
+
+  // Set default selected source when sourceDirs change
+  $effect(() => {
+    if (sourceDirs.length > 0 && (!selectedExcludeSource || !sourceDirs.includes(selectedExcludeSource))) {
+      selectedExcludeSource = sourceDirs[0];
+    } else if (sourceDirs.length === 0) {
+      selectedExcludeSource = '';
     }
   });
 </script>
@@ -517,18 +529,28 @@
           </div>
         {/if}
 
-        <!-- Browse buttons for each source -->
-        <div class="mt-3 flex flex-wrap gap-2">
-          {#each sourceDirs as sourceDir}
-            <button
-              type="button"
-              onclick={() => openExcludeBrowser(sourceDir)}
-              class="btn btn-secondary text-sm font-mono"
-              title={sourceDir}
-            >
-              {m.exclude_dirs_browse_in({ path: sourceDir })}
-            </button>
-          {/each}
+        <!-- Source directory selector + Browse button -->
+        <div class="mt-3 flex flex-col sm:flex-row gap-2">
+          <select
+            bind:value={selectedExcludeSource}
+            class="input flex-1"
+          >
+            {#each sourceDirs as sourceDir}
+              <option value={sourceDir}>{getSourceFolderName(sourceDir)}</option>
+            {/each}
+          </select>
+          <button
+            type="button"
+            onclick={() => openExcludeBrowser(selectedExcludeSource)}
+            disabled={!selectedExcludeSource}
+            class="btn btn-secondary"
+            title={selectedExcludeSource}
+          >
+            <svg class="w-4 h-4 mr-1.5 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            {m.exclude_dirs_browse()}
+          </button>
         </div>
       {/if}
     </div>

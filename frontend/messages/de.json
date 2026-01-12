@@ -757,6 +757,7 @@
   "exclude_dirs_select_to_add": "Verzeichnisse zum Ausschließen auswählen",
   "exclude_dirs_add_one": "1 Verzeichnis hinzufügen",
   "exclude_dirs_add_n": "{count} Verzeichnisse hinzufügen",
+  "exclude_dirs_browse": "Durchsuchen",
 
   "space_check_title": "Speicherplatzprüfung",
   "space_check_help": "Prüft vor der Synchronisation, ob das Ziel genügend freien Speicherplatz hat.",
