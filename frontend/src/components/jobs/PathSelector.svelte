@@ -2,8 +2,55 @@
   import { api } from '../../lib/api';
   import type { DirectoryEntry } from '../../lib/types';
   import * as m from '$lib/paraglide/messages.js';
+  import { showToast } from '../ui/Toast.svelte';
 
   let { paths = $bindable<string[]>([]) }: { paths: string[] } = $props();
+
+  /** Extract the basename (folder name) from a path */
+  function getBasename(path: string): string {
+    return path.split('/').filter(Boolean).pop() || 'backup';
+  }
+
+  /** Get basenames of all currently added paths */
+  function getExistingBasenames(): Set<string> {
+    return new Set(paths.map(getBasename));
+  }
+
+  /**
+   * Filter paths to add, separating those that would cause basename conflicts.
+   * Returns { valid: paths that can be added, conflicts: basenames that conflict }
+   */
+  function filterConflictingPaths(newPaths: string[]): { valid: string[]; conflicts: string[] } {
+    const existingBasenames = getExistingBasenames();
+    const valid: string[] = [];
+    const conflicts: string[] = [];
+    const seenInBatch = new Set<string>();
+
+    for (const path of newPaths) {
+      const basename = getBasename(path);
+
+      if (existingBasenames.has(basename) || seenInBatch.has(basename)) {
+        // This basename already exists or was seen earlier in this batch
+        if (!conflicts.includes(basename)) {
+          conflicts.push(basename);
+        }
+      } else {
+        valid.push(path);
+        seenInBatch.add(basename);
+      }
+    }
+
+    return { valid, conflicts };
+  }
+
+  /** Show a toast for conflicting basenames */
+  function showConflictToast(conflicts: string[]) {
+    const names = conflicts.join(', ');
+    showToast({
+      message: m.path_selector_duplicate_basenames({ names }),
+      variant: 'error',
+    });
+  }
 
   let showBrowser = $state(false);
   let currentPath = $state('/');
@@ -107,14 +154,30 @@
   function addSelectedPaths() {
     const newPaths = [...selectedInDialog].filter(p => !paths.includes(p));
     if (newPaths.length > 0) {
-      paths = [...paths, ...newPaths];
+      const { valid, conflicts } = filterConflictingPaths(newPaths);
+
+      if (valid.length > 0) {
+        paths = [...paths, ...valid];
+      }
+
+      if (conflicts.length > 0) {
+        showConflictToast(conflicts);
+      }
     }
     closeBrowser();
   }
 
   function quickAddCurrentPath() {
     if (!paths.includes(currentPath)) {
-      paths = [...paths, currentPath];
+      const { valid, conflicts } = filterConflictingPaths([currentPath]);
+
+      if (valid.length > 0) {
+        paths = [...paths, ...valid];
+      }
+
+      if (conflicts.length > 0) {
+        showConflictToast(conflicts);
+      }
     }
   }
 
@@ -125,8 +188,16 @@
   function addManualPath() {
     const path = manualPath.trim();
     if (path && !paths.includes(path)) {
-      paths = [...paths, path];
-      manualPath = '';
+      const { valid, conflicts } = filterConflictingPaths([path]);
+
+      if (valid.length > 0) {
+        paths = [...paths, ...valid];
+        manualPath = '';
+      }
+
+      if (conflicts.length > 0) {
+        showConflictToast(conflicts);
+      }
     }
   }
 

@@ -67,6 +67,7 @@ pub enum ErrorCode {
     ValidationInvalidPattern,
     SourceDirsRequired,
     CredentialsRequired,
+    SourceDirsDuplicateBasenames,
 
     // System errors
     PathNotAllowed,
@@ -195,6 +196,13 @@ impl ApiError {
         Self::new(ErrorCode::SourceDirsRequired)
     }
 
+    pub fn source_dirs_duplicate_basenames(duplicates: Vec<String>) -> Self {
+        Self::with_params(
+            ErrorCode::SourceDirsDuplicateBasenames,
+            json!({ "duplicates": duplicates }),
+        )
+    }
+
     pub fn credentials_required() -> Self {
         Self::new(ErrorCode::CredentialsRequired)
     }
@@ -313,6 +321,7 @@ impl IntoResponse for ApiError {
             | ErrorCode::ValidationInvalidPattern
             | ErrorCode::SourceDirsRequired
             | ErrorCode::CredentialsRequired
+            | ErrorCode::SourceDirsDuplicateBasenames
             | ErrorCode::InvalidCron
             | ErrorCode::TotpInvalidCode
             | ErrorCode::TotpNotEnabled

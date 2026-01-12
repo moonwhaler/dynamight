@@ -51,6 +51,7 @@
   "error_setup_already_done": "Einrichtung wurde bereits abgeschlossen",
   "error_path_not_allowed": "Pfad nicht in erlaubten Verzeichnissen",
   "error_source_dirs_required": "Mindestens ein Quellverzeichnis muss angegeben werden",
+  "error_source_dirs_duplicate_basenames": "Quellverzeichnisse haben doppelte Ordnernamen: {names}. Benennen Sie die Verzeichnisse um, damit sie eindeutige Namen haben.",
   "error_field_required": "{field} darf nicht leer sein",
   "error_field_too_long": "{field} zu lang (max. {max} Zeichen)",
   "error_passwords_mismatch": "Passwörter stimmen nicht überein",
@@ -161,6 +162,7 @@
   "job_confirm_mirror_button": "Ja, Spiegelmodus aktivieren",
   "job_validation_source_required": "Mindestens ein Quellverzeichnis muss ausgewählt werden",
   "job_validation_credentials_required": "Bitte wählen Sie Anmeldedaten für diesen Anbieter",
+  "job_validation_duplicate_basenames": "Quellverzeichnisse haben doppelte Ordnernamen: {names}. Jede Quelle muss einen eindeutigen Ordnernamen haben, um Überschreiben von Dateien bei der Synchronisierung zu vermeiden.",
 
   "job_card_last_run_succeeded": "Letzte Ausführung erfolgreich",
   "job_card_last_run_failed": "Letzte Ausführung fehlgeschlagen",
@@ -638,6 +640,7 @@
   "path_selector_add_directories": "{count} Verzeichnisse hinzufügen",
   "path_selector_add_selected": "Auswahl hinzufügen",
   "path_selector_already_added": "Bereits hinzugefügt",
+  "path_selector_duplicate_basenames": "Ordner mit doppeltem Namen übersprungen: {names}. Eine Quelle mit diesem Ordnernamen existiert bereits.",
   "path_selector_add_to_selection": "Zur Auswahl hinzufügen",
   "path_selector_new_folder": "Neuer Ordner",
   "path_selector_folder_name": "Ordnername",

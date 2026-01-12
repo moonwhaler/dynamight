@@ -55,6 +55,7 @@
   "error_setup_already_done": "Setup has already been completed",
   "error_path_not_allowed": "Path not in allowed directories",
   "error_source_dirs_required": "At least one source directory must be specified",
+  "error_source_dirs_duplicate_basenames": "Source directories have conflicting folder names: {names}. Rename directories to have unique names.",
   "error_field_required": "{field} cannot be empty",
   "error_field_too_long": "{field} too long (max {max} characters)",
   "error_passwords_mismatch": "Passwords do not match",
@@ -166,6 +167,7 @@
   "job_confirm_mirror_button": "Yes, enable Mirror Mode",
   "job_validation_source_required": "At least one source directory must be selected",
   "job_validation_credentials_required": "Please select credentials for this provider",
+  "job_validation_duplicate_basenames": "Source directories have conflicting folder names: {names}. Each source must have a unique folder name to avoid files being overwritten during sync.",
 
   "job_card_last_run_succeeded": "Last run succeeded",
   "job_card_last_run_failed": "Last run failed",
@@ -646,6 +648,7 @@
   "path_selector_add_directories": "Add {count} Directories",
   "path_selector_add_selected": "Add Selected",
   "path_selector_already_added": "Already added",
+  "path_selector_duplicate_basenames": "Skipped folder(s) with duplicate name: {names}. A source with this folder name already exists.",
   "path_selector_add_to_selection": "Add to selection",
   "path_selector_new_folder": "New Folder",
   "path_selector_folder_name": "Folder name",

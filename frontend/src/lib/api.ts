@@ -97,6 +97,11 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     VALIDATION_FIELD_REQUIRED: () => m.error_field_required({ field: String(params?.field ?? 'Field') }),
     VALIDATION_FIELD_TOO_LONG: () => m.error_field_too_long({ field: String(params?.field ?? 'Field'), max: params?.max ?? 255 }),
     SOURCE_DIRS_REQUIRED: () => m.error_source_dirs_required(),
+    SOURCE_DIRS_DUPLICATE_BASENAMES: () => {
+      const duplicates = params?.duplicates;
+      const names = Array.isArray(duplicates) ? duplicates.join(', ') : String(duplicates ?? '');
+      return m.error_source_dirs_duplicate_basenames({ names });
+    },
     CREDENTIALS_REQUIRED: () => m.job_validation_credentials_required(),
 
     // System errors

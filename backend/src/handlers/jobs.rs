@@ -69,6 +69,38 @@ fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validates that source directories don't have conflicting basenames.
+/// Returns Ok(()) if all basenames are unique, or Err with a list of duplicated basenames.
+fn validate_source_dirs_unique_basenames(source_dirs: &[String]) -> Result<(), Vec<String>> {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    // Count occurrences of each basename
+    let mut basename_counts: HashMap<String, Vec<&str>> = HashMap::new();
+
+    for dir in source_dirs {
+        let basename = Path::new(dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "backup".to_string());
+
+        basename_counts.entry(basename).or_default().push(dir);
+    }
+
+    // Find basenames that appear more than once
+    let duplicates: Vec<String> = basename_counts
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .map(|(basename, _)| basename)
+        .collect();
+
+    if duplicates.is_empty() {
+        Ok(())
+    } else {
+        Err(duplicates)
+    }
+}
+
 /// Validates display fields (name, description) for basic safety.
 /// Checks for length limits and control characters.
 /// Set `allow_empty` to true for optional fields like description.
@@ -171,6 +203,11 @@ pub async fn create_job(
     // Validate at least one source directory
     if req.source_dirs.is_empty() {
         return ApiError::source_dirs_required().into_response();
+    }
+
+    // Validate source directories have unique basenames (to prevent sync conflicts)
+    if let Err(duplicates) = validate_source_dirs_unique_basenames(&req.source_dirs) {
+        return ApiError::source_dirs_duplicate_basenames(duplicates).into_response();
     }
 
     // Validate rsync exclude patterns
@@ -299,6 +336,11 @@ pub async fn update_job(
     if let Some(ref source_dirs) = req.source_dirs {
         if source_dirs.is_empty() {
             return ApiError::source_dirs_required().into_response();
+        }
+
+        // Validate source directories have unique basenames (to prevent sync conflicts)
+        if let Err(duplicates) = validate_source_dirs_unique_basenames(source_dirs) {
+            return ApiError::source_dirs_duplicate_basenames(duplicates).into_response();
         }
     }
 
