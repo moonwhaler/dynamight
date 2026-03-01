@@ -610,7 +610,7 @@ impl SyncProvider for RsyncProvider {
             }
         };
 
-        ctx.log_info("Starting backup job", "system").await;
+        ctx.log_info("Starting sync", "system").await;
 
         // Mount if needed
         if auto_mount {

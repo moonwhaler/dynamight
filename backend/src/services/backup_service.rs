@@ -217,6 +217,8 @@ impl BackupService {
         // Create provider based on destination type
         let provider = providers::create_provider(&destination);
 
+        self.log(run_id, LogLevel::Info, "Starting backup job", "system").await;
+
         // Validate configuration
         if let Err(e) = provider.validate_config(&destination, credential.as_ref()) {
             self.log(run_id, LogLevel::Error, &format!("Configuration error: {}", e), "system").await;

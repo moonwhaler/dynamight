@@ -9,13 +9,15 @@ use anyhow::Context;
 use chrono::Local;
 use std::path::{Path, PathBuf};
 
-/// Sanitize a directory name to be safe as an archive filename prefix.
+/// Sanitize a directory name to be safe as an archive filename segment.
 ///
-/// Replaces any character that is not `[a-zA-Z0-9_-]` with `'_'`.
+/// Replaces any character that is not `[a-zA-Z0-9_-]` with `'_'`, then trims
+/// leading and trailing underscores so that directory names like `.dotnet` become
+/// `dotnet` rather than `_dotnet` (which would produce double underscores when
+/// joined with other segments).
 ///
 /// This is the **single source of truth** used by both `generate_archive_name()`
-/// and `cleanup_old_archives()` to ensure consistent naming — the cleanup prefix
-/// always matches what was generated.
+/// and `cleanup_old_archives()` to ensure consistent naming.
 pub fn sanitize_dir_name(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -25,7 +27,9 @@ pub fn sanitize_dir_name(name: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
 }
 
 /// Get the file extension for a given archive format.
@@ -38,11 +42,16 @@ pub fn format_extension(format: &CompressFormat) -> &'static str {
 
 /// Generate the archive filename for a source directory.
 ///
-/// Naming: `[custom_name_]<sanitized_dir_name>[_<timestamp>].<ext>`
+/// Naming: `[<timestamp>_][custom_name_]<sanitized_dir_name>.<ext>`
+///
+/// The timestamp is always the **first** segment when enabled, making archives
+/// sort chronologically by name and clearly marking when they were created.
 ///
 /// Examples:
 /// - `custom="proj"`, `dir="my documents"`, `timestamp=true`
-///   → `"proj_my_documents_2026-03-01T14-30-00.tar.gz"`
+///   → `"2026-03-01T14-30-00_proj_my_documents.tar.gz"`
+/// - `custom=None`, `dir=".dotnet"`, `timestamp=false`
+///   → `"dotnet.tar.gz"`
 /// - `custom=None`, `dir="photos"`, `timestamp=false`
 ///   → `"photos.tar.gz"`
 pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> String {
@@ -51,6 +60,11 @@ pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> Stri
 
     let mut parts: Vec<String> = Vec::new();
 
+    if opts.add_timestamp {
+        let ts = Local::now().format("%Y-%m-%dT%H-%M-%S").to_string();
+        parts.push(ts);
+    }
+
     if let Some(ref custom) = opts.custom_name {
         if !custom.is_empty() {
             parts.push(custom.clone());
@@ -58,11 +72,6 @@ pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> Stri
     }
 
     parts.push(sanitized);
-
-    if opts.add_timestamp {
-        let ts = Local::now().format("%Y-%m-%dT%H-%M-%S").to_string();
-        parts.push(ts);
-    }
 
     format!("{}.{}", parts.join("_"), ext)
 }
@@ -225,7 +234,11 @@ pub async fn compress_directory(
 /// source directory, keeping at most `max_count` archives.
 ///
 /// Uses `sanitize_dir_name(dir_name)` — identical to `generate_archive_name()` —
-/// so the match prefix is guaranteed to align with the generated filenames.
+/// so the match suffix is guaranteed to align with the generated filenames.
+///
+/// Archive names follow `[TIMESTAMP_][custom_]sanitized.ext`, so the sanitized
+/// name is always the last segment before the extension. Matching is done by
+/// suffix (`ends_with`) to handle both timestamped and non-timestamped variants.
 ///
 /// Returns the number of deleted archives.
 pub fn cleanup_old_archives(
@@ -238,13 +251,15 @@ pub fn cleanup_old_archives(
     let ext = format_extension(format);
     let sanitized = sanitize_dir_name(dir_name);
 
-    // Build the prefix that all matching archives share.
+    // The base name without any timestamp prefix:
+    //   [custom_]sanitized.ext
     // Mirrors exactly how generate_archive_name() constructs names.
-    let prefix = match custom_name {
-        Some(cn) if !cn.is_empty() => format!("{}_{}_", cn, sanitized),
-        _ => format!("{}_", sanitized),
+    let base_name = match custom_name {
+        Some(cn) if !cn.is_empty() => format!("{}_{}.{}", cn, sanitized, ext),
+        _ => format!("{}.{}", sanitized, ext),
     };
-    let suffix = format!(".{}", ext);
+    // The suffix used to match timestamped variants: "_[custom_]sanitized.ext"
+    let ts_suffix = format!("_{}", base_name);
 
     let entries = std::fs::read_dir(staging_dir).with_context(|| {
         format!(
@@ -258,7 +273,8 @@ pub fn cleanup_old_archives(
         .filter(|e| {
             let name = e.file_name();
             let name_str = name.to_string_lossy().into_owned();
-            name_str.starts_with(&prefix) && name_str.ends_with(&suffix)
+            // Match exact base name (no timestamp) OR timestamp-prefixed variant
+            name_str == base_name || name_str.ends_with(&ts_suffix)
         })
         .filter_map(|e| {
             let mtime = e.metadata().ok()?.modified().ok()?;
