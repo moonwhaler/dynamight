@@ -78,6 +78,44 @@ fn default_space_check() -> String {
     "warn".to_string()
 }
 
+/// Archive format for directory compression
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressFormat {
+    #[default]
+    TarGz,
+    Zip,
+}
+
+/// Options for per-directory compression before transfer.
+/// When enabled, each source directory is compressed into a single archive
+/// and stored locally at `staging_path/<job_id>/` before being transferred.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressDirsOptions {
+    /// Master toggle
+    pub enabled: bool,
+    /// Archive format (default: TarGz)
+    #[serde(default)]
+    pub format: CompressFormat,
+    /// Append timestamp (e.g. 2026-03-01T14-30-00) to archive name, enabling versioned archives.
+    /// Without timestamp, archives are overwritten on each run.
+    #[serde(default)]
+    pub add_timestamp: bool,
+    /// Optional custom name prefix, e.g. "myproject" →
+    ///   "myproject_dirname_2026-03-01T14-30-00.tar.gz"
+    /// Allowlist: [a-zA-Z0-9_-], max 64 chars
+    #[serde(default)]
+    pub custom_name: Option<String>,
+    /// Max local archives to retain per source directory.
+    /// Only meaningful when add_timestamp = true.
+    /// None = unlimited. Must be >= 1 if set.
+    #[serde(default)]
+    pub max_archives_per_dir: Option<u32>,
+    /// Root path where archives are staged before transfer.
+    /// Actual archives go into: staging_path/<job_id>/
+    pub staging_path: String,
+}
+
 impl Default for DestinationConfig {
     fn default() -> Self {
         Self::Local {
@@ -161,6 +199,11 @@ pub struct SyncOptions {
     /// Space check behavior before sync: "fail", "warn", or "none"
     #[serde(default = "default_space_check")]
     pub space_check: String,
+
+    /// Directory compression options.
+    /// When set and enabled, each source directory is compressed before transfer.
+    #[serde(default)]
+    pub compress_dirs: Option<CompressDirsOptions>,
 }
 
 impl Default for SyncOptions {
@@ -174,6 +217,7 @@ impl Default for SyncOptions {
             verbosity: "normal".to_string(),
             provider_options: None,
             space_check: "warn".to_string(),
+            compress_dirs: None,
         }
     }
 }
@@ -204,6 +248,7 @@ impl SyncOptions {
             verbosity,
             provider_options: Some(provider_options),
             space_check: "warn".to_string(),
+            compress_dirs: None,
         }
     }
 
@@ -241,5 +286,10 @@ impl SyncOptions {
         } else {
             &self.space_check
         }
+    }
+
+    /// Whether directory compression is enabled
+    pub fn compress_dirs_enabled(&self) -> bool {
+        self.compress_dirs.as_ref().map(|c| c.enabled).unwrap_or(false)
     }
 }

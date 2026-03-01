@@ -834,5 +834,31 @@
   "test_connection_error_generic": "Connection test failed",
 
   "storage_free_short": "free",
-  "storage_tooltip": "{free} free of {total}"
+  "storage_tooltip": "{free} free of {total}",
+
+  "compress_dirs_title": "Compress Source Directories",
+  "compress_dirs_description": "Create a compressed archive for each source directory and transfer the archives instead of raw file trees.",
+  "compress_dirs_help": "When enabled, each source directory is compressed into a single archive (.tar.gz or .zip) stored locally at the staging path before being transferred. Useful for archival backups, bandwidth reduction, or when the destination doesn't support rsync.",
+  "compress_dirs_staging_path": "Local Staging Path",
+  "compress_dirs_staging_path_help": "Directory where archives are created before transfer. Archives are stored in a job-specific subfolder here. Ensure sufficient free space.",
+  "compress_dirs_staging_path_placeholder": "/var/backup/staging",
+  "compress_dirs_staging_path_required": "A staging path is required when compression is enabled.",
+  "compress_dirs_staging_subdir_note": "Archives are saved in: {path}/<job-id>/",
+  "compress_dirs_format": "Archive Format",
+  "compress_dirs_format_help": "Compression format for created archives. tar.gz is smaller and broadly supported; zip is compatible with Windows without extra tools.",
+  "compress_dirs_format_targz": "tar.gz — Recommended",
+  "compress_dirs_format_zip": "zip — Maximum compatibility",
+  "compress_dirs_timestamp": "Add Timestamp to Filename",
+  "compress_dirs_timestamp_help": "Appends the date and time to archive filenames, creating versioned archives. Without a timestamp, archives are overwritten on each run, enabling incremental transfers for local destinations.",
+  "compress_dirs_timestamp_example": "Example: documents_2026-03-01T14-30-00.tar.gz",
+  "compress_dirs_max_archives": "Max Local Archives Per Source",
+  "compress_dirs_max_archives_help": "Maximum number of archive files to keep locally per source directory. Oldest archives beyond this count are deleted automatically. Leave empty to keep all archives.",
+  "compress_dirs_max_archives_placeholder": "unlimited",
+  "compress_dirs_custom_name": "Custom Name Prefix",
+  "compress_dirs_custom_name_help": "Optional prefix for archive filenames — useful for distinguishing archives from different jobs sharing the same staging path. Letters, numbers, hyphens, and underscores only.",
+  "compress_dirs_custom_name_placeholder": "e.g. myproject",
+  "compress_dirs_cloud_warning": "Note: Cloud and remote providers load entire archive files into memory before uploading, and re-upload archives in full on every run. For very large source directories, ensure the server has sufficient RAM.",
+  "compress_dirs_mirror_warning": "Mirror mode is also enabled. When archives are deleted locally by the retention limit, they will be removed from the destination on the next sync run.",
+  "compress_dirs_disabled_summary": "Compression is configured but disabled.",
+  "compress_dirs_per_source_note": "One archive is created per source directory."
 }

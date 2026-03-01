@@ -820,5 +820,31 @@
   "day_saturday": "Samstag",
 
   "storage_free_short": "frei",
-  "storage_tooltip": "{free} frei von {total}"
+  "storage_tooltip": "{free} frei von {total}",
+
+  "compress_dirs_title": "Quellverzeichnisse komprimieren",
+  "compress_dirs_description": "Erstellt ein komprimiertes Archiv für jedes Quellverzeichnis und überträgt die Archive anstelle von rohen Verzeichnisbäumen.",
+  "compress_dirs_help": "Wenn aktiviert, wird jedes Quellverzeichnis in ein einzelnes Archiv (.tar.gz oder .zip) am Staging-Pfad komprimiert, bevor es übertragen wird. Nützlich für Archivierungs-Backups, Bandbreitenreduzierung oder wenn das Ziel kein rsync unterstützt.",
+  "compress_dirs_staging_path": "Lokaler Staging-Pfad",
+  "compress_dirs_staging_path_help": "Verzeichnis, in dem Archive vor der Übertragung erstellt werden. Archive werden in einem job-spezifischen Unterordner gespeichert. Ausreichend freien Speicherplatz sicherstellen.",
+  "compress_dirs_staging_path_placeholder": "/var/backup/staging",
+  "compress_dirs_staging_path_required": "Ein Staging-Pfad ist erforderlich, wenn Komprimierung aktiviert ist.",
+  "compress_dirs_staging_subdir_note": "Archive werden gespeichert in: {path}/<job-id>/",
+  "compress_dirs_format": "Archivformat",
+  "compress_dirs_format_help": "Komprimierungsformat für erstellte Archive. tar.gz ist kleiner und weit verbreitet; zip ist ohne zusätzliche Tools mit Windows kompatibel.",
+  "compress_dirs_format_targz": "tar.gz — Empfohlen",
+  "compress_dirs_format_zip": "zip — Maximale Kompatibilität",
+  "compress_dirs_timestamp": "Zeitstempel zum Dateinamen hinzufügen",
+  "compress_dirs_timestamp_help": "Hängt Datum und Uhrzeit an Archivnamen an und erstellt so versionierte Archive. Ohne Zeitstempel werden Archive bei jedem Durchlauf überschrieben, was inkrementelle Übertragungen bei lokalen Zielen ermöglicht.",
+  "compress_dirs_timestamp_example": "Beispiel: dokumente_2026-03-01T14-30-00.tar.gz",
+  "compress_dirs_max_archives": "Max. lokale Archive pro Quelle",
+  "compress_dirs_max_archives_help": "Maximale Anzahl lokaler Archivdateien pro Quellverzeichnis. Ältere Archive über diese Anzahl hinaus werden automatisch gelöscht. Leer lassen, um alle Archive zu behalten.",
+  "compress_dirs_max_archives_placeholder": "unbegrenzt",
+  "compress_dirs_custom_name": "Benutzerdefiniertes Namenspräfix",
+  "compress_dirs_custom_name_help": "Optionales Präfix für Archivnamen — nützlich, um Archive verschiedener Jobs mit demselben Staging-Pfad zu unterscheiden. Nur Buchstaben, Zahlen, Bindestriche und Unterstriche.",
+  "compress_dirs_custom_name_placeholder": "z. B. meinprojekt",
+  "compress_dirs_cloud_warning": "Hinweis: Cloud- und Remote-Anbieter laden vollständige Archivdateien vor dem Hochladen in den Arbeitsspeicher und laden Archive bei jedem Durchlauf komplett neu hoch. Bei sehr großen Quellverzeichnissen ausreichend RAM sicherstellen.",
+  "compress_dirs_mirror_warning": "Spiegelungsmodus ist ebenfalls aktiviert. Wenn Archive lokal durch das Aufbewahrungslimit gelöscht werden, werden sie beim nächsten Synchronisierungslauf auch vom Ziel entfernt.",
+  "compress_dirs_disabled_summary": "Komprimierung ist konfiguriert, aber deaktiviert.",
+  "compress_dirs_per_source_note": "Pro Quellverzeichnis wird ein Archiv erstellt."
 }

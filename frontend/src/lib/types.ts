@@ -90,6 +90,18 @@ export type DestinationConfig =
   | SftpDestinationConfig
   | WebDavDestinationConfig;
 
+// Directory compression types
+export type CompressFormat = 'tar_gz' | 'zip';
+
+export interface CompressDirsOptions {
+  enabled: boolean;
+  format: CompressFormat;
+  add_timestamp: boolean;
+  custom_name?: string | null;
+  max_archives_per_dir?: number | null;
+  staging_path: string;
+}
+
 // Space check modes for local syncs
 export type SpaceCheckMode = 'fail' | 'warn' | 'none';
 
@@ -120,6 +132,7 @@ export interface SyncOptions {
   verbosity: 'quiet' | 'normal' | 'verbose';
   provider_options?: Record<string, unknown> | null;
   space_check?: SpaceCheckMode;
+  compress_dirs?: CompressDirsOptions | null;
 }
 
 // Provider capabilities

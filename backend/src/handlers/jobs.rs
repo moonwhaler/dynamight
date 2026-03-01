@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
-use crate::models::{CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, UpdateJobRequest};
+use crate::models::{CompressDirsOptions, CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, UpdateJobRequest};
 use crate::services::providers::RsyncProvider;
 use crate::AppState;
 
@@ -141,6 +141,63 @@ fn validate_display_field(value: &str, field_name: &str, max_len: usize, allow_e
     Ok(())
 }
 
+/// Validates compress_dirs options. Returns `Ok(())` on success, or an `ApiError`
+/// ready to be returned from a handler.
+fn validate_compress_dirs_options(
+    opts: &CompressDirsOptions,
+    source_dirs: &[String],
+    allowed_browse_paths: &[String],
+) -> Result<(), ApiError> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // 1. staging_path must not be empty
+    if opts.staging_path.trim().is_empty() {
+        return Err(ApiError::compress_staging_path_required());
+    }
+
+    // 2. staging_path must be within an allowed browse path
+    let is_allowed = allowed_browse_paths.iter().any(|allowed| {
+        opts.staging_path == *allowed
+            || opts.staging_path.starts_with(&format!("{}/", allowed))
+    });
+    if !is_allowed {
+        return Err(ApiError::compress_staging_path_not_allowed(&opts.staging_path));
+    }
+
+    // 3. staging_path must not overlap with any source_dir (neither equal, inside, nor containing)
+    for source_dir in source_dirs {
+        let staging = &opts.staging_path;
+        let staging_inside_source = staging.starts_with(&format!("{}/", source_dir)) || staging == source_dir;
+        let source_inside_staging = source_dir.starts_with(&format!("{}/", staging)) || staging == source_dir;
+        if staging_inside_source || source_inside_staging {
+            return Err(ApiError::compress_staging_overlaps_source(staging));
+        }
+    }
+
+    // 4. custom_name must match [a-zA-Z0-9_-]{1,64} if set
+    if let Some(ref name) = opts.custom_name {
+        if !name.is_empty() {
+            static CUSTOM_NAME_RE: Lazy<Regex> = Lazy::new(|| {
+                Regex::new(r"^[a-zA-Z0-9_-]{1,64}$")
+                    .expect("CUSTOM_NAME_RE pattern is invalid")
+            });
+            if !CUSTOM_NAME_RE.is_match(name) {
+                return Err(ApiError::compress_invalid_custom_name());
+            }
+        }
+    }
+
+    // 5. max_archives_per_dir must be >= 1 if set
+    if let Some(max) = opts.max_archives_per_dir {
+        if max < 1 {
+            return Err(ApiError::compress_max_archives_invalid());
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let jobs: Vec<Job> = sqlx::query_as("SELECT * FROM jobs ORDER BY name")
         .fetch_all(&state.db)
@@ -232,6 +289,19 @@ pub async fn create_job(
         if !sync_options.exclude_dirs.is_empty() {
             if let Err(invalid_path) = validate_exclude_dirs(&req.source_dirs, &sync_options.exclude_dirs) {
                 return ApiError::exclude_dir_not_in_source(&invalid_path).into_response();
+            }
+        }
+
+        // Validate compress_dirs options if enabled
+        if let Some(ref compress_opts) = sync_options.compress_dirs {
+            if compress_opts.enabled {
+                if let Err(e) = validate_compress_dirs_options(
+                    compress_opts,
+                    &req.source_dirs,
+                    &state.config.allowed_browse_paths,
+                ) {
+                    return e.into_response();
+                }
             }
         }
     }
@@ -372,16 +442,29 @@ pub async fn update_job(
 
     // Validate exclude_dirs are children of source_dirs (if sync_options provided)
     if let Some(ref sync_options) = req.sync_options {
-        if !sync_options.exclude_dirs.is_empty() {
-            // Use provided source_dirs or fall back to existing ones
-            let source_dirs_for_validation: Vec<String> = if let Some(ref sd) = req.source_dirs {
-                sd.clone()
-            } else {
-                existing.source_dirs_vec()
-            };
+        // Use provided source_dirs or fall back to existing ones
+        let source_dirs_for_validation: Vec<String> = if let Some(ref sd) = req.source_dirs {
+            sd.clone()
+        } else {
+            existing.source_dirs_vec()
+        };
 
+        if !sync_options.exclude_dirs.is_empty() {
             if let Err(invalid_path) = validate_exclude_dirs(&source_dirs_for_validation, &sync_options.exclude_dirs) {
                 return ApiError::exclude_dir_not_in_source(&invalid_path).into_response();
+            }
+        }
+
+        // Validate compress_dirs options if enabled
+        if let Some(ref compress_opts) = sync_options.compress_dirs {
+            if compress_opts.enabled {
+                if let Err(e) = validate_compress_dirs_options(
+                    compress_opts,
+                    &source_dirs_for_validation,
+                    &state.config.allowed_browse_paths,
+                ) {
+                    return e.into_response();
+                }
             }
         }
     }

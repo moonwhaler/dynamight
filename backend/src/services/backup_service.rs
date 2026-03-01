@@ -1,8 +1,10 @@
 use crate::models::{DestinationConfig, Job, JobRunStatus, LogLevel, LogMessage};
+use crate::services::compress_service;
 use crate::services::credential_service::CredentialService;
 use crate::services::providers::{self, RsyncProvider, StorageInfo, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::SqlitePool;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock, Mutex};
 
@@ -225,8 +227,156 @@ impl BackupService {
             });
         }
 
-        // Pre-flight space check for local destinations
-        if matches!(destination, DestinationConfig::Local { .. }) {
+        // --- Compression phase (runs before provider) ---
+        let effective_source_dirs = if sync_options.compress_dirs_enabled() {
+            let compress_opts = sync_options.compress_dirs.as_ref().unwrap();
+            let staging_dir = PathBuf::from(&compress_opts.staging_path).join(job.id.to_string());
+
+            if sync_options.dry_run {
+                // Dry-run: log what would happen but skip actual compression.
+                // Use original source_dirs for the provider's dry-run pass — the staging
+                // directory doesn't exist yet and passing it would cause spurious errors.
+                for source_dir in &source_dirs {
+                    self.log(
+                        run_id,
+                        LogLevel::Info,
+                        &format!(
+                            "[DRY RUN] Would compress '{}' → {}/",
+                            source_dir,
+                            staging_dir.display()
+                        ),
+                        "compress",
+                    )
+                    .await;
+                }
+                source_dirs.clone()
+            } else {
+                self.log(
+                    run_id,
+                    LogLevel::Info,
+                    &format!(
+                        "Compress mode: archiving {} source director{} to {}",
+                        source_dirs.len(),
+                        if source_dirs.len() == 1 { "y" } else { "ies" },
+                        staging_dir.display()
+                    ),
+                    "compress",
+                )
+                .await;
+
+                for source_dir in &source_dirs {
+                    // Check cancellation before starting each archive
+                    if self.is_cancelled(run_id).await {
+                        return Ok(JobResult {
+                            exit_code: 130,
+                            ..Default::default()
+                        });
+                    }
+
+                    let dir_name = Path::new(source_dir)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("backup")
+                        .to_string();
+
+                    let cancelled_runs = Arc::clone(&self.cancelled_runs);
+                    let is_cancelled_fn = move || {
+                        cancelled_runs
+                            .try_lock()
+                            .map(|g| g.contains(&run_id))
+                            .unwrap_or(false)
+                    };
+
+                    let log_tx = self.log_tx.clone();
+                    let log_fn = move |msg: String| {
+                        let _ = log_tx.send(LogMessage {
+                            run_id,
+                            level: LogLevel::Info,
+                            message: msg,
+                            source: "compress".to_string(),
+                            timestamp: Utc::now(),
+                        });
+                    };
+
+                    let archive_path = compress_service::compress_directory(
+                        Path::new(source_dir),
+                        job.id,
+                        run_id,
+                        compress_opts,
+                        log_fn,
+                        is_cancelled_fn,
+                    )
+                    .await
+                    .map_err(|e| {
+                        let msg = format!("Compression failed for '{}': {}", source_dir, e);
+                        tracing::error!("{}", msg);
+                        anyhow::anyhow!(msg)
+                    })?;
+
+                    let archive_size = archive_path.metadata().map(|m| m.len()).unwrap_or(0);
+                    self.log(
+                        run_id,
+                        LogLevel::Info,
+                        &format!(
+                            "Archived '{}' → {} ({})",
+                            source_dir,
+                            archive_path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy(),
+                            format_file_size(archive_size)
+                        ),
+                        "compress",
+                    )
+                    .await;
+
+                    // Clean up old archives if retention limit is set (timestamped only)
+                    if compress_opts.add_timestamp {
+                        if let Some(max) = compress_opts.max_archives_per_dir {
+                            match compress_service::cleanup_old_archives(
+                                &staging_dir,
+                                &dir_name,
+                                compress_opts.custom_name.as_deref(),
+                                &compress_opts.format,
+                                max,
+                            ) {
+                                Ok(deleted) if deleted > 0 => {
+                                    self.log(
+                                        run_id,
+                                        LogLevel::Info,
+                                        &format!(
+                                            "Removed {} old archive(s) for '{}'",
+                                            deleted, dir_name
+                                        ),
+                                        "compress",
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    self.log(
+                                        run_id,
+                                        LogLevel::Warning,
+                                        &format!("Failed to clean up old archives for '{}': {}", dir_name, e),
+                                        "compress",
+                                    )
+                                    .await;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // The staging dir is now the source for the provider
+                vec![staging_dir.to_string_lossy().to_string()]
+            }
+        } else {
+            source_dirs.clone()
+        };
+
+        // Pre-flight space check for local destinations (skipped when compression is enabled,
+        // since the staging space is managed via retention and compression ratio is unpredictable)
+        if matches!(destination, DestinationConfig::Local { .. }) && !sync_options.compress_dirs_enabled() {
             let space_mode = sync_options.space_check_mode();
             if space_mode != "none" {
                 let rsync = RsyncProvider::new();
@@ -279,10 +429,10 @@ impl BackupService {
             cancelled_runs.try_lock().map(|guard| guard.contains(&rid)).unwrap_or(false)
         });
 
-        // Build sync context
+        // Build sync context (uses effective_source_dirs: staging dir when compress is enabled)
         let ctx = Arc::new(SyncContext {
             run_id,
-            source_dirs,
+            source_dirs: effective_source_dirs,
             destination,
             options: sync_options,
             credential,
@@ -429,5 +579,18 @@ impl BackupService {
         }
 
         Ok(())
+    }
+}
+
+/// Format a byte count as a human-readable string (B / KB / MB / GB).
+fn format_file_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }

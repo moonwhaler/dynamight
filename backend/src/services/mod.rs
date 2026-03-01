@@ -1,5 +1,6 @@
 mod auth_service;
 mod backup_service;
+pub mod compress_service;
 mod credential_service;
 mod mount_service;
 pub mod providers;

@@ -19,6 +19,7 @@
   import { createDefaultDestination, createDefaultSyncOptions } from '../lib/types';
   import ProviderSelector from '../components/jobs/ProviderSelector.svelte';
   import SyncOptionsComponent from '../components/jobs/SyncOptions.svelte';
+  import CompressOptions from '../components/jobs/CompressOptions.svelte';
   import SchedulePicker from '../components/jobs/SchedulePicker.svelte';
   import PathSelector from '../components/jobs/PathSelector.svelte';
   import HelpTooltip from '../components/ui/HelpTooltip.svelte';
@@ -518,6 +519,11 @@
           />
         </h2>
         <PathSelector bind:paths={sourceDirs} />
+      </div>
+
+      <!-- Compress Directories -->
+      <div class="card p-6">
+        <CompressOptions bind:options={syncOptions} {sourceDirs} {destinationType} />
       </div>
 
       <!-- Sync Options -->

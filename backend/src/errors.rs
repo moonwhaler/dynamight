@@ -70,6 +70,13 @@ pub enum ErrorCode {
     SourceDirsDuplicateBasenames,
     ExcludeDirNotInSource,
 
+    // Compress dirs validation errors
+    CompressStagingPathRequired,
+    CompressStagingPathNotAllowed,
+    CompressStagingOverlapsSource,
+    CompressInvalidCustomName,
+    CompressMaxArchivesInvalid,
+
     // System errors
     PathNotAllowed,
     PathTraversalNotAllowed,
@@ -211,6 +218,26 @@ impl ApiError {
         )
     }
 
+    pub fn compress_staging_path_required() -> Self {
+        Self::new(ErrorCode::CompressStagingPathRequired)
+    }
+
+    pub fn compress_staging_path_not_allowed(path: &str) -> Self {
+        Self::with_params(ErrorCode::CompressStagingPathNotAllowed, json!({ "path": path }))
+    }
+
+    pub fn compress_staging_overlaps_source(path: &str) -> Self {
+        Self::with_params(ErrorCode::CompressStagingOverlapsSource, json!({ "path": path }))
+    }
+
+    pub fn compress_invalid_custom_name() -> Self {
+        Self::new(ErrorCode::CompressInvalidCustomName)
+    }
+
+    pub fn compress_max_archives_invalid() -> Self {
+        Self::new(ErrorCode::CompressMaxArchivesInvalid)
+    }
+
     pub fn credentials_required() -> Self {
         Self::new(ErrorCode::CredentialsRequired)
     }
@@ -335,7 +362,12 @@ impl IntoResponse for ApiError {
             | ErrorCode::TotpNotEnabled
             | ErrorCode::NotAFile
             | ErrorCode::FileTooLarge
-            | ErrorCode::DeleteVerificationFailed => StatusCode::BAD_REQUEST,
+            | ErrorCode::DeleteVerificationFailed
+            | ErrorCode::CompressStagingPathRequired
+            | ErrorCode::CompressStagingPathNotAllowed
+            | ErrorCode::CompressStagingOverlapsSource
+            | ErrorCode::CompressInvalidCustomName
+            | ErrorCode::CompressMaxArchivesInvalid => StatusCode::BAD_REQUEST,
 
             // 428 Precondition Required - verification needed
             ErrorCode::DeleteVerificationRequired => StatusCode::PRECONDITION_REQUIRED,

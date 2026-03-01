@@ -44,7 +44,9 @@ RUN apk add --no-cache \
     ntfs-3g-progs \
     exfatprogs \
     ca-certificates \
-    tzdata
+    tzdata \
+    tar \
+    zip
 
 WORKDIR /app
 
