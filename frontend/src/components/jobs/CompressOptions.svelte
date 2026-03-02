@@ -23,6 +23,8 @@
     options.delete_extraneous
   );
 
+  let showPassword = $state(false);
+
   function toggleCompression(checked: boolean) {
     if (checked) {
       if (options.compress_dirs == null) {
@@ -33,6 +35,7 @@
           custom_name: null,
           max_archives_per_dir: null,
           staging_path: '',
+          password: null,
         };
       } else {
         options.compress_dirs.enabled = true;
@@ -65,6 +68,12 @@
   function setCustomName(raw: string) {
     if (options.compress_dirs != null) {
       options.compress_dirs.custom_name = raw.trim() === '' ? null : raw;
+    }
+  }
+
+  function setPassword(raw: string) {
+    if (options.compress_dirs != null) {
+      options.compress_dirs.password = raw === '' ? null : raw;
     }
   }
 </script>
@@ -143,11 +152,58 @@
           class="input w-full sm:w-auto"
         >
           <option value="tar_gz">{m.compress_dirs_format_targz()}</option>
+          <option value="tar">{m.compress_dirs_format_tar()}</option>
           <option value="zip">{m.compress_dirs_format_zip()}</option>
         </select>
       </div>
 
-      <!-- 3. Add Timestamp toggle -->
+      <!-- 3. Password -->
+      <div>
+        <label for="compress-password" class="block font-medium text-gray-700 dark:text-gray-300 text-sm mb-1">
+          {m.compress_dirs_password()}
+          <HelpTooltip text={m.compress_dirs_password_help()} />
+        </label>
+        <div class="relative w-full sm:w-64">
+          <input
+            id="compress-password"
+            type={showPassword ? 'text' : 'password'}
+            value={cd.password ?? ''}
+            oninput={(e) => setPassword(e.currentTarget.value)}
+            placeholder={m.compress_dirs_password_placeholder()}
+            class="input w-full pr-10"
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            onclick={() => (showPassword = !showPassword)}
+            class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+          >
+            {#if showPassword}
+              <!-- eye-off icon -->
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+            {:else}
+              <!-- eye icon -->
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            {/if}
+          </button>
+        </div>
+        {#if cd.password && cd.format !== 'zip'}
+          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            {m.compress_dirs_password_enc_note()}
+          </p>
+        {/if}
+      </div>
+
+      <!-- 4. Add Timestamp toggle -->
       <div class="space-y-3">
         <label
           class="flex items-start gap-4 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
@@ -206,7 +262,7 @@
         {/if}
       </div>
 
-      <!-- 4. Custom Name Prefix (optional) -->
+      <!-- 5. Custom Name Prefix (optional) -->
       <div>
         <label for="compress-custom-name" class="block font-medium text-gray-700 dark:text-gray-300 text-sm mb-1">
           {m.compress_dirs_custom_name()}

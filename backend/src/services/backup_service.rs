@@ -335,11 +335,17 @@ impl BackupService {
                     // Clean up old archives if retention limit is set (timestamped only)
                     if compress_opts.add_timestamp {
                         if let Some(max) = compress_opts.max_archives_per_dir {
+                            let has_password = compress_opts
+                                .password
+                                .as_deref()
+                                .map(|p| !p.is_empty())
+                                .unwrap_or(false);
                             match compress_service::cleanup_old_archives(
                                 &staging_dir,
                                 &dir_name,
                                 compress_opts.custom_name.as_deref(),
                                 &compress_opts.format,
+                                has_password,
                                 max,
                             ) {
                                 Ok(deleted) if deleted > 0 => {

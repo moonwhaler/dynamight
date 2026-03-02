@@ -847,6 +847,7 @@
   "compress_dirs_format": "Archive Format",
   "compress_dirs_format_help": "Compression format for created archives. tar.gz is smaller and broadly supported; zip is compatible with Windows without extra tools.",
   "compress_dirs_format_targz": "tar.gz — Recommended",
+  "compress_dirs_format_tar": "tar — No compression (store only)",
   "compress_dirs_format_zip": "zip — Maximum compatibility",
   "compress_dirs_timestamp": "Add Timestamp to Filename",
   "compress_dirs_timestamp_help": "Appends the date and time to archive filenames, creating versioned archives. Without a timestamp, archives are overwritten on each run, enabling incremental transfers for local destinations.",
@@ -859,6 +860,10 @@
   "compress_dirs_custom_name_placeholder": "e.g. myproject",
   "compress_dirs_cloud_warning": "Note: Cloud and remote providers load entire archive files into memory before uploading, and re-upload archives in full on every run. For very large source directories, ensure the server has sufficient RAM.",
   "compress_dirs_mirror_warning": "Mirror mode is also enabled. When archives are deleted locally by the retention limit, they will be removed from the destination on the next sync run.",
+  "compress_dirs_password": "Archive Password",
+  "compress_dirs_password_help": "Optional password to protect the archive. For zip: uses built-in zip encryption. For tar and tar.gz: encrypts with AES-256-CBC via openssl, producing a .enc file.",
+  "compress_dirs_password_placeholder": "Optional password",
+  "compress_dirs_password_enc_note": "The archive will be encrypted with AES-256 (openssl). Filename will end with .enc",
   "compress_dirs_disabled_summary": "Compression is configured but disabled.",
   "compress_dirs_per_source_note": "One archive is created per source directory."
 }

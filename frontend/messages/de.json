@@ -833,6 +833,7 @@
   "compress_dirs_format": "Archivformat",
   "compress_dirs_format_help": "Komprimierungsformat für erstellte Archive. tar.gz ist kleiner und weit verbreitet; zip ist ohne zusätzliche Tools mit Windows kompatibel.",
   "compress_dirs_format_targz": "tar.gz — Empfohlen",
+  "compress_dirs_format_tar": "tar — Keine Komprimierung (nur archivieren)",
   "compress_dirs_format_zip": "zip — Maximale Kompatibilität",
   "compress_dirs_timestamp": "Zeitstempel zum Dateinamen hinzufügen",
   "compress_dirs_timestamp_help": "Hängt Datum und Uhrzeit an Archivnamen an und erstellt so versionierte Archive. Ohne Zeitstempel werden Archive bei jedem Durchlauf überschrieben, was inkrementelle Übertragungen bei lokalen Zielen ermöglicht.",
@@ -845,6 +846,10 @@
   "compress_dirs_custom_name_placeholder": "z. B. meinprojekt",
   "compress_dirs_cloud_warning": "Hinweis: Cloud- und Remote-Anbieter laden vollständige Archivdateien vor dem Hochladen in den Arbeitsspeicher und laden Archive bei jedem Durchlauf komplett neu hoch. Bei sehr großen Quellverzeichnissen ausreichend RAM sicherstellen.",
   "compress_dirs_mirror_warning": "Spiegelungsmodus ist ebenfalls aktiviert. Wenn Archive lokal durch das Aufbewahrungslimit gelöscht werden, werden sie beim nächsten Synchronisierungslauf auch vom Ziel entfernt.",
+  "compress_dirs_password": "Archivpasswort",
+  "compress_dirs_password_help": "Optionales Passwort zum Schutz des Archivs. Für zip: integrierte zip-Verschlüsselung. Für tar und tar.gz: AES-256-CBC-Verschlüsselung via openssl, erzeugt eine .enc-Datei.",
+  "compress_dirs_password_placeholder": "Optionales Passwort",
+  "compress_dirs_password_enc_note": "Das Archiv wird mit AES-256 (openssl) verschlüsselt. Der Dateiname endet auf .enc",
   "compress_dirs_disabled_summary": "Komprimierung ist konfiguriert, aber deaktiviert.",
   "compress_dirs_per_source_note": "Pro Quellverzeichnis wird ein Archiv erstellt."
 }

@@ -91,7 +91,7 @@ export type DestinationConfig =
   | WebDavDestinationConfig;
 
 // Directory compression types
-export type CompressFormat = 'tar_gz' | 'zip';
+export type CompressFormat = 'tar_gz' | 'tar' | 'zip';
 
 export interface CompressDirsOptions {
   enabled: boolean;
@@ -100,6 +100,7 @@ export interface CompressDirsOptions {
   custom_name?: string | null;
   max_archives_per_dir?: number | null;
   staging_path: string;
+  password?: string | null;
 }
 
 // Space check modes for local syncs

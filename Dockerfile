@@ -46,7 +46,8 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     tar \
-    zip
+    zip \
+    openssl
 
 WORKDIR /app
 
