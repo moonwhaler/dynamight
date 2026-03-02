@@ -244,6 +244,8 @@ export interface Job {
   dest_storage_free?: number | null;
   dest_storage_total?: number | null;
   dest_storage_updated_at?: string | null;
+
+  schedules?: Schedule[];
 }
 
 export interface Schedule {

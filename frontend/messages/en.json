@@ -868,5 +868,22 @@
   "compress_dirs_disabled_summary": "Compression is configured but disabled.",
   "compress_dirs_per_source_note": "One archive is created per source directory.",
   "compress_dirs_excluded_dirs_applied_one": "1 excluded directory will be omitted from the archive.",
-  "compress_dirs_excluded_dirs_applied_other": "{count} excluded directories will be omitted from the archive."
+  "compress_dirs_excluded_dirs_applied_other": "{count} excluded directories will be omitted from the archive.",
+
+  "jobs_columns": "Columns",
+  "jobs_columns_reset": "Reset to defaults",
+  "jobs_col_schedule": "Schedule",
+  "jobs_schedule_next": "Next: {time}",
+  "jobs_schedule_more": "more",
+  "jobs_sched_daily": "Daily at {time}",
+  "jobs_sched_weekly": "Weekly, {day} at {time}",
+  "jobs_sched_monthly": "Monthly, day {day} at {time}",
+  "jobs_sched_interval_hours": "Every {count}h",
+  "jobs_sched_interval_minutes": "Every {count}m",
+  "jobs_sched_weekdays": "Weekdays at {time}",
+  "jobs_sched_weekends": "Weekends at {time}",
+  "jobs_sched_custom": "Custom: {cron}",
+  "time_in_minutes": "in {count}m",
+  "time_in_hours": "in {count}h",
+  "time_in_days": "in {count}d"
 }

@@ -2,9 +2,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { jobsStore } from '../lib/stores/jobs';
   import { viewPreferencesStore } from '../lib/stores/viewPreferences';
+  import { tablePreferencesStore, FIXED_COLUMNS } from '../lib/stores/tablePreferences';
+  import type { ColumnKey } from '../lib/stores/tablePreferences';
   import { statusStore } from '../lib/stores/logs';
   import JobCard from '../components/jobs/JobCard.svelte';
   import JobListRow from '../components/jobs/JobListRow.svelte';
+  import ColumnSelector from '../components/jobs/ColumnSelector.svelte';
+  import RunLogModal from '../components/logs/RunLogModal.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { formatStatus } from '$lib/i18n/status';
 
@@ -14,13 +18,27 @@
   let enabledFilter = $state<'all' | 'enabled' | 'disabled'>('all');
   let showFilters = $state(false);
 
+  // Lifted RunLogModal state
+  let activeRunId = $state<number | null>(null);
+  let activeJobId = $state<number | null>(null);
+
+  // Resize state
+  let resizing: { col: ColumnKey; startX: number; startWidth: number } | null = null;
+
+  // Container width for autosizing
+  let tableContainerEl = $state<HTMLElement | null>(null);
+  let containerWidth = $state(0);
+
+  // Drag-to-reorder state
+  let dragCol = $state<ColumnKey | null>(null);
+  let dragOverCol = $state<ColumnKey | null>(null);
+
   const allStatuses = ['completed', 'running', 'failed', 'cancelled', 'pending'] as const;
 
   // Filtered jobs based on all filter criteria
   const filteredJobs = $derived.by(() => {
     let result = $jobsStore.jobs;
 
-    // Filter by search query (job name or description)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       result = result.filter((job) => {
@@ -29,7 +47,6 @@
       });
     }
 
-    // Filter by last run status
     if (statusFilters.size > 0) {
       result = result.filter((job) => {
         if (!job.last_run_status) return false;
@@ -37,7 +54,6 @@
       });
     }
 
-    // Filter by enabled state
     if (enabledFilter === 'enabled') {
       result = result.filter((job) => job.enabled);
     } else if (enabledFilter === 'disabled') {
@@ -53,6 +69,39 @@
     (enabledFilter !== 'all' ? 1 : 0)
   );
 
+  const storedTotalWidth = $derived(
+    $tablePreferencesStore.visibleColumns.reduce(
+      (sum, col) => sum + $tablePreferencesStore.columnWidths[col],
+      0
+    )
+  );
+
+  const effectiveWidths = $derived.by<Record<ColumnKey, number>>(() => {
+    const cols = $tablePreferencesStore.visibleColumns;
+    const stored = $tablePreferencesStore.columnWidths;
+    const extra = containerWidth - storedTotalWidth;
+    if (extra <= 0 || storedTotalWidth === 0) return { ...stored };
+    const result = { ...stored };
+    for (const col of cols) {
+      result[col] = Math.round(stored[col] + extra * (stored[col] / storedTotalWidth));
+    }
+    return result;
+  });
+
+  function columnLabel(col: ColumnKey): string {
+    switch (col) {
+      case 'job': return m.history_table_job();
+      case 'status': return m.history_table_status();
+      case 'sources': return m.job_sources();
+      case 'destination': return m.job_destination();
+      case 'last_run': return m.job_last_run();
+      case 'schedule': return m.jobs_col_schedule();
+      case 'options': return m.job_options();
+      case 'actions': return m.common_actions();
+      default: return col;
+    }
+  }
+
   function toggleStatus(status: string) {
     const newFilters = new Set(statusFilters);
     if (newFilters.has(status)) {
@@ -67,6 +116,27 @@
     searchQuery = '';
     statusFilters = new Set();
     enabledFilter = 'all';
+  }
+
+  function startResize(col: ColumnKey, e: MouseEvent) {
+    e.preventDefault();
+    resizing = { col, startX: e.clientX, startWidth: effectiveWidths[col] };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', onResizeEnd);
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!resizing) return;
+    const delta = e.clientX - resizing.startX;
+    tablePreferencesStore.setColumnWidth(resizing.col, resizing.startWidth + delta);
+  }
+
+  function onResizeEnd() {
+    resizing = null;
+    document.body.style.userSelect = '';
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
   }
 
   let unsubscribeStatus: (() => void) | null = null;
@@ -97,11 +167,50 @@
     }
   });
 
+  $effect(() => {
+    if (!tableContainerEl) return;
+    const ro = new ResizeObserver((entries) => {
+      containerWidth = entries[0].contentRect.width;
+    });
+    ro.observe(tableContainerEl);
+    return () => ro.disconnect();
+  });
+
+  function onDragStart(col: ColumnKey, e: DragEvent) {
+    dragCol = col;
+    e.dataTransfer!.effectAllowed = 'move';
+  }
+
+  function onDragOver(col: ColumnKey, e: DragEvent) {
+    if (!dragCol || dragCol === col || FIXED_COLUMNS.includes(col)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+    dragOverCol = col;
+  }
+
+  function onDrop(col: ColumnKey, e: DragEvent) {
+    e.preventDefault();
+    if (!dragCol || dragCol === col || FIXED_COLUMNS.includes(col)) return;
+    const cols = [...$tablePreferencesStore.visibleColumns];
+    const fromIdx = cols.indexOf(dragCol);
+    const toIdx = cols.indexOf(col);
+    if (fromIdx < 0 || toIdx < 0) return;
+    cols.splice(fromIdx, 1);
+    cols.splice(fromIdx < toIdx ? toIdx - 1 : toIdx, 0, dragCol);
+    tablePreferencesStore.setColumnOrder(cols);
+    dragCol = null;
+    dragOverCol = null;
+  }
+
+  function onDragEnd() {
+    dragCol = null;
+    dragOverCol = null;
+  }
+
   onMount(() => {
     jobsStore.load();
     statusStore.connect();
 
-    // Subscribe to status updates and refresh jobs when status changes
     unsubscribeStatus = statusStore.subscribe(() => {
       jobsStore.refresh();
     });
@@ -116,6 +225,9 @@
     if (unsubscribeStatus) {
       unsubscribeStatus();
     }
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
+    document.body.style.userSelect = '';
   });
 </script>
 
@@ -196,30 +308,35 @@
             {/if}
           </button>
 
-          <!-- View toggle buttons -->
-          <div class="hidden lg:flex items-center border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-            <button
-              onclick={() => viewPreferencesStore.setViewMode('grid')}
-              class="p-2 transition-colors {$viewPreferencesStore === 'grid'
-                ? 'bg-primary-600 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-              title={m.jobs_grid_view()}
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
-            </button>
-            <button
-              onclick={() => viewPreferencesStore.setViewMode('list')}
-              class="p-2 transition-colors {$viewPreferencesStore === 'list'
-                ? 'bg-primary-600 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-              title={m.jobs_list_view()}
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-              </svg>
-            </button>
+          <!-- Desktop: view toggle + column selector -->
+          <div class="hidden lg:flex items-center gap-2">
+            <div class="flex items-center border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+              <button
+                onclick={() => viewPreferencesStore.setViewMode('grid')}
+                class="p-2 transition-colors {$viewPreferencesStore === 'grid'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                title={m.jobs_grid_view()}
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                </svg>
+              </button>
+              <button
+                onclick={() => viewPreferencesStore.setViewMode('list')}
+                class="p-2 transition-colors {$viewPreferencesStore === 'list'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+                title={m.jobs_list_view()}
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+              </button>
+            </div>
+            {#if $viewPreferencesStore === 'list'}
+              <ColumnSelector />
+            {/if}
           </div>
         </div>
 
@@ -373,22 +490,55 @@
       </div>
     {:else}
       <div class="card overflow-hidden">
-        <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="overflow-x-auto" bind:this={tableContainerEl}>
+          <table
+            class="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700"
+            style="width: {Math.max(storedTotalWidth, containerWidth)}px"
+          >
+            <colgroup>
+              {#each $tablePreferencesStore.visibleColumns as col (col)}
+                <col style="width: {effectiveWidths[col]}px" />
+              {/each}
+            </colgroup>
             <thead class="bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.job_sources()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden lg:table-cell">{m.job_destination()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap hidden sm:table-cell">{m.job_last_run()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden xl:table-cell">{m.job_options()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.common_actions()}</th>
+                {#each $tablePreferencesStore.visibleColumns as col (col)}
+                  <th
+                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase relative select-none
+                      {!FIXED_COLUMNS.includes(col) ? 'cursor-grab' : ''}
+                      {dragOverCol === col ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
+                    style="width: {effectiveWidths[col]}px"
+                    draggable={!FIXED_COLUMNS.includes(col)}
+                    ondragstart={!FIXED_COLUMNS.includes(col) ? (e) => onDragStart(col, e) : undefined}
+                    ondragover={(e) => onDragOver(col, e)}
+                    ondragleave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverCol === col) dragOverCol = null; }}
+                    ondrop={(e) => onDrop(col, e)}
+                    ondragend={onDragEnd}
+                  >
+                    {columnLabel(col)}
+                    {#if dragOverCol === col}
+                      <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
+                    {/if}
+                    {#if col !== 'actions'}
+                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                      <div
+                        class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-400/50 transition-colors"
+                        onmousedown={(e) => startResize(col, e)}
+                        ondragstart={(e) => e.stopPropagation()}
+                        role="separator"
+                        aria-orientation="vertical"
+                      ></div>
+                    {/if}
+                  </th>
+                {/each}
               </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
               {#each filteredJobs as job (job.id)}
-                <JobListRow {job} />
+                <JobListRow
+                  {job}
+                  onShowLogs={(runId) => { activeRunId = runId; activeJobId = job.id; }}
+                />
               {/each}
             </tbody>
           </table>
@@ -397,3 +547,11 @@
     {/if}
   {/if}
 </div>
+
+{#if activeRunId !== null && activeJobId !== null}
+  <RunLogModal
+    runId={activeRunId}
+    jobId={activeJobId}
+    onClose={() => { activeRunId = null; activeJobId = null; }}
+  />
+{/if}

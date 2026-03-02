@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
-use crate::models::{CompressDirsOptions, CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, UpdateJobRequest};
+use crate::models::{CompressDirsOptions, CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, Schedule, UpdateJobRequest};
 use crate::services::providers::RsyncProvider;
 use crate::AppState;
 
@@ -227,6 +227,21 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         .map(|(job_id, status, run_at)| (job_id, (status, run_at)))
         .collect();
 
+    // Batch-fetch all schedules for returned jobs
+    let all_schedules: Vec<Schedule> = sqlx::query_as(
+        "SELECT * FROM schedules WHERE job_id IN (SELECT id FROM jobs ORDER BY name)",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut schedules_map: HashMap<i64, Vec<Schedule>> = all_schedules
+        .into_iter()
+        .fold(HashMap::new(), |mut map, s| {
+            map.entry(s.job_id).or_default().push(s);
+            map
+        });
+
     let response: Vec<JobResponse> = jobs
         .into_iter()
         .map(|job| {
@@ -235,7 +250,8 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 .get(&job_id)
                 .map(|(s, t)| (Some(s.clone()), *t))
                 .unwrap_or((None, None));
-            JobResponse::from(job).with_run_status(status, run_at)
+            let schedules = schedules_map.remove(&job_id).unwrap_or_default();
+            JobResponse::from(job).with_run_status(status, run_at).with_schedules(schedules)
         })
         .collect();
 

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use super::{DestinationConfig, SyncOptions};
+use super::{DestinationConfig, Schedule, SyncOptions};
 
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct Job {
@@ -216,6 +216,9 @@ pub struct JobResponse {
     pub dest_storage_total: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dest_storage_updated_at: Option<DateTime<Utc>>,
+
+    #[serde(default)]
+    pub schedules: Vec<Schedule>,
 }
 
 impl From<Job> for JobResponse {
@@ -281,6 +284,7 @@ impl From<Job> for JobResponse {
             dest_storage_free: job.dest_storage_free,
             dest_storage_total: job.dest_storage_total,
             dest_storage_updated_at: job.dest_storage_updated_at,
+            schedules: vec![],
         }
     }
 }
@@ -289,6 +293,11 @@ impl JobResponse {
     pub fn with_run_status(mut self, status: Option<String>, run_at: Option<DateTime<Utc>>) -> Self {
         self.last_run_status = status;
         self.last_run_at = run_at;
+        self
+    }
+
+    pub fn with_schedules(mut self, schedules: Vec<Schedule>) -> Self {
+        self.schedules = schedules;
         self
     }
 }
