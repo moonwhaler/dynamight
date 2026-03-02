@@ -122,16 +122,40 @@ async fn run_and_poll(
     result
 }
 
+/// Convert absolute exclude paths to archive-relative paths for tar/zip.
+///
+/// Each entry in `exclude_paths` that is a strict child of `source_dir` is
+/// converted to a path relative to the archive root (`dir_name/sub/path`).
+/// Entries belonging to a different source directory are silently skipped —
+/// they will be applied during their own `compress_directory` call.
+///
+/// Example:
+///   source_dir  = /home/user/docs
+///   dir_name    = "docs"
+///   exclude     = /home/user/docs/cache  →  "docs/cache"
+fn archive_relative_excludes(source_dir: &Path, dir_name: &str, exclude_paths: &[String]) -> Vec<String> {
+    let prefix = format!("{}/", source_dir.display());
+    exclude_paths
+        .iter()
+        .filter_map(|ex| {
+            ex.strip_prefix(&prefix)
+                .map(|within| format!("{}/{}", dir_name, within))
+        })
+        .collect()
+}
+
 /// Compress (or archive) a source directory into the per-job staging subdirectory.
 ///
 /// Parameters:
-/// - `source_dir`:   absolute path to the directory to compress
-/// - `job_id`:       used for the per-job staging subdir name (`staging_path/<job_id>/`)
-/// - `run_id`:       used for unique temp file naming
-/// - `opts`:         compression options
-/// - `log_fn`:       called to emit log lines during compression
-/// - `is_cancelled`: checked every 500 ms; if it returns `true`, the
-///                   subprocess is killed and an error is returned
+/// - `source_dir`:    absolute path to the directory to compress
+/// - `job_id`:        used for the per-job staging subdir name (`staging_path/<job_id>/`)
+/// - `run_id`:        used for unique temp file naming
+/// - `opts`:          compression options
+/// - `exclude_paths`: absolute paths to exclude from the archive; only strict children of
+///                    `source_dir` are applied — others are silently skipped
+/// - `log_fn`:        called to emit log lines during compression
+/// - `is_cancelled`:  checked every 500 ms; if it returns `true`, the
+///                    subprocess is killed and an error is returned
 ///
 /// When `store_only` is set, files are archived without compression
 /// (tar without `-z`, or `zip -0`).
@@ -147,6 +171,7 @@ pub async fn compress_directory(
     job_id: i64,
     run_id: i64,
     opts: &CompressDirsOptions,
+    exclude_paths: &[String],
     log_fn: impl Fn(String),
     is_cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<PathBuf> {
@@ -186,6 +211,10 @@ pub async fn compress_directory(
         .and_then(|n| n.to_str())
         .unwrap_or("backup");
 
+    // Compute archive-relative exclude paths for this source directory.
+    // Paths belonging to other source directories are filtered out here.
+    let rel_excludes = archive_relative_excludes(source_dir, dir_name, exclude_paths);
+
     let archive_name = generate_archive_name(dir_name, opts);
     let final_path = staging_dir.join(&archive_name);
     // Unique temp path per run to prevent conflicts between concurrent runs
@@ -206,6 +235,15 @@ pub async fn compress_directory(
         archive_name
     ));
 
+    if !rel_excludes.is_empty() {
+        log_fn(format!(
+            "Excluding {} director{} from archive: {}",
+            rel_excludes.len(),
+            if rel_excludes.len() == 1 { "y" } else { "ies" },
+            rel_excludes.join(", ")
+        ));
+    }
+
     match &opts.format {
         CompressFormat::Zip => {
             let mut cmd = tokio::process::Command::new("zip");
@@ -219,6 +257,11 @@ pub async fn compress_directory(
                 }
             }
             cmd.args([tmp_path.to_str().unwrap_or_default(), dir_name]);
+            // -x patterns must come AFTER the source argument (Info-ZIP requirement)
+            for rel in &rel_excludes {
+                cmd.args(["-x", rel.as_str()]);
+                cmd.args(["-x", &format!("{}/*", rel)]);
+            }
             let child = cmd
                 .current_dir(parent_dir)
                 .stdin(std::process::Stdio::null())
@@ -242,15 +285,20 @@ pub async fn compress_directory(
                 let inter_path =
                     staging_dir.join(format!("{}.inter.{}.tmp", archive_name, run_id));
 
-                let tar_child = tokio::process::Command::new("tar")
-                    .args([
-                        tar_flags,
-                        inter_path.to_str().unwrap_or_default(),
-                        "--numeric-owner",
-                        "-C",
-                        parent_dir.to_str().unwrap_or_default(),
-                        dir_name,
-                    ])
+                // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
+                let mut tar_cmd = tokio::process::Command::new("tar");
+                tar_cmd.args([
+                    tar_flags,
+                    inter_path.to_str().unwrap_or_default(),
+                    "--numeric-owner",
+                    "-C",
+                    parent_dir.to_str().unwrap_or_default(),
+                ]);
+                for rel in &rel_excludes {
+                    tar_cmd.arg(format!("--exclude={}", rel));
+                }
+                tar_cmd.arg(dir_name);
+                let tar_child = tar_cmd
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::piped())
@@ -301,15 +349,20 @@ pub async fn compress_directory(
                 enc_result?;
             } else {
                 // No password: write archive directly to tmp_path
-                let child = tokio::process::Command::new("tar")
-                    .args([
-                        tar_flags,
-                        tmp_path.to_str().unwrap_or_default(),
-                        "--numeric-owner",
-                        "-C",
-                        parent_dir.to_str().unwrap_or_default(),
-                        dir_name,
-                    ])
+                // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
+                let mut cmd = tokio::process::Command::new("tar");
+                cmd.args([
+                    tar_flags,
+                    tmp_path.to_str().unwrap_or_default(),
+                    "--numeric-owner",
+                    "-C",
+                    parent_dir.to_str().unwrap_or_default(),
+                ]);
+                for rel in &rel_excludes {
+                    cmd.arg(format!("--exclude={}", rel));
+                }
+                cmd.arg(dir_name);
+                let child = cmd
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::piped())

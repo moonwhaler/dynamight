@@ -766,6 +766,7 @@
   "exclude_dirs_add_one": "Add 1 directory",
   "exclude_dirs_add_n": "Add {count} directories",
   "exclude_dirs_browse": "Browse",
+  "exclude_dirs_also_applied_to_compression": "These exclusions are also applied when compressing source directories.",
 
   "space_check_title": "Space Check",
   "space_check_help": "Verify the destination has enough free space before syncing.",
@@ -866,5 +867,7 @@
   "compress_dirs_password_placeholder": "Optional password",
   "compress_dirs_password_enc_note": "The archive will be encrypted with AES-256 (openssl). Filename will end with .enc",
   "compress_dirs_disabled_summary": "Compression is configured but disabled.",
-  "compress_dirs_per_source_note": "One archive is created per source directory."
+  "compress_dirs_per_source_note": "One archive is created per source directory.",
+  "compress_dirs_excluded_dirs_applied_one": "1 excluded directory will be omitted from the archive.",
+  "compress_dirs_excluded_dirs_applied_other": "{count} excluded directories will be omitted from the archive."
 }

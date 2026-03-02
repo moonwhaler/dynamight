@@ -758,6 +758,7 @@
   "exclude_dirs_add_one": "1 Verzeichnis hinzufügen",
   "exclude_dirs_add_n": "{count} Verzeichnisse hinzufügen",
   "exclude_dirs_browse": "Durchsuchen",
+  "exclude_dirs_also_applied_to_compression": "Diese Ausschlüsse werden auch beim Komprimieren der Quellverzeichnisse angewendet.",
 
   "space_check_title": "Speicherplatzprüfung",
   "space_check_help": "Prüft vor der Synchronisation, ob das Ziel genügend freien Speicherplatz hat.",
@@ -852,5 +853,7 @@
   "compress_dirs_password_placeholder": "Optionales Passwort",
   "compress_dirs_password_enc_note": "Das Archiv wird mit AES-256 (openssl) verschlüsselt. Der Dateiname endet auf .enc",
   "compress_dirs_disabled_summary": "Komprimierung ist konfiguriert, aber deaktiviert.",
-  "compress_dirs_per_source_note": "Pro Quellverzeichnis wird ein Archiv erstellt."
+  "compress_dirs_per_source_note": "Pro Quellverzeichnis wird ein Archiv erstellt.",
+  "compress_dirs_excluded_dirs_applied_one": "1 ausgeschlossenes Verzeichnis wird nicht im Archiv enthalten sein.",
+  "compress_dirs_excluded_dirs_applied_other": "{count} ausgeschlossene Verzeichnisse werden nicht im Archiv enthalten sein."
 }

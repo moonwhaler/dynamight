@@ -18,6 +18,11 @@
 
   let newExclude = $state('');
 
+  // True when the archive-compression feature is enabled for this job.
+  // Used to show a contextual note in the Excluded Directories section.
+  // Note: `compress` (line below) is a separate rsync wire-compression option.
+  let compressEnabled = $derived(options.compress_dirs?.enabled ?? false);
+
   // Selected source directory for exclude browsing
   let selectedExcludeSource = $state('');
 
@@ -494,6 +499,16 @@
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
         {m.exclude_dirs_description()}
       </p>
+
+      {#if compressEnabled}
+        <p class="text-xs text-indigo-600 dark:text-indigo-400 mt-1 flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {m.exclude_dirs_also_applied_to_compression()}
+        </p>
+      {/if}
 
       {#if sourceDirs.length === 0}
         <p class="text-sm text-gray-400 dark:text-gray-500 italic mt-2">

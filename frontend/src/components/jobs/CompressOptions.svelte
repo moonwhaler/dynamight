@@ -16,6 +16,8 @@
 
   let compressEnabled = $derived(options.compress_dirs?.enabled ?? false);
   let isCloudProvider = $derived(destinationType !== 'local');
+  // Number of excluded directories currently configured (non-optional field, no ?.)
+  let excludedDirCount = $derived(options.exclude_dirs.length);
   let showMirrorWarning = $derived(
     compressEnabled &&
     (options.compress_dirs?.add_timestamp ?? false) &&
@@ -125,6 +127,21 @@
     <div
       class="bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-5"
     >
+
+      <!-- Excluded directories carry-over notice -->
+      {#if excludedDirCount > 0}
+        <div class="flex items-center gap-2 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50 rounded-xl text-xs text-indigo-700 dark:text-indigo-300">
+          <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>
+            {excludedDirCount === 1
+              ? m.compress_dirs_excluded_dirs_applied_one()
+              : m.compress_dirs_excluded_dirs_applied_other({ count: excludedDirCount })}
+          </span>
+        </div>
+      {/if}
 
       <!-- 1. Staging Path -->
       <div>

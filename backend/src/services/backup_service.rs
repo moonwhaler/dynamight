@@ -239,13 +239,25 @@ impl BackupService {
                 // Use original source_dirs for the provider's dry-run pass — the staging
                 // directory doesn't exist yet and passing it would cause spurious errors.
                 for source_dir in &source_dirs {
+                    let relevant_excludes: Vec<String> = sync_options
+                        .exclude_dirs
+                        .iter()
+                        .filter(|ex| ex.starts_with(&format!("{}/", source_dir)))
+                        .cloned()
+                        .collect();
+                    let excl_note = if relevant_excludes.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (excluding: {})", relevant_excludes.join(", "))
+                    };
                     self.log(
                         run_id,
                         LogLevel::Info,
                         &format!(
-                            "[DRY RUN] Would compress '{}' → {}/",
+                            "[DRY RUN] Would compress '{}' → {}/{}",
                             source_dir,
-                            staging_dir.display()
+                            staging_dir.display(),
+                            excl_note
                         ),
                         "compress",
                     )
@@ -281,6 +293,16 @@ impl BackupService {
                         .unwrap_or("backup")
                         .to_string();
 
+                    // Collect exclude_dirs that are children of this specific source_dir.
+                    // Paths belonging to other source dirs are filtered out here and will
+                    // be applied during their own compress_directory call.
+                    let relevant_excludes: Vec<String> = sync_options
+                        .exclude_dirs
+                        .iter()
+                        .filter(|ex| ex.starts_with(&format!("{}/", source_dir)))
+                        .cloned()
+                        .collect();
+
                     let cancelled_runs = Arc::clone(&self.cancelled_runs);
                     let is_cancelled_fn = move || {
                         cancelled_runs
@@ -305,6 +327,7 @@ impl BackupService {
                         job.id,
                         run_id,
                         compress_opts,
+                        &relevant_excludes,
                         log_fn,
                         is_cancelled_fn,
                     )
