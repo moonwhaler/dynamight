@@ -838,7 +838,7 @@
   "compress_dirs_store_only_help": "Dateien archivieren ohne zu komprimieren. Schneller und CPU-schonender, erzeugt aber größere Archive. tar.gz wird zu einer einfachen .tar-Datei; zip verwendet den Speichermodus (zip -0).",
   "compress_dirs_timestamp": "Zeitstempel zum Dateinamen hinzufügen",
   "compress_dirs_timestamp_help": "Hängt Datum und Uhrzeit an Archivnamen an und erstellt so versionierte Archive. Ohne Zeitstempel werden Archive bei jedem Durchlauf überschrieben, was inkrementelle Übertragungen bei lokalen Zielen ermöglicht.",
-  "compress_dirs_timestamp_example": "Beispiel: dokumente_2026-03-01T14-30-00.tar.gz",
+  "compress_dirs_timestamp_example": "Beispiel: 2026-03-01T14-30-00_dokumente.tar.gz",
   "compress_dirs_max_archives": "Max. lokale Archive pro Quelle",
   "compress_dirs_max_archives_help": "Maximale Anzahl lokaler Archivdateien pro Quellverzeichnis. Ältere Archive über diese Anzahl hinaus werden automatisch gelöscht. Leer lassen, um alle Archive zu behalten.",
   "compress_dirs_max_archives_placeholder": "unbegrenzt",
