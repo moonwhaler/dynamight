@@ -232,7 +232,7 @@ impl BackupService {
         // --- Compression phase (runs before provider) ---
         let effective_source_dirs = if sync_options.compress_dirs_enabled() {
             let compress_opts = sync_options.compress_dirs.as_ref().unwrap();
-            let staging_dir = PathBuf::from(&compress_opts.staging_path).join(job.id.to_string());
+            let staging_dir = PathBuf::from(&compress_opts.staging_path);
 
             if sync_options.dry_run {
                 // Dry-run: log what would happen but skip actual compression.
@@ -371,6 +371,7 @@ impl BackupService {
                                 compress_opts.store_only,
                                 has_password,
                                 max,
+                                job.id,
                             ) {
                                 Ok(deleted) if deleted > 0 => {
                                     self.log(

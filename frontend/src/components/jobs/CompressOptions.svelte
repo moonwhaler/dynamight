@@ -157,10 +157,6 @@
           <p class="mt-1.5 text-xs text-amber-600 dark:text-amber-400 font-medium">
             {m.compress_dirs_staging_path_required()}
           </p>
-        {:else}
-          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            {m.compress_dirs_staging_subdir_note({ path: cd.staging_path })}
-          </p>
         {/if}
       </div>
 

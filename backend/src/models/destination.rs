@@ -89,7 +89,9 @@ pub enum CompressFormat {
 
 /// Options for per-directory compression before transfer.
 /// When enabled, each source directory is compressed into a single archive
-/// and stored locally at `staging_path/<job_id>/` before being transferred.
+/// and stored directly in `staging_path/` before being transferred.
+/// The job ID is embedded in every archive filename (e.g. `photos_42.tar.gz`)
+/// to prevent collisions when multiple jobs share the same staging directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressDirsOptions {
     /// Master toggle
@@ -112,7 +114,7 @@ pub struct CompressDirsOptions {
     #[serde(default)]
     pub max_archives_per_dir: Option<u32>,
     /// Root path where archives are staged before transfer.
-    /// Actual archives go into: staging_path/<job_id>/
+    /// Archives are stored directly here; the job ID is part of the filename.
     pub staging_path: String,
     /// Optional password to protect the archive.
     /// Zip: uses built-in zip encryption (-P flag).

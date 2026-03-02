@@ -53,11 +53,15 @@ pub fn format_extension(format: &CompressFormat, store_only: bool, encrypted: bo
 
 /// Generate the archive filename for a source directory.
 ///
-/// Naming: `[<timestamp>_][custom_name_]<sanitized_dir_name>.<ext>`
+/// Naming: `[<timestamp>_][custom_name_]<sanitized_dir_name>_<job_id>.<ext>`
+///
+/// The `job_id` suffix is always appended to the sanitized directory name,
+/// ensuring archives from different jobs are unique even when stored in the
+/// same staging directory.
 ///
 /// The timestamp is always the **first** segment when enabled, making archives
 /// sort chronologically by name and clearly marking when they were created.
-pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> String {
+pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions, job_id: i64) -> String {
     let sanitized = sanitize_dir_name(dir_name);
     let has_password = opts.password.as_deref().map(|p| !p.is_empty()).unwrap_or(false);
     let ext = format_extension(&opts.format, opts.store_only, has_password);
@@ -75,7 +79,7 @@ pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> Stri
         }
     }
 
-    parts.push(sanitized);
+    parts.push(format!("{}_{}", sanitized, job_id));
 
     format!("{}.{}", parts.join("_"), ext)
 }
@@ -144,11 +148,15 @@ fn archive_relative_excludes(source_dir: &Path, dir_name: &str, exclude_paths: &
         .collect()
 }
 
-/// Compress (or archive) a source directory into the per-job staging subdirectory.
+/// Compress (or archive) a source directory into the staging directory.
+///
+/// Archives are stored directly in `opts.staging_path` (no subdirectory).
+/// The `job_id` is embedded in every archive filename to prevent collisions
+/// when multiple jobs share the same staging path.
 ///
 /// Parameters:
 /// - `source_dir`:    absolute path to the directory to compress
-/// - `job_id`:        used for the per-job staging subdir name (`staging_path/<job_id>/`)
+/// - `job_id`:        appended to archive filenames (e.g. `photos_42.tar.gz`)
 /// - `run_id`:        used for unique temp file naming
 /// - `opts`:          compression options
 /// - `exclude_paths`: absolute paths to exclude from the archive; only strict children of
@@ -175,7 +183,7 @@ pub async fn compress_directory(
     log_fn: impl Fn(String),
     is_cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<PathBuf> {
-    let staging_dir = PathBuf::from(&opts.staging_path).join(job_id.to_string());
+    let staging_dir = PathBuf::from(&opts.staging_path);
 
     // Runtime overlap check: staging_dir must not overlap with source_dir.
     let staging_str = staging_dir.to_string_lossy();
@@ -215,7 +223,7 @@ pub async fn compress_directory(
     // Paths belonging to other source directories are filtered out here.
     let rel_excludes = archive_relative_excludes(source_dir, dir_name, exclude_paths);
 
-    let archive_name = generate_archive_name(dir_name, opts);
+    let archive_name = generate_archive_name(dir_name, opts, job_id);
     let final_path = staging_dir.join(&archive_name);
     // Unique temp path per run to prevent conflicts between concurrent runs
     let tmp_path = staging_dir.join(format!("{}.{}.tmp", archive_name, run_id));
@@ -391,15 +399,17 @@ pub async fn compress_directory(
     Ok(final_path)
 }
 
-/// Remove the oldest archives in the per-job staging directory for a given
-/// source directory, keeping at most `max_count` archives.
+/// Remove the oldest archives in the staging directory for a given source
+/// directory and job, keeping at most `max_count` archives.
 ///
-/// Uses `sanitize_dir_name(dir_name)` — identical to `generate_archive_name()` —
-/// so the match suffix is guaranteed to align with the generated filenames.
+/// Uses `sanitize_dir_name(dir_name)` and `job_id` — identical to
+/// `generate_archive_name()` — so the match pattern is guaranteed to align
+/// with the generated filenames.
 ///
-/// Archive names follow `[TIMESTAMP_][custom_]sanitized.ext`, so the sanitized
-/// name is always the last segment before the extension. Matching is done by
-/// suffix (`ends_with`) to handle both timestamped and non-timestamped variants.
+/// Archive names follow `[TIMESTAMP_][custom_]sanitized_jobid.ext`, so the
+/// `sanitized_jobid` segment is always the last before the extension. Matching
+/// is done by suffix (`ends_with`) to handle both timestamped and
+/// non-timestamped variants.
 ///
 /// Returns the number of deleted archives.
 pub fn cleanup_old_archives(
@@ -410,16 +420,17 @@ pub fn cleanup_old_archives(
     store_only: bool,
     has_password: bool,
     max_count: u32,
+    job_id: i64,
 ) -> anyhow::Result<u32> {
     let ext = format_extension(format, store_only, has_password);
-    let sanitized = sanitize_dir_name(dir_name);
+    let sanitized = format!("{}_{}", sanitize_dir_name(dir_name), job_id);
 
-    // The base name without any timestamp prefix: [custom_]sanitized.ext
+    // The base name without any timestamp prefix: [custom_]sanitized_jobid.ext
     let base_name = match custom_name {
         Some(cn) if !cn.is_empty() => format!("{}_{}.{}", cn, sanitized, ext),
         _ => format!("{}.{}", sanitized, ext),
     };
-    // The suffix used to match timestamped variants: "_[custom_]sanitized.ext"
+    // The suffix used to match timestamped variants: "_[custom_]sanitized_jobid.ext"
     let ts_suffix = format!("_{}", base_name);
 
     let entries = std::fs::read_dir(staging_dir).with_context(|| {
