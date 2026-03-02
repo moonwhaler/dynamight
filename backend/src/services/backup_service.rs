@@ -345,6 +345,7 @@ impl BackupService {
                                 &dir_name,
                                 compress_opts.custom_name.as_deref(),
                                 &compress_opts.format,
+                                compress_opts.store_only,
                                 has_password,
                                 max,
                             ) {

@@ -91,11 +91,12 @@ export type DestinationConfig =
   | WebDavDestinationConfig;
 
 // Directory compression types
-export type CompressFormat = 'tar_gz' | 'tar' | 'zip';
+export type CompressFormat = 'tar_gz' | 'zip';
 
 export interface CompressDirsOptions {
   enabled: boolean;
   format: CompressFormat;
+  store_only?: boolean;
   add_timestamp: boolean;
   custom_name?: string | null;
   max_archives_per_dir?: number | null;

@@ -1,8 +1,8 @@
 //! Service for compressing source directories before transfer.
 //!
-//! Each source directory is individually compressed into an archive file
-//! (tar.gz, tar, or zip) and stored in a per-job staging subdirectory before
-//! being transferred to the destination via the configured provider.
+//! Each source directory is individually archived (tar.gz, tar, or zip) and
+//! stored in a per-job staging subdirectory before being transferred to the
+//! destination via the configured provider.
 
 use crate::models::{CompressDirsOptions, CompressFormat};
 use anyhow::Context;
@@ -32,27 +32,21 @@ pub fn sanitize_dir_name(name: &str) -> String {
         .to_string()
 }
 
-/// Get the file extension for a given archive format.
+/// Get the file extension for a given archive format and options.
 ///
-/// For tar-based formats with a password set, an `.enc` suffix is appended
-/// because those archives are encrypted by openssl after compression.
-/// Zip encryption is built into the format, so the extension does not change.
-pub fn format_extension(format: &CompressFormat, encrypted: bool) -> &'static str {
+/// `store_only` affects tar-based formats: TarGz in store-only mode produces a
+/// plain `.tar` file (no gzip compression). Zip always uses `.zip` regardless.
+///
+/// `encrypted` adds a `.enc` suffix for tar-based formats (openssl AES-256).
+/// Zip encryption is built into the format so the extension does not change.
+pub fn format_extension(format: &CompressFormat, store_only: bool, encrypted: bool) -> &'static str {
     match format {
-        CompressFormat::TarGz => {
-            if encrypted {
-                "tar.gz.enc"
-            } else {
-                "tar.gz"
-            }
-        }
-        CompressFormat::Tar => {
-            if encrypted {
-                "tar.enc"
-            } else {
-                "tar"
-            }
-        }
+        CompressFormat::TarGz => match (store_only, encrypted) {
+            (false, false) => "tar.gz",
+            (false, true) => "tar.gz.enc",
+            (true, false) => "tar",
+            (true, true) => "tar.enc",
+        },
         CompressFormat::Zip => "zip",
     }
 }
@@ -63,18 +57,10 @@ pub fn format_extension(format: &CompressFormat, encrypted: bool) -> &'static st
 ///
 /// The timestamp is always the **first** segment when enabled, making archives
 /// sort chronologically by name and clearly marking when they were created.
-///
-/// Examples:
-/// - `custom="proj"`, `dir="my documents"`, `timestamp=true`
-///   → `"2026-03-01T14-30-00_proj_my_documents.tar.gz"`
-/// - `custom=None`, `dir=".dotnet"`, `timestamp=false`
-///   → `"dotnet.tar.gz"`
-/// - `custom=None`, `dir="photos"`, `timestamp=false`, password set
-///   → `"photos.tar.gz.enc"`
 pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions) -> String {
     let sanitized = sanitize_dir_name(dir_name);
     let has_password = opts.password.as_deref().map(|p| !p.is_empty()).unwrap_or(false);
-    let ext = format_extension(&opts.format, has_password);
+    let ext = format_extension(&opts.format, opts.store_only, has_password);
 
     let mut parts: Vec<String> = Vec::new();
 
@@ -136,7 +122,7 @@ async fn run_and_poll(
     result
 }
 
-/// Compress a source directory into the per-job staging subdirectory.
+/// Compress (or archive) a source directory into the per-job staging subdirectory.
 ///
 /// Parameters:
 /// - `source_dir`:   absolute path to the directory to compress
@@ -147,14 +133,13 @@ async fn run_and_poll(
 /// - `is_cancelled`: checked every 500 ms; if it returns `true`, the
 ///                   subprocess is killed and an error is returned
 ///
-/// The archive is first written as a temporary file (`<archive_name>.<run_id>.tmp`)
-/// and then atomically renamed to the final path on success. The temp file is
-/// cleaned up on failure.
+/// When `store_only` is set, files are archived without compression
+/// (tar without `-z`, or `zip -0`).
 ///
 /// When a password is set for tar-based formats, a two-step process is used:
-/// 1. Compress to an intermediate temp file
-/// 2. Encrypt the intermediate file with `openssl enc -aes-256-cbc -pbkdf2`
-/// The final output has a `.enc` extension (e.g. `archive.tar.gz.enc`).
+/// 1. Archive to an intermediate temp file
+/// 2. Encrypt with `openssl enc -aes-256-cbc -pbkdf2` (password via stdin)
+/// The final output carries a `.enc` extension (e.g. `archive.tar.gz.enc`).
 ///
 /// Returns the path to the created archive file.
 pub async fn compress_directory(
@@ -216,7 +201,7 @@ pub async fn compress_directory(
     let has_password = opts.password.as_deref().map(|p| !p.is_empty()).unwrap_or(false);
 
     log_fn(format!(
-        "Compressing '{}' → {}",
+        "Archiving '{}' → {}",
         source_dir.display(),
         archive_name
     ));
@@ -224,7 +209,10 @@ pub async fn compress_directory(
     match &opts.format {
         CompressFormat::Zip => {
             let mut cmd = tokio::process::Command::new("zip");
-            cmd.args(["-r"]);
+            if opts.store_only {
+                cmd.arg("-0"); // store only, no compression
+            }
+            cmd.arg("-r");
             if has_password {
                 if let Some(ref pass) = opts.password {
                     cmd.args(["-P", pass.as_str()]);
@@ -239,21 +227,18 @@ pub async fn compress_directory(
                 .spawn()
                 .context("Failed to spawn zip. Ensure zip is installed.")?;
 
-            run_and_poll(child, &tmp_path, &is_cancelled, "Compression cancelled").await?;
+            run_and_poll(child, &tmp_path, &is_cancelled, "Archiving cancelled").await?;
         }
 
-        CompressFormat::TarGz | CompressFormat::Tar => {
-            let tar_flags = if matches!(opts.format, CompressFormat::TarGz) {
-                "-czpf"
-            } else {
-                "-cpf"
-            };
+        CompressFormat::TarGz => {
+            // `-z` for gzip compression; omit for store-only (plain tar)
+            let tar_flags = if opts.store_only { "-cpf" } else { "-czpf" };
 
             if has_password {
                 let password = opts.password.as_deref().unwrap();
 
-                // Phase 1: Create the (possibly compressed) tar archive to an
-                // intermediate temp file. The final output will be the encrypted version.
+                // Phase 1: Create the tar archive to an intermediate temp file.
+                // The final output will be the openssl-encrypted version.
                 let inter_path =
                     staging_dir.join(format!("{}.inter.{}.tmp", archive_name, run_id));
 
@@ -274,7 +259,7 @@ pub async fn compress_directory(
                         "Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).",
                     )?;
 
-                run_and_poll(tar_child, &inter_path, &is_cancelled, "Compression cancelled")
+                run_and_poll(tar_child, &inter_path, &is_cancelled, "Archiving cancelled")
                     .await?;
 
                 // Phase 2: Encrypt the intermediate archive with openssl AES-256-CBC.
@@ -333,7 +318,7 @@ pub async fn compress_directory(
                         "Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).",
                     )?;
 
-                run_and_poll(child, &tmp_path, &is_cancelled, "Compression cancelled").await?;
+                run_and_poll(child, &tmp_path, &is_cancelled, "Archiving cancelled").await?;
             }
         }
     }
@@ -369,15 +354,14 @@ pub fn cleanup_old_archives(
     dir_name: &str,
     custom_name: Option<&str>,
     format: &CompressFormat,
+    store_only: bool,
     has_password: bool,
     max_count: u32,
 ) -> anyhow::Result<u32> {
-    let ext = format_extension(format, has_password);
+    let ext = format_extension(format, store_only, has_password);
     let sanitized = sanitize_dir_name(dir_name);
 
-    // The base name without any timestamp prefix:
-    //   [custom_]sanitized.ext
-    // Mirrors exactly how generate_archive_name() constructs names.
+    // The base name without any timestamp prefix: [custom_]sanitized.ext
     let base_name = match custom_name {
         Some(cn) if !cn.is_empty() => format!("{}_{}.{}", cn, sanitized, ext),
         _ => format!("{}.{}", sanitized, ext),

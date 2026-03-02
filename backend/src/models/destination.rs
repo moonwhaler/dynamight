@@ -84,8 +84,6 @@ fn default_space_check() -> String {
 pub enum CompressFormat {
     #[default]
     TarGz,
-    /// Store-only tar archive without any compression
-    Tar,
     Zip,
 }
 
@@ -118,9 +116,13 @@ pub struct CompressDirsOptions {
     pub staging_path: String,
     /// Optional password to protect the archive.
     /// Zip: uses built-in zip encryption (-P flag).
-    /// Tar/TarGz: produces an AES-256-CBC encrypted `.enc` file via openssl.
+    /// TarGz: produces an AES-256-CBC encrypted `.enc` file via openssl.
     #[serde(default)]
     pub password: Option<String>,
+    /// Store files without compression (archive only).
+    /// TarGz → plain tar archive (`.tar`); Zip → store mode (`zip -0`).
+    #[serde(default)]
+    pub store_only: bool,
 }
 
 impl Default for DestinationConfig {

@@ -31,6 +31,7 @@
         options.compress_dirs = {
           enabled: true,
           format: 'tar_gz',
+          store_only: false,
           add_timestamp: true,
           custom_name: null,
           max_archives_per_dir: null,
@@ -74,6 +75,12 @@
   function setPassword(raw: string) {
     if (options.compress_dirs != null) {
       options.compress_dirs.password = raw === '' ? null : raw;
+    }
+  }
+
+  function setStoreOnly(checked: boolean) {
+    if (options.compress_dirs != null) {
+      options.compress_dirs.store_only = checked;
     }
   }
 </script>
@@ -152,10 +159,38 @@
           class="input w-full sm:w-auto"
         >
           <option value="tar_gz">{m.compress_dirs_format_targz()}</option>
-          <option value="tar">{m.compress_dirs_format_tar()}</option>
           <option value="zip">{m.compress_dirs_format_zip()}</option>
         </select>
       </div>
+
+      <!-- 2b. Store only toggle -->
+      <label
+        class="flex items-start gap-4 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
+      >
+        <div class="relative flex items-center mt-0.5">
+          <input
+            type="checkbox"
+            checked={cd.store_only ?? false}
+            onchange={(e) => setStoreOnly(e.currentTarget.checked)}
+            class="peer sr-only"
+          />
+          <div
+            class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-indigo-600 transition-colors"
+          ></div>
+          <div
+            class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
+          ></div>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
+            {m.compress_dirs_store_only()}
+            <HelpTooltip text={m.compress_dirs_store_only_help()} />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            {m.compress_dirs_store_only_example({ format: cd.format === 'zip' ? 'zip' : 'tar' })}
+          </p>
+        </div>
+      </label>
 
       <!-- 3. Password -->
       <div>
