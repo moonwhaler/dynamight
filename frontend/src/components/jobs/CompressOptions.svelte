@@ -186,9 +186,6 @@
             {m.compress_dirs_store_only()}
             <HelpTooltip text={m.compress_dirs_store_only_help()} />
           </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            {m.compress_dirs_store_only_example({ format: cd.format === 'zip' ? 'zip' : 'tar' })}
-          </p>
         </div>
       </label>
 
