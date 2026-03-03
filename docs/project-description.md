@@ -17,6 +17,8 @@
 11. [Native Linux Deployment](#native-linux-deployment)
 12. [Configuration Reference](#configuration-reference)
 13. [File Reference](#file-reference)
+14. [Directory Compression](#directory-compression)
+15. [Job List Column Preferences](#job-list-column-preferences)
 
 ---
 
@@ -29,11 +31,13 @@ Dynamight is a self-hosted backup management application that provides a web UI 
 - **Multi-Provider Support**: Backup to local drives, S3, Google Drive, OneDrive, SFTP, or WebDAV
 - **Job Management**: Create, edit, delete, clone, and execute backup jobs
 - **USB Mount Support**: Auto-detect USB drives by UUID, mount/unmount automatically
-- **Scheduling**: Cron-based job scheduling (daily, weekly, monthly, custom)
+- **Scheduling**: Timezone-aware cron-based job scheduling (daily, weekly, monthly, custom)
+- **Directory Compression**: Archive source directories (tar.gz or zip) before transfer, with optional encryption, versioned retention, and excluded path support
 - **Real-time Logs**: WebSocket streaming of backup progress
 - **Credential Management**: Encrypted storage for cloud provider credentials
 - **Two-Factor Authentication**: TOTP-based 2FA with recovery codes
 - **Rate Limiting**: Protection against brute-force attacks
+- **Customizable Job Table**: Persistent per-browser column visibility, order, and resize
 
 ### Supported Providers
 
@@ -80,7 +84,8 @@ Dynamight is a self-hosted backup management application that provides a web UI 
 |  |  |                |  |                  |  |   (Background)    |   |  |
 |  |  |  /api/*        |  |  - Auth          |  |                   |   |  |
 |  |  |  /ws/*         |  |  - Backup        |  |  Checks cron      |   |  |
-|  |  |  /* (static)   |  |  - Credential    |  |  every 60s        |   |  |
+|  |  |  /* (static)   |  |  - Compress      |  |  every 60s        |   |  |
+|  |  |                |  |  - Credential    |  |  Timezone-aware   |   |  |
 |  |  |                |  |  - Mount         |  |                   |   |  |
 |  |  |                |  |  - RateLimit     |  |                   |   |  |
 |  |  |                |  |  - TOTP          |  |                   |   |  |
@@ -173,8 +178,9 @@ dynamight-web/
 │           ├── auth_service.rs      # Password hashing, JWT
 │           ├── totp_service.rs      # TOTP generation/validation
 │           ├── backup_service.rs    # Job execution orchestration
+│           ├── compress_service.rs  # Directory compression and retention
 │           ├── mount_service.rs     # USB mount/unmount
-│           ├── scheduler_service.rs # Cron job runner
+│           ├── scheduler_service.rs # Cron job runner (timezone-aware)
 │           ├── credential_service.rs # Credential encryption
 │           ├── rate_limit_service.rs # Rate limiting
 │           │
@@ -207,8 +213,11 @@ dynamight-web/
         │       ├── jobs.ts          # Jobs state
         │       ├── logs.ts          # WebSocket status
         │       ├── theme.ts         # Dark/light theme
+        │       ├── tablePreferences.ts  # Job list column visibility/order/widths
         │       ├── viewPreferences.ts
-        │       └── preferences.ts
+        │       ├── preferences.ts
+        │       ├── fileBrowser.ts   # Directory browser state
+        │       └── language.ts      # UI language selection
         │
         ├── components/
         │   ├── layout/
@@ -218,10 +227,12 @@ dynamight-web/
         │   │
         │   ├── jobs/
         │   │   ├── JobCard.svelte
-        │   │   ├── JobListRow.svelte
+        │   │   ├── JobListRow.svelte          # Dynamic row renderer
+        │   │   ├── ColumnSelector.svelte      # Column visibility/order popover
         │   │   ├── ProviderSelector.svelte    # Provider selection UI
-        │   │   ├── CredentialSelector.svelte  # Credential picker
-        │   │   ├── TestConnection.svelte      # Connection tester
+        │   │   ├── CredentialSelector.svelte  # Credential picker (used inside providers/)
+        │   │   ├── TestConnection.svelte      # Connection tester (used inside providers/)
+        │   │   ├── CompressOptions.svelte     # Directory compression settings
         │   │   ├── SyncOptions.svelte         # Unified sync options
         │   │   ├── RsyncOptions.svelte        # Rsync-specific options
         │   │   ├── SchedulePicker.svelte
@@ -303,11 +314,13 @@ Orchestrates backup execution:
 1. Load job configuration from database
 2. Resolve provider based on destination type
 3. Retrieve and decrypt credentials if needed
-4. Create `SyncContext` with all parameters
-5. Call provider's `sync()` method
-6. Stream logs via WebSocket broadcast
-7. Store logs in database
-8. Handle cancellation
+4. **Compression phase** (if `compress_dirs` enabled): compress each source directory into an archive in the staging path, then use the staging path as the effective source for the sync. Retention cleanup runs after each archive is created. Dry-run mode logs what would be compressed without writing files.
+5. **Space pre-flight check** (Local provider only, skipped when compression is active)
+6. Create `SyncContext` with effective source directories
+7. Call provider's `sync()` method
+8. Stream logs via WebSocket broadcast
+9. Store logs in database
+10. Handle cancellation (checked before each compression step and throughout provider sync)
 
 #### CredentialService (`services/credential_service.rs`)
 
@@ -325,6 +338,24 @@ Orchestrates backup execution:
 - `list_usb_drives()` - Parse `lsblk -J`
 - `browse_path(path)` - Directory listing
 
+#### CompressService (`services/compress_service.rs`)
+
+Handles per-directory archiving before provider sync:
+
+- `compress_directory(source_dir, job_id, opts, exclude_paths, log_fn, is_cancelled)` — archives a single source directory into the staging path, honouring cancellation and excluded sub-paths
+- `cleanup_old_archives(staging_path, source_dir, job_id, max_count)` — deletes oldest archives beyond the retention limit, matching by sanitised dir name + job ID
+- **Archive naming**: `[<timestamp>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>`
+  - Job ID is embedded in every filename so multiple jobs can safely share the same staging directory
+  - Timestamp format: `YYYY-MM-DDTHH-MM-SS`
+- **Supported formats**:
+  - `tar_gz`: gzip-compressed tar (`.tar.gz`); or uncompressed with `store_only` (`.tar`)
+  - `zip`: ZIP archive (`.zip`)
+- **Encryption**:
+  - `tar_gz` + password: two-step process — create tar, then pipe through `openssl enc -aes-256-cbc -pbkdf2`; output has `.enc` suffix (e.g. `.tar.gz.enc`). Password is passed via stdin, not on the command line.
+  - `zip` + password: built-in zip `-P` flag; no additional suffix. Note: zip encryption is weaker than AES-256-CBC.
+- **Excluded directories**: `archive_relative_excludes()` converts absolute `exclude_dirs` to archive-relative paths so they are honoured during compression, not just during provider sync
+- **GNU tar required**: Alpine's default BusyBox tar lacks `--numeric-owner`; the Dockerfile installs the GNU `tar` package
+
 #### RateLimitService (`services/rate_limit_service.rs`)
 
 - Track failed auth attempts per IP
@@ -333,10 +364,12 @@ Orchestrates backup execution:
 
 #### SchedulerService (`services/scheduler_service.rs`)
 
-- Background tokio task
-- Check schedules every 60 seconds
-- Parse cron expressions
-- Spawn job execution tasks
+- Background tokio task, checks schedules every 60 seconds
+- Timezone-aware cron parsing — timezone configured via `server.timezone` in `dynamight.toml` or the `TZ` environment variable
+- Calculates next run times using 5-field cron expressions with full timezone support
+- Skips execution if the same job is already running
+- Updates `last_run_at` and `next_run_at` after each invocation
+- Preserves "cancelled" status (does not overwrite with success/failure)
 
 ### Handler Layer
 
@@ -412,13 +445,18 @@ App.svelte
     │       └── CredentialsManager.svelte
     ├── Sidebar.svelte
     └── Router → [Dashboard|Jobs|JobDetail|History]
+        ├── Jobs.svelte
+        │   ├── ColumnSelector.svelte    # Column visibility/order popover
+        │   ├── JobListRow.svelte        # One per job; dynamic column rendering
+        │   └── RunLogModal.svelte       # Live log viewer (lifted state from rows)
         └── JobDetail.svelte
             ├── ProviderSelector.svelte
-            ├── [Provider]Destination.svelte
-            ├── CredentialSelector.svelte
-            ├── TestConnection.svelte
+            ├── [Provider]Destination.svelte  # Includes CredentialSelector + TestConnection
+            ├── PathSelector.svelte           # Multi-source directory picker
+            ├── CompressOptions.svelte        # Directory compression settings
             ├── SyncOptions.svelte
-            └── SchedulePicker.svelte
+            ├── SchedulePicker.svelte
+            └── RunLogModal.svelte            # Live log viewer (also used here)
 ```
 
 ---
@@ -484,6 +522,7 @@ pub enum DestinationConfig {
         username: String,
         remote_path: String,
         key_based_auth: bool,
+        host_key_fingerprint: Option<String>, // TOFU-based MITM protection ("SHA256:...")
     },
     WebDav {
         url: String,
@@ -511,6 +550,13 @@ jobs::run_job handler
 │   ├── Updates status to "running"
 │   ├── Loads job with destination config
 │   ├── Decrypts credentials if needed
+│   ├── [If compress_dirs enabled]
+│   │   ├── For each source_dir:
+│   │   │   ├── compress_service::compress_directory()
+│   │   │   │   ├── Honours exclude_dirs (archive-relative paths)
+│   │   │   │   └── Streams progress logs
+│   │   │   └── cleanup_old_archives() (if max_archives_per_dir set)
+│   │   └── staging_path becomes effective source for sync
 │   ├── Creates provider via factory
 │   ├── Calls provider.sync(context)
 │   │   ├── Provider-specific sync logic
@@ -728,43 +774,49 @@ The service includes:
 
 ## Configuration Reference
 
-All configuration is via environment variables. Create `.env` from `.env.example`.
+Configuration is primarily via `dynamight.toml` (copy from `dynamight.toml.example`). Any setting can be overridden by an environment variable using SCREAMING_SNAKE_CASE. Environment variables take highest priority.
+
+### Configuration Search Paths
+
+1. `DYNAMIGHT_CONFIG` environment variable (if set)
+2. `./dynamight.toml` (current directory)
+3. `/etc/dynamight/dynamight.toml` (system-wide)
 
 ### Required Settings
 
-| Variable | Description |
-|----------|-------------|
-| `JWT_SECRET` | Secret for JWT signing and credential encryption. Generate with `openssl rand -base64 32` |
+| TOML key | Env var | Description |
+|----------|---------|-------------|
+| `security.jwt_secret` | `JWT_SECRET` | Secret for JWT signing and credential encryption. Generate with `openssl rand -base64 32` |
 
 ### Database Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `sqlite:data/dynamight.db` | Main database location |
-| `LOGS_DATABASE_URL` | (derived from DATABASE_URL) | Logs database location |
+| TOML key | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `database.url` | `DATABASE_URL` | `sqlite:data/dynamight.db` | Main database location |
+| — | `LOGS_DATABASE_URL` | (derived from DATABASE_URL) | Logs database location |
 
 ### Server Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HOST` | `0.0.0.0` | Network interface to bind |
-| `PORT` | `8080` | Port to listen on |
-| `STATIC_FILES_DIR` | `static` | Frontend files directory |
-| `TZ` | `UTC` | Timezone for scheduled jobs |
+| TOML key | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `server.host` | `HOST` | `0.0.0.0` | Network interface to bind |
+| `server.port` | `PORT` | `8080` | Port to listen on |
+| `server.timezone` | `TZ` | `UTC` | Timezone for scheduled jobs (e.g. `Europe/Berlin`) |
+| — | `STATIC_FILES_DIR` | `static` | Frontend files directory |
 
 ### Logging
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Env var | Default | Description |
+|---------|---------|-------------|
 | `RUST_LOG` | `info,dynamight=debug` | Log level configuration |
 
 ### Security Settings
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALLOWED_BROWSE_PATHS` | `/mnt,/home,/media` | Paths users can browse |
-| `CORS_ORIGINS` | (same-origin) | Allowed CORS origins |
-| `SECURE_COOKIES` | `true` | Require HTTPS for cookies |
+| TOML key | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` | `["/mnt","/home","/media"]` | Paths users can browse (comma-separated in env) |
+| — | `CORS_ORIGINS` | (same-origin) | Allowed CORS origins |
+| `security.secure_cookies` | `SECURE_COOKIES` | `true` | Require HTTPS for cookies |
 
 ### Rate Limiting
 
@@ -790,8 +842,9 @@ All configuration is via environment variables. Create `.env` from `.env.example
 | `services/totp_service.rs` | 2FA implementation |
 | `services/backup_service.rs` | Job execution orchestration |
 | `services/credential_service.rs` | AES-256-GCM encryption |
+| `services/compress_service.rs` | Directory archiving and retention |
 | `services/mount_service.rs` | USB device operations |
-| `services/scheduler_service.rs` | Cron scheduler |
+| `services/scheduler_service.rs` | Timezone-aware cron scheduler |
 | `services/rate_limit_service.rs` | Auth rate limiting |
 | `services/providers/mod.rs` | Provider trait and factory |
 | `services/providers/rsync.rs` | Local rsync provider |
@@ -812,15 +865,92 @@ All configuration is via environment variables. Create `.env` from `.env.example
 |------|---------|
 | `lib/types.ts` | TypeScript interfaces |
 | `lib/api.ts` | API client with all endpoints |
+| `lib/stores/tablePreferences.ts` | Job list column visibility, order, and widths |
 | `components/jobs/ProviderSelector.svelte` | Provider selection tiles |
-| `components/jobs/CredentialSelector.svelte` | Credential picker |
-| `components/jobs/TestConnection.svelte` | Connection tester |
-| `components/jobs/SyncOptions.svelte` | Sync configuration |
-| `components/jobs/providers/*.svelte` | Provider-specific forms |
+| `components/jobs/CredentialSelector.svelte` | Credential picker (embedded in provider forms) |
+| `components/jobs/TestConnection.svelte` | Connection tester (embedded in provider forms) |
+| `components/jobs/CompressOptions.svelte` | Directory compression settings UI |
+| `components/jobs/ColumnSelector.svelte` | Column visibility/order popover |
+| `components/jobs/JobListRow.svelte` | Dynamic table row with column-aware rendering |
+| `components/jobs/SyncOptions.svelte` | Sync configuration (exclude dirs grouped by source) |
+| `components/jobs/providers/*.svelte` | Provider-specific forms (include credential selector) |
 | `components/settings/CredentialsManager.svelte` | Credential management |
+| `components/logs/RunLogModal.svelte` | Live log viewer (used in Jobs and JobDetail) |
 | `components/TotpSetup.svelte` | 2FA setup wizard |
 | `components/TotpVerification.svelte` | 2FA login prompt |
+| `routes/Jobs.svelte` | Job list with column management, drag/resize |
 | `routes/JobDetail.svelte` | Job create/edit with provider selection |
+
+---
+
+## Directory Compression
+
+When `sync_options.compress_dirs.enabled` is true, each source directory is archived before being transferred to the destination.
+
+### Workflow
+
+1. For each source directory, `CompressService.compress_directory()` creates an archive in `staging_path/`
+2. Excluded directories (`exclude_dirs`) are honoured during archiving — they are converted to archive-relative paths so they are excluded from the tar/zip contents
+3. If `max_archives_per_dir` is set, `cleanup_old_archives()` removes the oldest archives after each run
+4. The provider then syncs the staging directory instead of the original source directories
+5. Space pre-flight checks are skipped when compression is active (unpredictable ratio)
+
+### Archive Naming
+
+```
+[<YYYY-MM-DDTHH-MM-SS>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>
+```
+
+Examples:
+- `2026-03-01T14-30-00_photos_42.tar.gz` (timestamp + default name)
+- `backup_home_christian_42.zip` (custom name "backup", no timestamp)
+- `documents_42.tar.gz.enc` (tar.gz encrypted)
+
+The job ID embedded in every filename ensures multiple jobs can share the same staging directory without collisions.
+
+### Formats and Encryption
+
+| Format | store_only | Password | Extension |
+|--------|-----------|----------|-----------|
+| tar.gz | No | No | `.tar.gz` |
+| tar.gz | No | Yes | `.tar.gz.enc` (openssl AES-256-CBC, password via stdin) |
+| tar.gz | Yes | No | `.tar` |
+| tar.gz | Yes | Yes | `.tar.enc` |
+| zip | — | No | `.zip` |
+| zip | — | Yes | `.zip` (built-in zip `-P` flag) |
+
+Note: tar encryption uses `openssl enc -aes-256-cbc -pbkdf2`; the password is passed via stdin (not command-line) to avoid exposure in the process list. Zip uses built-in encryption which is weaker than AES-256-CBC.
+
+---
+
+## Job List Column Preferences
+
+The job list table supports persistent per-browser column configuration.
+
+### Columns
+
+| Column | Fixed | Default visible | Description |
+|--------|-------|----------------|-------------|
+| `job` | Yes (first) | Yes | Job name + status indicator |
+| `status` | No | Yes | Enabled/disabled badge |
+| `sources` | No | Yes | Source directory count |
+| `destination` | No | Yes | Destination summary |
+| `last_run` | No | Yes | Relative time of last run |
+| `schedule` | No | No | Human-readable cron + next run |
+| `options` | No | Yes | Active option badges |
+| `actions` | Yes (last) | Yes | Run/Stop/Logs buttons |
+
+### Behaviour
+
+- **Visibility**: Toggle columns via the Columns popover (fixed columns cannot be hidden)
+- **Reordering**: Drag column headers to reorder; fixed columns (`job`, `actions`) always stay at the ends
+- **Resizing**: Drag column borders to set widths (minimum 60px); excess space is distributed proportionally
+- **Persistence**: All preferences are stored in `localStorage` under key `dynamight-job-table-prefs`
+- **Schedules**: Displayed as human-readable text (e.g. "Daily at 14:30", "Weekly on Monday at 09:00"); orphaned or disabled schedules are styled accordingly
+
+### Exclude Directories UI
+
+In `SyncOptions.svelte`, excluded directories are **grouped by their parent source directory** in a card-per-source layout. Paths that no longer match any current source directory are highlighted as orphaned entries (amber warning) and can be cleaned up.
 
 ---
 

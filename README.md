@@ -20,9 +20,22 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 - **Job Management**
   - Create, edit, clone, and delete backup jobs
   - Multiple source directories per job
-  - Cron-based scheduling (daily, weekly, monthly, custom)
+  - Cron-based scheduling (daily, weekly, monthly, custom) with timezone support
   - Manual and scheduled execution
   - Real-time log streaming via WebSocket
+
+- **Directory Compression**
+  - Archive source directories (tar.gz or zip) before uploading
+  - Optional archive encryption (AES-256-CBC for tar, built-in for zip)
+  - Timestamped versioning with configurable per-directory retention
+  - Custom archive name prefixes
+  - Store-only mode (archive without compression)
+
+- **Customizable Job List**
+  - Show, hide, and reorder table columns
+  - Drag-to-resize column widths
+  - Human-readable schedule display ("Daily at 14:30")
+  - Preferences persisted per browser
 
 - **Security**
   - Two-factor authentication (TOTP)
@@ -292,12 +305,18 @@ sudo ./scripts/install.sh uninstall
    - **WebDAV**: URL, remote path
 5. **Select Credentials** (for cloud providers)
 6. **Source Directories**: Browse or type paths to back up
-7. **Sync Options**:
+7. **Compress Directories** (optional):
+   - Enable to archive each source directory before transfer
+   - Set staging path (temporary directory for archives)
+   - Choose format (tar.gz or zip) and optionally store-only (no compression)
+   - Enable timestamp versioning and set max archives to retain
+   - Optionally set an archive password
+8. **Sync Options**:
    - Delete extraneous files
-   - Exclude patterns
+   - Exclude patterns and directories
    - Bandwidth limit (rsync/SFTP)
    - Dry run mode
-8. Click **"Create Job"**
+9. Click **"Create Job"**
 
 ### Managing Credentials
 
@@ -331,6 +350,20 @@ Enable 2FA for additional security:
 4. Scan QR code with authenticator app
 5. Enter verification code
 6. Save recovery codes
+
+### Managing Job List Columns
+
+Customise which columns appear in the job list:
+
+1. Click the **Columns** button in the job list header
+2. Check or uncheck columns to show/hide them (Name and Actions are always visible)
+3. Use the up/down arrows to reorder optional columns
+4. Drag column borders in the table to resize them
+5. Preferences are saved automatically in your browser
+
+### Scheduling with Timezones
+
+Schedules run according to the server's configured timezone (`server.timezone` in `dynamight.toml` or the `TZ` environment variable). Set this to your local timezone (e.g. `Europe/Berlin`, `America/New_York`) so that "Daily at 03:00" means 3 AM local time, not UTC.
 
 ## Architecture
 
