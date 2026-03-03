@@ -1,6 +1,7 @@
 use crate::models::JobRunStatus;
 use crate::services::BackupService;
 use chrono::Utc;
+use chrono_tz::Tz;
 use cron::Schedule;
 use sqlx::SqlitePool;
 use std::str::FromStr;
@@ -10,11 +11,12 @@ use tokio::time::{interval, Duration};
 pub struct SchedulerService {
     db: SqlitePool,
     backup_service: Arc<BackupService>,
+    timezone: Tz,
 }
 
 impl SchedulerService {
-    pub fn new(db: SqlitePool, backup_service: Arc<BackupService>) -> Self {
-        Self { db, backup_service }
+    pub fn new(db: SqlitePool, backup_service: Arc<BackupService>, timezone: Tz) -> Self {
+        Self { db, backup_service, timezone }
     }
 
     pub async fn start(&self) {
@@ -40,7 +42,7 @@ impl SchedulerService {
                 .await?;
 
         for (id, cron_expr) in schedules {
-            if let Ok(next) = calculate_next_run(&cron_expr) {
+            if let Ok(next) = calculate_next_run(&cron_expr, self.timezone) {
                 sqlx::query("UPDATE schedules SET next_run_at = ? WHERE id = ?")
                     .bind(next)
                     .bind(id)
@@ -130,7 +132,7 @@ impl SchedulerService {
                 "UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?",
             )
             .bind(now)
-            .bind(calculate_next_run(&schedule.cron_expression).ok())
+            .bind(calculate_next_run(&schedule.cron_expression, self.timezone).ok())
             .bind(schedule.schedule_id)
             .execute(&self.db)
             .await;
@@ -254,7 +256,7 @@ struct ScheduleWithJob {
     job_enabled: bool,
 }
 
-fn calculate_next_run(cron_expr: &str) -> anyhow::Result<chrono::DateTime<Utc>> {
+fn calculate_next_run(cron_expr: &str, timezone: Tz) -> anyhow::Result<chrono::DateTime<Utc>> {
     // Cron crate expects 6-field format (with seconds)
     // If 5-field format, prepend "0 " for seconds
     let expr = if cron_expr.split_whitespace().count() == 5 {
@@ -265,7 +267,8 @@ fn calculate_next_run(cron_expr: &str) -> anyhow::Result<chrono::DateTime<Utc>> 
 
     let schedule = Schedule::from_str(&expr)?;
     schedule
-        .upcoming(Utc)
+        .upcoming(timezone)
         .next()
+        .map(|dt| dt.with_timezone(&Utc))
         .ok_or_else(|| anyhow::anyhow!("No next run time"))
 }

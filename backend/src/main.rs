@@ -278,7 +278,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Start scheduler
-    let scheduler = SchedulerService::new(db.clone(), backup_service);
+    let scheduler = SchedulerService::new(db.clone(), backup_service, config.timezone);
     tokio::spawn(async move {
         scheduler.start().await;
     });

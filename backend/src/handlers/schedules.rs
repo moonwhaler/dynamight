@@ -58,9 +58,11 @@ pub async fn create_schedule(
     }
 
     // Calculate next run
+    let tz = state.config.timezone;
     let next_run = CronSchedule::from_str(&cron_with_seconds)
         .ok()
-        .and_then(|s| s.upcoming(Utc).next());
+        .and_then(|s| s.upcoming(tz).next())
+        .map(|dt| dt.with_timezone(&Utc));
 
     let result = sqlx::query(
         r#"
@@ -163,10 +165,12 @@ pub async fn update_schedule(
     }
 
     // Calculate next run
+    let tz = state.config.timezone;
     let next_run = if enabled {
         CronSchedule::from_str(&cron_with_seconds)
             .ok()
-            .and_then(|s| s.upcoming(Utc).next())
+            .and_then(|s| s.upcoming(tz).next())
+            .map(|dt| dt.with_timezone(&Utc))
     } else {
         None
     };

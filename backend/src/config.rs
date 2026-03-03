@@ -1,3 +1,4 @@
+use chrono_tz::Tz;
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -43,7 +44,6 @@ struct ServerConfig {
     #[serde(default = "default_static_files_dir")]
     static_files_dir: String,
     #[serde(default = "default_timezone")]
-    #[allow(dead_code)] // Parsed for documentation; timezone uses TZ env var
     timezone: String,
 }
 
@@ -170,6 +170,8 @@ pub struct Config {
     pub trusted_proxies: Vec<String>,
     // Maximum request body size in bytes (default: 10MB)
     pub max_request_body_size: usize,
+    // Timezone for cron schedule interpretation (e.g. "Europe/Berlin")
+    pub timezone: Tz,
 }
 
 impl Config {
@@ -281,6 +283,15 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(toml_config.limits.max_request_body_size),
+            timezone: env::var("TZ")
+                .ok()
+                .or_else(|| Some(toml_config.server.timezone.clone()))
+                .and_then(|tz| {
+                    tz.parse::<Tz>().map_err(|_| {
+                        tracing::warn!("Unknown timezone '{}', falling back to UTC", tz);
+                    }).ok()
+                })
+                .unwrap_or(Tz::UTC),
         }
     }
 

@@ -522,7 +522,7 @@
                     {#if col !== 'actions'}
                       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div
-                        class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-400/50 transition-colors"
+                        class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-gray-300 dark:bg-gray-600 hover:bg-primary-500 dark:hover:bg-primary-400 transition-colors"
                         onmousedown={(e) => startResize(col, e)}
                         ondragstart={(e) => e.stopPropagation()}
                         role="separator"
