@@ -522,12 +522,14 @@
                     {#if col !== 'actions'}
                       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div
-                        class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize bg-gray-300 dark:bg-gray-600 hover:bg-primary-500 dark:hover:bg-primary-400 transition-colors"
+                        class="absolute right-0 top-0 bottom-0 w-3 translate-x-1/2 z-10 cursor-col-resize group"
                         onmousedown={(e) => startResize(col, e)}
                         ondragstart={(e) => e.stopPropagation()}
                         role="separator"
                         aria-orientation="vertical"
-                      ></div>
+                      >
+                        <div class="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700 group-hover:bg-primary-500 dark:group-hover:bg-primary-400 transition-colors duration-150"></div>
+                      </div>
                     {/if}
                   </th>
                 {/each}

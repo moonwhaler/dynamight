@@ -165,6 +165,23 @@
     excludeEntries.filter(e => !isAlreadyExcluded(e.path))
   );
 
+  // Group excluded dirs by their parent source directory (ordered by sourceDirs)
+  let excludesBySource = $derived.by(() => {
+    const result: Array<{ sourceDir: string; paths: string[] }> = [];
+    for (const src of sourceDirs) {
+      const paths = options.exclude_dirs.filter(ex => ex.startsWith(src + '/'));
+      if (paths.length > 0) {
+        result.push({ sourceDir: src, paths });
+      }
+    }
+    return result;
+  });
+
+  // Paths that don't match any current source directory
+  let orphanedExcludes = $derived(
+    options.exclude_dirs.filter(ex => !sourceDirs.some(src => ex.startsWith(src + '/')))
+  );
+
   // Select all visible directories
   function selectAllExcludes() {
     const newSet = new Set(selectedExcludes);
@@ -517,43 +534,129 @@
       {:else}
         <!-- Currently excluded directories -->
         {#if options.exclude_dirs && options.exclude_dirs.length > 0}
-          <div class="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden divide-y divide-gray-200 dark:divide-gray-700">
-            {#each options.exclude_dirs as path}
-              <div class="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-750">
-                <div class="flex items-center gap-2.5 min-w-0">
-                  <svg class="w-5 h-5 flex-shrink-0 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                  </svg>
-                  <div class="min-w-0">
-                    <code class="text-sm text-gray-700 dark:text-gray-200 truncate block">{getRelativePath(path)}</code>
-                    <span class="text-xs text-gray-400">{m.exclude_dirs_from()} {getSourceFolderName(getParentSource(path) || '')}</span>
+          {#if sourceDirs.length <= 1}
+            <!-- Single source: flat list, no header needed -->
+            <div class="mt-3 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden divide-y divide-gray-200 dark:divide-gray-700">
+              {#each options.exclude_dirs as path (path)}
+                <div class="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-750">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <svg class="w-5 h-5 flex-shrink-0 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                    <code class="text-sm text-gray-700 dark:text-gray-200 truncate">{getRelativePath(path)}</code>
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => removeExcludeDir(path)}
+                    class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    aria-label={m.common_delete()}
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <!-- Multi-source: grouped cards per source directory -->
+            <div class="mt-3 space-y-2">
+              {#each excludesBySource as { sourceDir, paths } (sourceDir)}
+                <div
+                  class="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden"
+                  role="group"
+                  aria-label={getSourceFolderName(sourceDir)}
+                >
+                  <!-- Group header -->
+                  <div class="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/70 border-b border-gray-200 dark:border-gray-700">
+                    <svg class="w-4 h-4 flex-shrink-0 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                    <div class="min-w-0 flex-1 flex items-baseline gap-2">
+                      <span class="text-xs font-semibold text-gray-700 dark:text-gray-200 flex-shrink-0">{getSourceFolderName(sourceDir)}</span>
+                      <code class="text-xs text-gray-400 dark:text-gray-500 truncate">{sourceDir}</code>
+                    </div>
+                    <span class="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0 tabular-nums">{paths.length}</span>
+                  </div>
+                  <!-- Excluded paths in this group -->
+                  <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                    {#each paths as path (path)}
+                      <div class="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-750">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                          <svg class="w-5 h-5 flex-shrink-0 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                          </svg>
+                          <code class="text-sm text-gray-700 dark:text-gray-200 truncate">{getRelativePath(path)}</code>
+                        </div>
+                        <button
+                          type="button"
+                          onclick={() => removeExcludeDir(path)}
+                          class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          aria-label={m.common_delete()}
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    {/each}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onclick={() => removeExcludeDir(path)}
-                  class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                  aria-label={m.common_delete()}
+              {/each}
+
+              <!-- Orphaned exclusions: paths that no longer match any source directory -->
+              {#if orphanedExcludes.length > 0}
+                <div
+                  class="border border-amber-200 dark:border-amber-800/50 rounded-xl overflow-hidden"
+                  role="group"
+                  aria-label={m.exclude_dirs_orphaned()}
                 >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            {/each}
-          </div>
+                  <div class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/50">
+                    <svg class="w-4 h-4 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span class="text-xs font-medium text-amber-700 dark:text-amber-300">{m.exclude_dirs_orphaned()}</span>
+                  </div>
+                  <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                    {#each orphanedExcludes as path (path)}
+                      <div class="flex items-center justify-between gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-750">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                          <svg class="w-5 h-5 flex-shrink-0 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                          </svg>
+                          <code class="text-sm text-gray-700 dark:text-gray-200 truncate">{path}</code>
+                        </div>
+                        <button
+                          type="button"
+                          onclick={() => removeExcludeDir(path)}
+                          class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          aria-label={m.common_delete()}
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
 
         <!-- Source directory selector + Browse button -->
         <div class="mt-3 flex flex-col sm:flex-row gap-2">
-          <select
-            bind:value={selectedExcludeSource}
-            class="input flex-1"
-          >
-            {#each sourceDirs as sourceDir}
-              <option value={sourceDir}>{getSourceFolderName(sourceDir)}</option>
-            {/each}
-          </select>
+          {#if sourceDirs.length > 1}
+            <select
+              bind:value={selectedExcludeSource}
+              class="input flex-1"
+            >
+              {#each sourceDirs as sourceDir}
+                <option value={sourceDir}>{getSourceFolderName(sourceDir)}</option>
+              {/each}
+            </select>
+          {/if}
           <button
             type="button"
             onclick={() => openExcludeBrowser(selectedExcludeSource)}

@@ -767,6 +767,7 @@
   "exclude_dirs_add_n": "Add {count} directories",
   "exclude_dirs_browse": "Browse",
   "exclude_dirs_also_applied_to_compression": "These exclusions are also applied when compressing source directories.",
+  "exclude_dirs_orphaned": "No matching source directory",
 
   "space_check_title": "Space Check",
   "space_check_help": "Verify the destination has enough free space before syncing.",

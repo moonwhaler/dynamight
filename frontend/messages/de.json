@@ -759,6 +759,7 @@
   "exclude_dirs_add_n": "{count} Verzeichnisse hinzufügen",
   "exclude_dirs_browse": "Durchsuchen",
   "exclude_dirs_also_applied_to_compression": "Diese Ausschlüsse werden auch beim Komprimieren der Quellverzeichnisse angewendet.",
+  "exclude_dirs_orphaned": "Kein übereinstimmendes Quellverzeichnis",
 
   "space_check_title": "Speicherplatzprüfung",
   "space_check_help": "Prüft vor der Synchronisation, ob das Ziel genügend freien Speicherplatz hat.",
