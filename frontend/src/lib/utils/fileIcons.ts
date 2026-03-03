@@ -1,4 +1,5 @@
-// File extension to icon and color mapping for the file browser
+import { formatBytes } from './format';
+import * as m from '$lib/paraglide/messages.js';
 
 export interface FileIconInfo {
   icon: 'folder' | 'image' | 'document' | 'archive' | 'code' | 'video' | 'audio' | 'file';
@@ -86,26 +87,13 @@ const defaultIcon: FileIconInfo = { icon: 'file', color: 'text-gray-400' };
 const folderIcon: FileIconInfo = { icon: 'folder', color: 'text-primary-500' };
 
 export function getFileIcon(extension: string | null, isDir: boolean): FileIconInfo {
-  if (isDir) {
-    return folderIcon;
-  }
-
-  if (!extension) {
-    return defaultIcon;
-  }
-
+  if (isDir) return folderIcon;
+  if (!extension) return defaultIcon;
   return extensionMap[extension.toLowerCase()] ?? defaultIcon;
 }
 
 export function formatFileSize(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return '-';
-  if (bytes === 0) return '0 B';
-
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const k = 1024;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${units[i]}`;
+  return formatBytes(bytes);
 }
 
 export function formatDate(timestamp: number | null): string {
@@ -113,13 +101,12 @@ export function formatDate(timestamp: number | null): string {
 
   const date = new Date(timestamp * 1000);
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) {
     return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   } else if (diffDays === 1) {
-    return 'Yesterday';
+    return m.filebrowser_date_yesterday();
   } else if (diffDays < 7) {
     return date.toLocaleDateString(undefined, { weekday: 'short' });
   } else {

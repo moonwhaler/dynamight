@@ -1,12 +1,8 @@
 import * as m from '$lib/paraglide/messages.js';
 import { getLocale } from '$lib/paraglide/runtime.js';
 
-/**
- * Format a date as a relative time string using translations.
- * Returns strings like "just now", "5m ago", "2h ago", "3d ago"
- */
 export function formatRelativeTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return '';
+  if (!dateStr) return m.common_never();
 
   const date = new Date(dateStr);
   const now = new Date();
@@ -16,29 +12,29 @@ export function formatRelativeTime(dateStr: string | null | undefined): string {
   const diffDays = Math.floor(diffMs / 86400000);
   const diffWeeks = Math.floor(diffDays / 7);
 
-  if (diffMins < 1) {
-    return m.time_just_now();
-  }
-  if (diffMins < 60) {
-    return m.time_minutes_ago({ count: diffMins });
-  }
-  if (diffHours < 24) {
-    return m.time_hours_ago({ count: diffHours });
-  }
-  if (diffDays < 7) {
-    return m.time_days_ago({ count: diffDays });
-  }
-  if (diffWeeks < 4) {
-    return m.time_weeks_ago({ count: diffWeeks });
-  }
-
-  // For older dates, use locale-aware formatting
+  if (diffMins < 1) return m.time_just_now();
+  if (diffMins < 60) return m.time_minutes_ago({ count: diffMins });
+  if (diffHours < 24) return m.time_hours_ago({ count: diffHours });
+  if (diffDays < 7) return m.time_days_ago({ count: diffDays });
+  if (diffWeeks < 4) return m.time_weeks_ago({ count: diffWeeks });
   return formatLocalizedDate(date);
 }
 
-/**
- * Format a date using the current locale
- */
+export function formatTimeUntil(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  if (diffMs <= 0) return m.time_just_now();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffMins < 60) return m.time_in_minutes({ count: diffMins });
+  if (diffHours < 24) return m.time_in_hours({ count: diffHours });
+  if (diffDays < 7) return m.time_in_days({ count: diffDays });
+  return formatLocalizedDate(date);
+}
+
 export function formatLocalizedDate(date: Date): string {
   const locale = getLocale();
   return date.toLocaleDateString(locale, {
@@ -48,9 +44,6 @@ export function formatLocalizedDate(date: Date): string {
   });
 }
 
-/**
- * Format a date and time using the current locale
- */
 export function formatLocalizedDateTime(date: Date): string {
   const locale = getLocale();
   return date.toLocaleString(locale, {
@@ -62,21 +55,28 @@ export function formatLocalizedDateTime(date: Date): string {
   });
 }
 
-/**
- * Format a duration in milliseconds to a human-readable string
- */
+export function formatDateTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return m.common_never();
+  return formatLocalizedDateTime(new Date(dateStr));
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
 
   if (hours > 0) {
-    const remainingMins = minutes % 60;
-    return `${hours}h ${remainingMins}m`;
+    return `${hours}h ${minutes % 60}m`;
   }
   if (minutes > 0) {
-    const remainingSecs = seconds % 60;
-    return `${minutes}m ${remainingSecs}s`;
+    return `${minutes}m ${seconds % 60}s`;
   }
   return `${seconds}s`;
+}
+
+export function formatDurationBetween(start: string | null, end: string | null): string {
+  if (!start) return '-';
+  const startDate = new Date(start);
+  const endDate = end ? new Date(end) : new Date();
+  return formatDuration(endDate.getTime() - startDate.getTime());
 }

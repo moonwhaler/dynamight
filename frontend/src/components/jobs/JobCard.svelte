@@ -1,12 +1,17 @@
 <script lang="ts">
-  import type { Job, SpaceCheckResponse } from '../../lib/types';
+  import type { Job } from '../../lib/types';
   import { api } from '../../lib/api';
   import { jobsStore } from '../../lib/stores/jobs';
   import { preferencesStore } from '../../lib/stores/preferences';
   import { get } from 'svelte/store';
   import RunLogModal from '../logs/RunLogModal.svelte';
+  import Spinner from '../ui/Spinner.svelte';
   import { showToast } from '../ui/Toast.svelte';
   import { confirm } from '../ui/ConfirmDialog.svelte';
+  import { formatRelativeTime } from '$lib/i18n/relativeTime';
+  import { getStatusIndicator } from '$lib/i18n/status';
+  import { formatBytes } from '$lib/utils/format';
+  import { getDestinationLabel } from '$lib/utils/jobUtils';
   import * as m from '$lib/paraglide/messages.js';
 
   let { job, onStatusChange }: { job: Job; onStatusChange?: () => void } = $props();
@@ -18,44 +23,16 @@
   let checkingSpace = $state(false);
 
   const isLocalDestination = $derived(job.destination_type === 'local');
-
   const isRunning = $derived(job.last_run_status === 'running' || job.last_run_status === 'pending');
-
-  function getStatusIndicator(status: string | null | undefined): { color: string; label: string } {
-    switch (status) {
-      case 'completed':
-        return { color: 'bg-green-500', label: m.job_card_last_run_succeeded() };
-      case 'failed':
-        return { color: 'bg-red-500', label: m.job_card_last_run_failed() };
-      case 'running':
-        return { color: 'bg-blue-500', label: m.job_card_currently_running() };
-      case 'cancelled':
-        return { color: 'bg-orange-500', label: m.job_card_last_run_cancelled() };
-      case 'pending':
-        return { color: 'bg-yellow-500', label: m.job_card_run_pending() };
-      default:
-        return { color: '', label: '' };
-    }
-  }
-
-  function formatRelativeTime(dateStr: string | null | undefined): string {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return m.time_just_now();
-    if (diffMins < 60) return m.time_minutes_ago({ count: diffMins });
-    if (diffHours < 24) return m.time_hours_ago({ count: diffHours });
-    if (diffDays < 7) return m.time_days_ago({ count: diffDays });
-    return date.toLocaleDateString();
-  }
-
   const statusInfo = $derived(getStatusIndicator(job.last_run_status));
   const timeAgo = $derived(formatRelativeTime(job.last_run_at));
+
+  const hasStorageInfo = $derived(job.dest_storage_free != null && job.dest_storage_total != null);
+  const storagePercentage = $derived(
+    job.dest_storage_free != null && job.dest_storage_total != null && job.dest_storage_total > 0
+      ? Math.round(((job.dest_storage_total - job.dest_storage_free) / job.dest_storage_total) * 100)
+      : 0
+  );
 
   async function handleRun() {
     if (starting || isRunning) return;
@@ -76,7 +53,6 @@
   async function handleStop() {
     if (stopping || !isRunning) return;
 
-    // Check if confirmation is required
     if (get(preferencesStore).confirmKillProcess) {
       const confirmed = await confirm({
         title: m.kill_confirm_title(),
@@ -90,7 +66,6 @@
     stopping = true;
     try {
       await api.jobs.cancel(job.id);
-      // Refresh jobs to get updated status
       await jobsStore.refresh();
       onStatusChange?.();
     } catch {
@@ -98,10 +73,6 @@
     } finally {
       stopping = false;
     }
-  }
-
-  function closeRunModal() {
-    activeRunId = null;
   }
 
   async function handleViewLogs() {
@@ -134,22 +105,6 @@
     }
   }
 
-  function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  }
-
-  // Storage info derived values
-  const hasStorageInfo = $derived(job.dest_storage_free != null && job.dest_storage_total != null);
-  const storagePercentage = $derived(
-    job.dest_storage_free != null && job.dest_storage_total != null && job.dest_storage_total > 0
-      ? Math.round(((job.dest_storage_total - job.dest_storage_free) / job.dest_storage_total) * 100)
-      : 0
-  );
-
   async function handleCheckSpace() {
     if (checkingSpace || isRunning) return;
     checkingSpace = true;
@@ -166,11 +121,8 @@
           variant: 'error',
         });
       }
-    } catch (e) {
-      showToast({
-        message: m.space_check_error(),
-        variant: 'error',
-      });
+    } catch {
+      showToast({ message: m.space_check_error(), variant: 'error' });
     } finally {
       checkingSpace = false;
     }
@@ -208,25 +160,15 @@
   <div class="mt-4 space-y-2 text-sm text-gray-600 dark:text-gray-400">
     <div class="flex items-center gap-2">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-        />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
       </svg>
       <span class="truncate">{m.jobs_sources_count({ count: job.source_dirs.length })}</span>
     </div>
     <div class="flex items-center gap-2">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
-        />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
       </svg>
-      <span class="truncate">{job.mount_point}/{job.backup_subdir}</span>
+      <span class="truncate">{getDestinationLabel(job)}</span>
     </div>
     {#if hasStorageInfo && job.dest_storage_total}
       <div
@@ -234,12 +176,7 @@
         title={m.storage_tooltip({ free: formatBytes(job.dest_storage_free ?? 0), total: formatBytes(job.dest_storage_total) })}
       >
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-          />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
         </svg>
         <div class="flex-1 min-w-0">
           <div class="flex items-center justify-between text-xs mb-0.5">
@@ -277,10 +214,7 @@
           title={m.job_card_tooltip_view_logs()}
         >
           {#if loadingLogs}
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
+            <Spinner />
           {:else}
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
@@ -294,10 +228,7 @@
           title={m.job_card_tooltip_stop()}
         >
           {#if stopping}
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
+            <Spinner />
           {:else}
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
               <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -315,12 +246,8 @@
             title={m.space_check_button()}
           >
             {#if checkingSpace}
-              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
+              <Spinner />
             {:else}
-              <!-- Hard drive / disk icon -->
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
               </svg>
@@ -334,10 +261,7 @@
           title={!job.enabled ? m.job_card_tooltip_enable() : m.job_card_tooltip_start()}
         >
           {#if starting}
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
+            <Spinner />
           {:else}
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
@@ -349,11 +273,6 @@
   </div>
 </div>
 
-<!-- Run Log Modal -->
 {#if activeRunId !== null}
-  <RunLogModal
-    runId={activeRunId}
-    jobId={job.id}
-    onClose={closeRunModal}
-  />
+  <RunLogModal runId={activeRunId} jobId={job.id} onClose={() => { activeRunId = null; }} />
 {/if}

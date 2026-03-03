@@ -5,8 +5,11 @@
   import { api } from '../lib/api';
   import type { JobRun } from '../lib/types';
   import JobCard from '../components/jobs/JobCard.svelte';
+  import Spinner from '../components/ui/Spinner.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { formatStatus } from '$lib/i18n/status';
+  import { getStatusBadgeClass } from '$lib/i18n/status';
+  import { formatDateTime } from '$lib/i18n/relativeTime';
 
   let recentRuns = $state<JobRun[]>([]);
   let loadingRuns = $state(true);
@@ -62,13 +65,11 @@
     jobsStore.load();
     statusStore.connect();
 
-    // Subscribe to status updates and refresh jobs when status changes
     unsubscribeStatus = statusStore.subscribe(() => {
       jobsStore.refresh();
       loadRecentRuns(true);
     });
 
-    // Load recent runs from all jobs
     loadRecentRuns();
 
     return () => {
@@ -82,26 +83,6 @@
       unsubscribeStatus();
     }
   });
-
-  function formatDate(date: string | null): string {
-    if (!date) return m.common_never();
-    return new Date(date).toLocaleString();
-  }
-
-  function getStatusBadge(status: string): string {
-    switch (status) {
-      case 'completed':
-        return 'badge-success';
-      case 'running':
-        return 'badge-info';
-      case 'failed':
-        return 'badge-error';
-      case 'cancelled':
-        return 'badge-warning';
-      default:
-        return 'badge-gray';
-    }
-  }
 </script>
 
 <div class="space-y-6">
@@ -139,7 +120,7 @@
     <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{m.dashboard_backup_jobs()}</h2>
     {#if $jobsStore.loading}
       <div class="flex justify-center py-8">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+        <Spinner size="w-8 h-8" />
       </div>
     {:else if $jobsStore.jobs.length === 0}
       <div class="card p-8 text-center">
@@ -160,7 +141,7 @@
     <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{m.dashboard_recent_activity()}</h2>
     {#if loadingRuns}
       <div class="flex justify-center py-8">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+        <Spinner size="w-8 h-8" />
       </div>
     {:else if recentRuns.length === 0}
       <div class="card p-8 text-center">
@@ -173,12 +154,8 @@
             <thead class="bg-gray-50 dark:bg-gray-800/50">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  {m.history_table_status()}
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">
-                  {m.history_table_started()}
-                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">{m.history_table_started()}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_files()}</th>
               </tr>
             </thead>
@@ -189,9 +166,9 @@
                     {$jobsStore.jobs.find((j) => j.id === run.job_id)?.name || `Job #${run.job_id}`}
                   </td>
                   <td class="px-4 py-3">
-                    <span class="badge {getStatusBadge(run.status)}">{formatStatus(run.status)}</span>
+                    <span class="badge {getStatusBadgeClass(run.status)}">{formatStatus(run.status)}</span>
                   </td>
-                  <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
+                  <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDateTime(run.started_at)}</td>
                   <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
                 </tr>
               {/each}

@@ -5,8 +5,12 @@
   import { preferencesStore } from '../../lib/stores/preferences';
   import { tablePreferencesStore } from '../../lib/stores/tablePreferences';
   import { get } from 'svelte/store';
+  import Spinner from '../ui/Spinner.svelte';
   import { showToast } from '../ui/Toast.svelte';
   import { confirm } from '../ui/ConfirmDialog.svelte';
+  import { formatRelativeTime, formatTimeUntil } from '$lib/i18n/relativeTime';
+  import { getStatusIndicator } from '$lib/i18n/status';
+  import { getDestinationLabel } from '$lib/utils/jobUtils';
   import * as m from '$lib/paraglide/messages.js';
 
   let { job, onShowLogs }: { job: Job; onShowLogs: (runId: number) => void } = $props();
@@ -16,54 +20,8 @@
   let loadingLogs = $state(false);
 
   const isRunning = $derived(job.last_run_status === 'running' || job.last_run_status === 'pending');
-
-  function getStatusIndicator(status: string | null | undefined): { color: string; label: string } {
-    switch (status) {
-      case 'completed':
-        return { color: 'bg-green-500', label: m.job_card_last_run_succeeded() };
-      case 'failed':
-        return { color: 'bg-red-500', label: m.job_card_last_run_failed() };
-      case 'running':
-        return { color: 'bg-blue-500', label: m.job_card_currently_running() };
-      case 'cancelled':
-        return { color: 'bg-orange-500', label: m.job_card_last_run_cancelled() };
-      case 'pending':
-        return { color: 'bg-yellow-500', label: m.job_card_run_pending() };
-      default:
-        return { color: '', label: '' };
-    }
-  }
-
-  function formatRelativeTime(dateStr: string | null | undefined): string {
-    if (!dateStr) return m.common_never();
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return m.time_just_now();
-    if (diffMins < 60) return m.time_minutes_ago({ count: diffMins });
-    if (diffHours < 24) return m.time_hours_ago({ count: diffHours });
-    if (diffDays < 7) return m.time_days_ago({ count: diffDays });
-    return date.toLocaleDateString();
-  }
-
-  function formatTimeUntil(dateStr: string | null | undefined): string {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
-    if (diffMs <= 0) return m.time_just_now();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-    if (diffMins < 60) return m.time_in_minutes({ count: diffMins });
-    if (diffHours < 24) return m.time_in_hours({ count: diffHours });
-    if (diffDays < 7) return m.time_in_days({ count: diffDays });
-    return date.toLocaleDateString();
-  }
+  const statusInfo = $derived(getStatusIndicator(job.last_run_status));
+  const timeAgo = $derived(formatRelativeTime(job.last_run_at));
 
   const DAY_NAMES = [
     () => m.day_sunday(),
@@ -91,11 +49,9 @@
     if (parts.length !== 5) return m.jobs_sched_custom({ cron: expr });
     const [min, hour, dom, month, dow] = parts;
 
-    // Every N minutes: */N * * * *
     if (min.startsWith('*/') && hour === '*' && dom === '*' && month === '*' && dow === '*') {
       return m.jobs_sched_interval_minutes({ count: min.slice(2) });
     }
-    // Every N hours: 0 */N * * *
     if ((min === '0' || min === '*') && hour.startsWith('*/') && dom === '*' && month === '*' && dow === '*') {
       return m.jobs_sched_interval_hours({ count: hour.slice(2) });
     }
@@ -106,28 +62,19 @@
     if (!hasExactTime) return m.jobs_sched_custom({ cron: expr });
     const time = toTime(hour, min);
 
-    // Weekdays: M H * * 1-5
-    if (dom === '*' && month === '*' && dow === '1-5') {
-      return m.jobs_sched_weekdays({ time });
-    }
-    // Weekends: M H * * 0,6 or 6,0
-    if (dom === '*' && month === '*' && (dow === '0,6' || dow === '6,0')) {
-      return m.jobs_sched_weekends({ time });
-    }
-    // Weekly: M H * * N (single day 0-6)
+    if (dom === '*' && month === '*' && dow === '1-5') return m.jobs_sched_weekdays({ time });
+    if (dom === '*' && month === '*' && (dow === '0,6' || dow === '6,0')) return m.jobs_sched_weekends({ time });
+
     const dowNum = parseInt(dow, 10);
     if (dom === '*' && month === '*' && isFinite(dowNum) && dowNum >= 0 && dowNum <= 6 && dow === String(dowNum)) {
       return m.jobs_sched_weekly({ day: dayName(dowNum), time });
     }
-    // Monthly: M H N * *
+
     const domNum = parseInt(dom, 10);
     if (dow === '*' && month === '*' && isFinite(domNum) && dom === String(domNum)) {
       return m.jobs_sched_monthly({ day: domNum, time });
     }
-    // Daily: M H * * *
-    if (dom === '*' && month === '*' && dow === '*') {
-      return m.jobs_sched_daily({ time });
-    }
+    if (dom === '*' && month === '*' && dow === '*') return m.jobs_sched_daily({ time });
 
     return m.jobs_sched_custom({ cron: expr });
   }
@@ -141,27 +88,9 @@
       const day = sched.day_of_week != null ? dayName(sched.day_of_week) : '?';
       return m.jobs_sched_weekly({ day, time });
     }
-    if (type === 'monthly') {
-      return m.jobs_sched_monthly({ day: sched.day_of_month ?? 1, time });
-    }
+    if (type === 'monthly') return m.jobs_sched_monthly({ day: sched.day_of_month ?? 1, time });
     return parseCronToHuman(sched.cron_expression);
   }
-
-  function getDestinationLabel(job: Job): string {
-    const dest = job.destination;
-    if (dest.type === 'local') {
-      return `${dest.mount_point}/${dest.backup_subdir}`;
-    }
-    if (dest.type === 'google_drive') return `Google Drive: ${dest.folder_id}`;
-    if (dest.type === 'onedrive') return `OneDrive: ${dest.folder_path}`;
-    if (dest.type === 's3') return `S3: ${dest.bucket}/${dest.prefix}`;
-    if (dest.type === 'sftp') return `SFTP: ${dest.host}:${dest.remote_path}`;
-    if (dest.type === 'webdav') return `WebDAV: ${dest.remote_path}`;
-    return job.mount_point ? `${job.mount_point}/${job.backup_subdir}` : '';
-  }
-
-  const statusInfo = $derived(getStatusIndicator(job.last_run_status));
-  const timeAgo = $derived(formatRelativeTime(job.last_run_at));
 
   async function handleRun() {
     if (starting || isRunning) return;
@@ -323,10 +252,7 @@
               title={m.job_card_tooltip_view_logs()}
             >
               {#if loadingLogs}
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
+                <Spinner />
               {:else}
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
@@ -340,10 +266,7 @@
               title={m.job_card_tooltip_stop()}
             >
               {#if stopping}
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
+                <Spinner />
               {:else}
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                   <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -359,10 +282,7 @@
             title={!job.enabled ? m.job_card_tooltip_enable() : m.job_card_tooltip_start()}
           >
             {#if starting}
-              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
+              <Spinner />
             {:else}
               <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M8 5v14l11-7z" />

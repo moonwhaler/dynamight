@@ -4,23 +4,15 @@ import type { DirectoryEntry, UsbDrive } from '../types';
 import { showToast } from '../../components/ui/Toast.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
-// Helper to translate download error codes to user-friendly messages
 function translateDownloadError(code: string, _params?: Record<string, string | number>): string {
   switch (code) {
-    case 'FILE_TOO_LARGE':
-      return String(m.error_file_too_large());
-    case 'FILE_NOT_FOUND':
-      return String(m.error_file_not_found());
-    case 'NOT_A_FILE':
-      return String(m.error_not_a_file());
+    case 'FILE_TOO_LARGE':             return String(m.error_file_too_large());
+    case 'FILE_NOT_FOUND':             return String(m.error_file_not_found());
+    case 'NOT_A_FILE':                 return String(m.error_not_a_file());
     case 'PATH_NOT_ALLOWED':
-      return String(m.error_path_not_allowed());
-    case 'PATH_TRAVERSAL_NOT_ALLOWED':
-      return String(m.error_path_not_allowed());
+    case 'PATH_TRAVERSAL_NOT_ALLOWED': return String(m.error_path_not_allowed());
     case 'DOWNLOAD_FAILED':
-      return String(m.error_download_failed());
-    default:
-      return String(m.error_download_failed());
+    default:                           return String(m.error_download_failed());
   }
 }
 
@@ -29,36 +21,22 @@ export type SortOrder = 'asc' | 'desc';
 export type ViewMode = 'list' | 'grid';
 
 interface FileBrowserState {
-  // Navigation
   currentPath: string;
   pathHistory: string[];
   entries: DirectoryEntry[];
-
-  // Loading states
   loading: boolean;
   downloading: string | null;
   deleting: string | null;
-
-  // Delete verification
-  deleteVerifiedUntil: number | null; // Unix timestamp in seconds
-
-  // USB Drives
+  deleteVerifiedUntil: number | null;
   drives: UsbDrive[];
   loadingDrives: boolean;
-
-  // Allowed paths
   allowedPaths: string[];
-
-  // View preferences
   viewMode: ViewMode;
   sortBy: SortField;
   sortOrder: SortOrder;
-
-  // Errors
   error: string | null;
 }
 
-// Local storage keys for preferences
 const STORAGE_KEYS = {
   viewMode: 'dynamight-filebrowser-view',
   sortBy: 'dynamight-filebrowser-sort',
@@ -85,29 +63,17 @@ function savePreference(key: string, value: unknown): void {
 }
 
 function sortEntries(entries: DirectoryEntry[], sortBy: SortField, sortOrder: SortOrder): DirectoryEntry[] {
-  const sorted = [...entries].sort((a, b) => {
-    // Directories always come first
-    if (a.is_dir !== b.is_dir) {
-      return a.is_dir ? -1 : 1;
-    }
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
 
     let comparison = 0;
     switch (sortBy) {
-      case 'name':
-        comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-        break;
-      case 'size':
-        comparison = (a.size ?? 0) - (b.size ?? 0);
-        break;
-      case 'modified':
-        comparison = (a.modified ?? 0) - (b.modified ?? 0);
-        break;
+      case 'name':     comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
+      case 'size':     comparison = (a.size ?? 0) - (b.size ?? 0); break;
+      case 'modified': comparison = (a.modified ?? 0) - (b.modified ?? 0); break;
     }
-
     return sortOrder === 'asc' ? comparison : -comparison;
   });
-
-  return sorted;
 }
 
 function createFileBrowserStore() {
@@ -133,32 +99,20 @@ function createFileBrowserStore() {
   return {
     subscribe,
 
-    // Navigation
     async browsePath(path: string): Promise<boolean> {
       update((s) => ({ ...s, loading: true, error: null }));
       try {
         const result = await api.system.browse(path);
-
         update((s) => {
           const sortedEntries = sortEntries(result.entries, s.sortBy, s.sortOrder);
-          // Add current path to history if navigating to a new path
-          const newHistory =
-            s.currentPath && s.currentPath !== path
-              ? [...s.pathHistory, s.currentPath]
-              : s.pathHistory;
-
-          return {
-            ...s,
-            currentPath: result.path,
-            entries: sortedEntries,
-            pathHistory: newHistory,
-            loading: false,
-            error: null,
-          };
+          const newHistory = s.currentPath && s.currentPath !== path
+            ? [...s.pathHistory, s.currentPath]
+            : s.pathHistory;
+          return { ...s, currentPath: result.path, entries: sortedEntries, pathHistory: newHistory, loading: false, error: null };
         });
         return true;
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Failed to browse path';
+        const message = e instanceof Error ? e.message : String(m.error_browse_path());
         update((s) => ({ ...s, loading: false, error: message }));
         return false;
       }
@@ -166,13 +120,8 @@ function createFileBrowserStore() {
 
     async goUp(): Promise<boolean> {
       let currentPath = '';
-      update((s) => {
-        currentPath = s.currentPath;
-        return s;
-      });
-
+      update((s) => { currentPath = s.currentPath; return s; });
       if (!currentPath || currentPath === '/') return false;
-
       const parentPath = currentPath.split('/').slice(0, -1).join('/') || '/';
       return this.browsePath(parentPath);
     },
@@ -182,21 +131,14 @@ function createFileBrowserStore() {
       update((s) => {
         if (s.pathHistory.length > 0) {
           previousPath = s.pathHistory[s.pathHistory.length - 1];
-          return {
-            ...s,
-            pathHistory: s.pathHistory.slice(0, -1),
-          };
+          return { ...s, pathHistory: s.pathHistory.slice(0, -1) };
         }
         return s;
       });
-
-      if (previousPath) {
-        return this.browsePath(previousPath);
-      }
+      if (previousPath) return this.browsePath(previousPath);
       return false;
     },
 
-    // Drive management
     async loadDrives(): Promise<void> {
       update((s) => ({ ...s, loadingDrives: true }));
       try {
@@ -220,12 +162,11 @@ function createFileBrowserStore() {
       update((s) => ({ ...s, loading: true, error: null }));
       try {
         await api.system.mount(uuid, mountPoint);
-        // Refresh drives to get updated mount status
         await this.loadDrives();
         update((s) => ({ ...s, loading: false }));
         return true;
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Failed to mount drive';
+        const message = e instanceof Error ? e.message : String(m.error_mount_drive());
         update((s) => ({ ...s, loading: false, error: message }));
         return false;
       }
@@ -235,12 +176,11 @@ function createFileBrowserStore() {
       update((s) => ({ ...s, loading: true, error: null }));
       try {
         await api.system.unmount(mountPoint);
-        // Refresh drives to get updated mount status
         await this.loadDrives();
         update((s) => ({ ...s, loading: false }));
         return true;
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Failed to unmount drive';
+        const message = e instanceof Error ? e.message : String(m.error_unmount_drive());
         update((s) => ({ ...s, loading: false, error: message }));
         return false;
       }
@@ -255,16 +195,12 @@ function createFileBrowserStore() {
       }
     },
 
-    // File operations
     async downloadFile(path: string): Promise<void> {
       update((s) => ({ ...s, downloading: path }));
-
       try {
         // Use fetch to properly handle URL encoding and authentication
         const url = api.system.downloadUrl(path);
-        const response = await fetch(url, {
-          credentials: 'include',
-        });
+        const response = await fetch(url, { credentials: 'include' });
 
         if (!response.ok) {
           const text = await response.text();
@@ -272,7 +208,6 @@ function createFileBrowserStore() {
           try {
             const errorData = JSON.parse(text);
             if (errorData.code) {
-              // Translate error codes to user-friendly messages
               errorMessage = translateDownloadError(errorData.code, errorData.params);
             } else if (errorData.error) {
               errorMessage = errorData.error;
@@ -290,9 +225,7 @@ function createFileBrowserStore() {
         let filename = path.split('/').pop() || 'download';
         if (contentDisposition) {
           const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
-          if (match) {
-            filename = match[1];
-          }
+          if (match) filename = match[1];
         }
 
         // Create blob and trigger download
@@ -320,24 +253,17 @@ function createFileBrowserStore() {
       update((s) => ({ ...s, loading: true, error: null }));
       try {
         await api.system.mkdir(path);
-        // Refresh current directory
         let currentPath = '';
-        update((s) => {
-          currentPath = s.currentPath;
-          return s;
-        });
-        if (currentPath) {
-          await this.browsePath(currentPath);
-        }
+        update((s) => { currentPath = s.currentPath; return s; });
+        if (currentPath) await this.browsePath(currentPath);
         return true;
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Failed to create folder';
+        const message = e instanceof Error ? e.message : String(m.error_create_folder());
         update((s) => ({ ...s, loading: false, error: message }));
         return false;
       }
     },
 
-    // Delete verification and file deletion
     async checkDeleteStatus(): Promise<void> {
       try {
         const result = await api.system.deleteStatus();
@@ -376,52 +302,32 @@ function createFileBrowserStore() {
     },
 
     async deleteEntry(path: string): Promise<'success' | 'verification_required' | 'error'> {
-      // Check if currently verified
       const now = Math.floor(Date.now() / 1000);
       let verifiedUntil: number | null = null;
-      update((s) => {
-        verifiedUntil = s.deleteVerifiedUntil;
-        return s;
-      });
+      update((s) => { verifiedUntil = s.deleteVerifiedUntil; return s; });
 
-      if (!verifiedUntil || verifiedUntil <= now) {
-        return 'verification_required';
-      }
+      if (!verifiedUntil || verifiedUntil <= now) return 'verification_required';
 
       update((s) => ({ ...s, deleting: path }));
-
       try {
         const result = await api.system.deleteFile(path);
-
-        // Update verification timestamp (it was refreshed on the server)
         await this.checkDeleteStatus();
 
-        // Refresh current directory
         let currentPath = '';
-        update((s) => {
-          currentPath = s.currentPath;
-          return { ...s, deleting: null };
-        });
-        if (currentPath) {
-          await this.browsePath(currentPath);
-        }
+        update((s) => { currentPath = s.currentPath; return { ...s, deleting: null }; });
+        if (currentPath) await this.browsePath(currentPath);
 
-        // Show success message
         const successMessage = result.is_dir
           ? String(m.filebrowser_delete_success_folder())
           : String(m.filebrowser_delete_success());
         showToast({ message: successMessage, variant: 'success' });
-
         return 'success';
       } catch (e) {
         update((s) => ({ ...s, deleting: null }));
-
-        // Check if verification is required
         if (e instanceof Error && e.message.includes('verification')) {
           update((s) => ({ ...s, deleteVerifiedUntil: null }));
           return 'verification_required';
         }
-
         showToast({
           message: e instanceof Error ? e.message : String(m.error_delete_failed()),
           variant: 'error',
@@ -430,7 +336,6 @@ function createFileBrowserStore() {
       }
     },
 
-    // View preferences
     setViewMode(mode: ViewMode): void {
       savePreference(STORAGE_KEYS.viewMode, mode);
       update((s) => ({ ...s, viewMode: mode }));
@@ -438,26 +343,17 @@ function createFileBrowserStore() {
 
     setSortBy(field: SortField): void {
       savePreference(STORAGE_KEYS.sortBy, field);
-      update((s) => ({
-        ...s,
-        sortBy: field,
-        entries: sortEntries(s.entries, field, s.sortOrder),
-      }));
+      update((s) => ({ ...s, sortBy: field, entries: sortEntries(s.entries, field, s.sortOrder) }));
     },
 
     toggleSortOrder(): void {
       update((s) => {
         const newOrder = s.sortOrder === 'asc' ? 'desc' : 'asc';
         savePreference(STORAGE_KEYS.sortOrder, newOrder);
-        return {
-          ...s,
-          sortOrder: newOrder,
-          entries: sortEntries(s.entries, s.sortBy, newOrder),
-        };
+        return { ...s, sortOrder: newOrder, entries: sortEntries(s.entries, s.sortBy, newOrder) };
       });
     },
 
-    // Utilities
     clearError(): void {
       update((s) => ({ ...s, error: null }));
     },

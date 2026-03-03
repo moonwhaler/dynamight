@@ -4,8 +4,12 @@
   import { jobsStore } from '../lib/stores/jobs';
   import type { Job, JobRun, LogEntry } from '../lib/types';
   import LogViewer from '../components/logs/LogViewer.svelte';
+  import Spinner from '../components/ui/Spinner.svelte';
+  import StatusFilterChips from '../components/ui/StatusFilterChips.svelte';
   import * as m from '$lib/paraglide/messages.js';
-  import { formatStatus } from '$lib/i18n/status';
+  import { formatStatus, getStatusBadgeClass } from '$lib/i18n/status';
+  import { formatDateTime, formatDurationBetween } from '$lib/i18n/relativeTime';
+  import { formatBytes } from '$lib/utils/format';
 
   let runs = $state<JobRun[]>([]);
   let loading = $state(true);
@@ -17,14 +21,11 @@
   let loadingLogs = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-  // Filter state
   let searchQuery = $state('');
   let statusFilters = $state<Set<string>>(new Set());
   let dateFrom = $state<string>('');
   let dateTo = $state<string>('');
   let showFilters = $state(false);
-
-  const allStatuses = ['completed', 'running', 'failed', 'cancelled', 'pending'] as const;
 
   const LOG_PAGE_SIZE = 500;
   const POLL_INTERVAL_MS = 3000;
@@ -32,41 +33,28 @@
   const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
   const hasRunningJobs = $derived(runs.some((r) => r.status === 'running'));
 
-  // Filtered runs based on all filter criteria
   const filteredRuns = $derived.by(() => {
     let result = runs;
 
-    // Filter by search query (job name)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
-      result = result.filter((run) => {
-        const jobName = getJobName(run.job_id).toLowerCase();
-        return jobName.includes(query);
-      });
+      result = result.filter((run) => getJobName(run.job_id).toLowerCase().includes(query));
     }
 
-    // Filter by status
     if (statusFilters.size > 0) {
       result = result.filter((run) => statusFilters.has(run.status));
     }
 
-    // Filter by date range
     if (dateFrom) {
       const fromDate = new Date(dateFrom);
       fromDate.setHours(0, 0, 0, 0);
-      result = result.filter((run) => {
-        if (!run.started_at) return false;
-        return new Date(run.started_at) >= fromDate;
-      });
+      result = result.filter((run) => run.started_at && new Date(run.started_at) >= fromDate);
     }
 
     if (dateTo) {
       const toDate = new Date(dateTo);
       toDate.setHours(23, 59, 59, 999);
-      result = result.filter((run) => {
-        if (!run.started_at) return false;
-        return new Date(run.started_at) <= toDate;
-      });
+      result = result.filter((run) => run.started_at && new Date(run.started_at) <= toDate);
     }
 
     return result;
@@ -160,7 +148,6 @@
 
   async function loadLogsPage(page: number) {
     if (!selectedRun) return;
-
     loadingLogs = true;
     try {
       const offset = (page - 1) * LOG_PAGE_SIZE;
@@ -175,53 +162,11 @@
     }
   }
 
-  function handlePageChange(page: number) {
-    loadLogsPage(page);
-  }
-
   function closeDetails() {
     selectedRun = null;
     logs = [];
     logsTotal = 0;
     logsCurrentPage = 1;
-  }
-
-  function formatDate(date: string | null): string {
-    if (!date) return m.common_never();
-    return new Date(date).toLocaleString();
-  }
-
-  function formatDuration(start: string | null, end: string | null): string {
-    if (!start) return '-';
-    const startDate = new Date(start);
-    const endDate = end ? new Date(end) : new Date();
-    const diff = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
-    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
-  }
-
-  function formatBytes(bytes: number | null): string {
-    if (bytes === null) return '-';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  }
-
-  function getStatusBadge(status: string): string {
-    switch (status) {
-      case 'completed':
-        return 'badge-success';
-      case 'running':
-        return 'badge-info';
-      case 'failed':
-        return 'badge-error';
-      case 'cancelled':
-        return 'badge-warning';
-      default:
-        return 'badge-gray';
-    }
   }
 
   function getJobName(jobId: number): string {
@@ -279,38 +224,22 @@
   }
 
   function getPurgeMessage(): string {
-    if (purgeType === 'all') {
-      return m.history_purge_all_confirm();
-    } else if (purgeType === 'job' && purgeTargetId) {
-      const jobName = getJobName(purgeTargetId);
-      return m.history_purge_job_confirm({ name: jobName });
-    } else if (purgeType === 'single' && purgeTargetId) {
-      return m.history_purge_run_confirm();
-    }
+    if (purgeType === 'all') return m.history_purge_all_confirm();
+    if (purgeType === 'job' && purgeTargetId) return m.history_purge_job_confirm({ name: getJobName(purgeTargetId) });
+    if (purgeType === 'single') return m.history_purge_run_confirm();
     return '';
   }
-
 </script>
 
 <div class="space-y-6">
-  <!-- Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.history_title()}</h1>
 
     <div class="flex items-center gap-2">
       {#if runs.length > 0 && selectedJobId}
-        <button
-          onclick={confirmPurgeJob}
-          class="btn btn-secondary"
-        >
-          {m.history_clear_job()}
-        </button>
+        <button onclick={confirmPurgeJob} class="btn btn-secondary">{m.history_clear_job()}</button>
       {/if}
-      <button
-        onclick={confirmPurgeAll}
-        disabled={runs.length === 0}
-        class="btn btn-secondary"
-      >
+      <button onclick={confirmPurgeAll} disabled={runs.length === 0} class="btn btn-secondary">
         {m.history_clear_all()}
       </button>
     </div>
@@ -319,34 +248,21 @@
   <!-- Filter Bar -->
   <div class="card">
     <div class="p-4">
-      <!-- Main filter row -->
       <div class="flex flex-col lg:flex-row gap-4">
-        <!-- Search input -->
         <div class="relative flex-1 min-w-0">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input
-            type="text"
-            bind:value={searchQuery}
-            placeholder={m.history_search_placeholder()}
-            class="input pl-10"
-          />
+          <input type="text" bind:value={searchQuery} placeholder={m.history_search_placeholder()} class="input pl-10" />
         </div>
 
-        <!-- Job selector -->
-        <select
-          bind:value={selectedJobId}
-          onchange={() => loadRuns()}
-          class="input lg:w-48"
-        >
+        <select bind:value={selectedJobId} onchange={() => loadRuns()} class="input lg:w-48">
           <option value={null}>{m.jobs_filter_all()}</option>
           {#each $jobsStore.jobs as job}
             <option value={job.id}>{job.name}</option>
           {/each}
         </select>
 
-        <!-- Filter toggle button (mobile/tablet) -->
         <button
           onclick={() => showFilters = !showFilters}
           class="btn btn-secondary flex items-center justify-center gap-2 lg:hidden"
@@ -360,50 +276,17 @@
           {/if}
         </button>
 
-        <!-- Desktop: Date range inputs -->
         <div class="hidden lg:flex items-center gap-2">
-          <input
-            type="date"
-            bind:value={dateFrom}
-            class="input w-40 text-sm"
-            aria-label={m.history_filter_from()}
-          />
+          <input type="date" bind:value={dateFrom} class="input w-40 text-sm" aria-label={m.history_filter_from()} />
           <span class="text-gray-400">-</span>
-          <input
-            type="date"
-            bind:value={dateTo}
-            class="input w-40 text-sm"
-            aria-label={m.history_filter_to()}
-          />
+          <input type="date" bind:value={dateTo} class="input w-40 text-sm" aria-label={m.history_filter_to()} />
         </div>
       </div>
 
       <!-- Desktop: Status filter chips -->
       <div class="hidden lg:flex items-center gap-3 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
         <span class="text-sm text-gray-500 dark:text-gray-400">{m.history_table_status()}:</span>
-        <div class="flex flex-wrap gap-2">
-          {#each allStatuses as status}
-            <button
-              onclick={() => toggleStatus(status)}
-              class="px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200
-                {statusFilters.has(status)
-                  ? status === 'completed' ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2 dark:ring-offset-gray-800'
-                  : status === 'running' ? 'bg-blue-600 text-white ring-2 ring-blue-600 ring-offset-2 dark:ring-offset-gray-800'
-                  : status === 'failed' ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2 dark:ring-offset-gray-800'
-                  : status === 'cancelled' ? 'bg-yellow-600 text-white ring-2 ring-yellow-600 ring-offset-2 dark:ring-offset-gray-800'
-                  : 'bg-gray-600 text-white ring-2 ring-gray-600 ring-offset-2 dark:ring-offset-gray-800'
-                  : status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'
-                  : status === 'running' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
-                  : status === 'failed' ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
-                  : status === 'cancelled' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                }"
-            >
-              {formatStatus(status)}
-            </button>
-          {/each}
-        </div>
-
+        <StatusFilterChips activeStatuses={statusFilters} onToggle={toggleStatus} />
         {#if activeFilterCount > 0}
           <button
             onclick={clearAllFilters}
@@ -420,58 +303,22 @@
       <!-- Mobile/Tablet: Expanded filters -->
       {#if showFilters}
         <div class="lg:hidden mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
-          <!-- Date range -->
           <div class="space-y-2">
             <span class="label">{m.history_date_range()}</span>
             <div class="flex items-center gap-2">
-              <input
-                type="date"
-                bind:value={dateFrom}
-                class="input flex-1 text-sm"
-                aria-label={m.history_filter_from()}
-              />
+              <input type="date" bind:value={dateFrom} class="input flex-1 text-sm" aria-label={m.history_filter_from()} />
               <span class="text-gray-400">-</span>
-              <input
-                type="date"
-                bind:value={dateTo}
-                class="input flex-1 text-sm"
-                aria-label={m.history_filter_to()}
-              />
+              <input type="date" bind:value={dateTo} class="input flex-1 text-sm" aria-label={m.history_filter_to()} />
             </div>
           </div>
 
-          <!-- Status filters -->
           <div class="space-y-2">
             <span class="label">{m.history_table_status()}</span>
-            <div class="flex flex-wrap gap-2">
-              {#each allStatuses as status}
-                <button
-                  onclick={() => toggleStatus(status)}
-                  class="px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200
-                    {statusFilters.has(status)
-                      ? status === 'completed' ? 'bg-green-600 text-white ring-2 ring-green-600 ring-offset-2 dark:ring-offset-gray-800'
-                      : status === 'running' ? 'bg-blue-600 text-white ring-2 ring-blue-600 ring-offset-2 dark:ring-offset-gray-800'
-                      : status === 'failed' ? 'bg-red-600 text-white ring-2 ring-red-600 ring-offset-2 dark:ring-offset-gray-800'
-                      : status === 'cancelled' ? 'bg-yellow-600 text-white ring-2 ring-yellow-600 ring-offset-2 dark:ring-offset-gray-800'
-                      : 'bg-gray-600 text-white ring-2 ring-gray-600 ring-offset-2 dark:ring-offset-gray-800'
-                      : status === 'completed' ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50'
-                      : status === 'running' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
-                      : status === 'failed' ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
-                      : status === 'cancelled' ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                    }"
-                >
-                  {formatStatus(status)}
-                </button>
-              {/each}
-            </div>
+            <StatusFilterChips activeStatuses={statusFilters} onToggle={toggleStatus} />
           </div>
 
           {#if activeFilterCount > 0}
-            <button
-              onclick={clearAllFilters}
-              class="btn btn-sm btn-secondary w-full"
-            >
+            <button onclick={clearAllFilters} class="btn btn-sm btn-secondary w-full">
               {m.jobs_clear_all_filters()}
             </button>
           {/if}
@@ -479,15 +326,14 @@
       {/if}
     </div>
 
-    <!-- Results summary -->
-    {#if !loading && runs.length > 0}
+    {#if !loading && filteredRuns.length !== runs.length}
       <div class="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 rounded-b-xl">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-          Showing <span class="font-medium text-gray-700 dark:text-gray-200">{filteredRuns.length}</span>
-          {#if filteredRuns.length !== runs.length}
-            of <span class="font-medium text-gray-700 dark:text-gray-200">{runs.length}</span>
-          {/if}
-          {filteredRuns.length === 1 ? 'run' : 'runs'}
+          {m.history_showing_count({
+            shown: filteredRuns.length,
+            total: runs.length,
+            unit: filteredRuns.length === 1 ? m.history_run_singular() : m.history_runs_plural()
+          })}
         </p>
       </div>
     {/if}
@@ -495,46 +341,24 @@
 
   {#if loading}
     <div class="flex justify-center py-12">
-      <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600"></div>
+      <Spinner size="w-10 h-10" />
     </div>
   {:else if runs.length === 0}
     <div class="card p-12 text-center">
-      <svg
-        class="mx-auto h-16 w-16 text-gray-400 mb-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
+      <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.history_no_runs()}</h3>
       <p class="text-gray-500 dark:text-gray-400">{m.history_no_runs_description()}</p>
     </div>
   {:else if filteredRuns.length === 0}
     <div class="card p-12 text-center">
-      <svg
-        class="mx-auto h-16 w-16 text-gray-400 mb-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-        />
+      <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
       </svg>
       <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.history_no_matching()}</h3>
       <p class="text-gray-500 dark:text-gray-400 mb-4">{m.history_no_matching_description()}</p>
-      <button onclick={clearAllFilters} class="btn btn-secondary">
-        {m.jobs_clear_all_filters()}
-      </button>
+      <button onclick={clearAllFilters} class="btn btn-secondary">{m.jobs_clear_all_filters()}</button>
     </div>
   {:else}
     <div class="card overflow-hidden">
@@ -545,9 +369,7 @@
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">{m.history_table_started()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden sm:table-cell">
-                {m.history_table_duration()}
-              </th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden sm:table-cell">{m.history_table_duration()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_files()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_size()}</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_actions()}</th>
@@ -558,11 +380,11 @@
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
                 <td class="px-4 py-3">
-                  <span class="badge {getStatusBadge(run.status)}">{formatStatus(run.status)}</span>
+                  <span class="badge {getStatusBadgeClass(run.status)}">{formatStatus(run.status)}</span>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(run.started_at)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDateTime(run.started_at)}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
-                  {formatDuration(run.started_at, run.completed_at)}
+                  {formatDurationBetween(run.started_at, run.completed_at)}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{run.files_transferred ?? '-'}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{formatBytes(run.bytes_transferred)}</td>
@@ -597,7 +419,6 @@
   {/if}
 </div>
 
-<!-- Log Details Modal -->
 {#if selectedRun}
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-[95vw] lg:max-w-[85vw] xl:max-w-7xl h-[95vh] sm:h-[90vh] flex flex-col">
@@ -606,20 +427,18 @@
           <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
             {getJobName(selectedRun.job_id)} - Run #{selectedRun.id}
           </h3>
-          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{formatDate(selectedRun.started_at)}</p>
+          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{formatDateTime(selectedRun.started_at)}</p>
         </div>
-        <button onclick={closeDetails} class="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700" aria-label={m.history_close_details()}>
+        <button
+          onclick={closeDetails}
+          class="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+          aria-label={m.history_close_details()}
+        >
           <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-
       <div class="flex-1 min-h-0 overflow-hidden relative">
         <div class="absolute inset-0">
           <LogViewer
@@ -629,7 +448,7 @@
             totalPages={logsTotalPages}
             loading={loadingLogs}
             pageSize={LOG_PAGE_SIZE}
-            onPageChange={handlePageChange}
+            onPageChange={(page) => loadLogsPage(page)}
           />
         </div>
       </div>
@@ -637,7 +456,6 @@
   </div>
 {/if}
 
-<!-- Purge Confirmation Modal -->
 {#if showPurgeConfirm}
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full p-6">
@@ -651,20 +469,10 @@
       </div>
       <p class="text-gray-600 dark:text-gray-300 mb-6">{getPurgeMessage()}</p>
       <div class="flex justify-end gap-3">
-        <button
-          onclick={cancelPurge}
-          class="btn btn-secondary"
-          disabled={purging}
-        >
-          {m.common_cancel()}
-        </button>
-        <button
-          onclick={executePurge}
-          class="btn btn-danger"
-          disabled={purging}
-        >
+        <button onclick={cancelPurge} class="btn btn-secondary" disabled={purging}>{m.common_cancel()}</button>
+        <button onclick={executePurge} class="btn btn-danger" disabled={purging}>
           {#if purging}
-            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+            <Spinner />
           {/if}
           {m.common_delete()}
         </button>
