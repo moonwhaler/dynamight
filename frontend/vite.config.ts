@@ -28,5 +28,19 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // Suppress node:* externalization warnings emitted by paraglide's
+        // build-tool internals (compiler, unplugin) — they are not part of
+        // the browser runtime bundle and cause no runtime issues.
+        if (warning.message.includes('has been externalized for browser compatibility')) return;
+        warn(warning);
+      },
+      output: {
+        manualChunks: {
+          vendor: ['svelte-spa-router', '@inlang/paraglide-js'],
+        },
+      },
+    },
   },
 });

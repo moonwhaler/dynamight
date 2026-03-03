@@ -1,27 +1,27 @@
 <script lang="ts">
   import Router from 'svelte-spa-router';
+  import { wrap } from 'svelte-spa-router/wrap';
   import { authStore } from './lib/stores/auth';
   import './lib/stores/theme'; // Initialize theme store early to apply persisted theme
   import Login from './routes/Login.svelte';
   import Setup from './routes/Setup.svelte';
-  import Dashboard from './routes/Dashboard.svelte';
-  import Jobs from './routes/Jobs.svelte';
-  import JobDetail from './routes/JobDetail.svelte';
-  import History from './routes/History.svelte';
-  import FileBrowser from './routes/FileBrowser.svelte';
-  import About from './routes/About.svelte';
   import Layout from './components/layout/Layout.svelte';
   import ConfirmDialog from './components/ui/ConfirmDialog.svelte';
   import Toast from './components/ui/Toast.svelte';
 
+  // svelte-spa-router's AsyncSvelteComponent expects Svelte 4's class-based
+  // ComponentType. Svelte 5 uses a different Component type, so cast via any.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lazy = (fn: () => Promise<unknown>) => wrap({ asyncComponent: fn as any });
+
   const routes = {
-    '/': Dashboard,
-    '/jobs': Jobs,
-    '/jobs/new': JobDetail,
-    '/jobs/:id': JobDetail,
-    '/history': History,
-    '/files': FileBrowser,
-    '/about': About,
+    '/': lazy(() => import('./routes/Dashboard.svelte')),
+    '/jobs': lazy(() => import('./routes/Jobs.svelte')),
+    '/jobs/new': lazy(() => import('./routes/JobDetail.svelte')),
+    '/jobs/:id': lazy(() => import('./routes/JobDetail.svelte')),
+    '/history': lazy(() => import('./routes/History.svelte')),
+    '/files': lazy(() => import('./routes/FileBrowser.svelte')),
+    '/about': lazy(() => import('./routes/About.svelte')),
   };
 
   // Check authentication on load
