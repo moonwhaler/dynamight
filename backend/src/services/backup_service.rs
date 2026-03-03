@@ -3,7 +3,7 @@ use crate::services::compress_service;
 use crate::services::credential_service::CredentialService;
 use crate::services::providers::{self, RsyncProvider, StorageInfo, SyncContext, ProviderError};
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock, Mutex};
@@ -90,13 +90,14 @@ impl BackupService {
 
         let run_ids: Vec<i64> = runs_to_delete.into_iter().map(|(id,)| id).collect();
 
-        // Delete log entries from the separate logs database
-        for run_id in &run_ids {
-            let _ = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
-                .bind(run_id)
-                .execute(&self.logs_db)
-                .await;
+        // Delete log entries from the separate logs database in one batch query
+        let mut qb = QueryBuilder::new("DELETE FROM log_entries WHERE job_run_id IN (");
+        let mut sep = qb.separated(", ");
+        for id in &run_ids {
+            sep.push_bind(id);
         }
+        qb.push(")");
+        let _ = qb.build().execute(&self.logs_db).await;
 
         // Delete the job runs from main database
         let result = sqlx::query(
@@ -532,6 +533,78 @@ impl BackupService {
         .await;
     }
 
+    /// Finalise a completed job run: write status/stats to the DB, update storage info,
+    /// and clean up old runs. Preserves the `cancelled` status if already set.
+    ///
+    /// This is the single canonical implementation shared by the HTTP handler and the
+    /// scheduler — previously this block was duplicated verbatim in both.
+    pub async fn finalize_run(
+        &self,
+        run_id: i64,
+        job_id: i64,
+        job: &crate::models::Job,
+        result: anyhow::Result<JobResult>,
+    ) {
+        let (exit_code, files, bytes, errors) = match &result {
+            Ok(r) => (r.exit_code, r.files_transferred, r.bytes_transferred, r.error_count),
+            Err(_) => (1, 0, 0, 1),
+        };
+
+        let current_status: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM job_runs WHERE id = ?")
+                .bind(run_id)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten();
+
+        let was_cancelled = current_status.as_ref().map(|s| s.0.as_str()) == Some("cancelled");
+
+        if was_cancelled {
+            let _ = sqlx::query(
+                "UPDATE job_runs SET exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ? WHERE id = ? AND status = 'cancelled'",
+            )
+            .bind(exit_code)
+            .bind(files)
+            .bind(bytes)
+            .bind(errors)
+            .bind(run_id)
+            .execute(&self.db)
+            .await;
+        } else {
+            let status = match &result {
+                Ok(r) => {
+                    if r.error_count > 0 {
+                        JobRunStatus::Failed
+                    } else {
+                        JobRunStatus::Completed
+                    }
+                }
+                Err(_) => JobRunStatus::Failed,
+            };
+
+            let _ = sqlx::query(
+                "UPDATE job_runs SET status = ?, completed_at = ?, exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ? WHERE id = ?",
+            )
+            .bind(status.as_str())
+            .bind(Utc::now())
+            .bind(exit_code)
+            .bind(files)
+            .bind(bytes)
+            .bind(errors)
+            .bind(run_id)
+            .execute(&self.db)
+            .await;
+
+            if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
+                let storage_info = result.as_ref().ok().and_then(|r| r.storage_info.clone());
+                let _ = self.update_storage_info(job_id, job, storage_info).await;
+            }
+        }
+
+        self.cleanup_old_runs(job_id).await;
+    }
+
     /// Delete log entries for a specific run (used when deleting runs manually)
     pub async fn delete_logs_for_run(&self, run_id: i64) -> anyhow::Result<u64> {
         let result = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
@@ -542,22 +615,24 @@ impl BackupService {
     }
 
     /// Delete log entries for all runs of a job
-    pub async fn delete_logs_for_job(&self, job_id: i64, db: &SqlitePool) -> anyhow::Result<u64> {
-        // Get all run IDs for this job
+    pub async fn delete_logs_for_job(&self, job_id: i64) -> anyhow::Result<u64> {
         let run_ids: Vec<(i64,)> = sqlx::query_as("SELECT id FROM job_runs WHERE job_id = ?")
             .bind(job_id)
-            .fetch_all(db)
+            .fetch_all(&self.db)
             .await?;
 
-        let mut total_deleted = 0u64;
-        for (run_id,) in run_ids {
-            let result = sqlx::query("DELETE FROM log_entries WHERE job_run_id = ?")
-                .bind(run_id)
-                .execute(&self.logs_db)
-                .await?;
-            total_deleted += result.rows_affected();
+        if run_ids.is_empty() {
+            return Ok(0);
         }
-        Ok(total_deleted)
+
+        let mut qb = QueryBuilder::new("DELETE FROM log_entries WHERE job_run_id IN (");
+        let mut sep = qb.separated(", ");
+        for (id,) in &run_ids {
+            sep.push_bind(id);
+        }
+        qb.push(")");
+        let result = qb.build().execute(&self.logs_db).await?;
+        Ok(result.rows_affected())
     }
 
     /// Delete all log entries (used for purge all)

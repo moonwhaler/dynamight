@@ -1,6 +1,5 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -8,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::errors::ApiError;
 use crate::models::{JobRun, JobRunRow, LogEntry, LogEntryRow};
 use crate::AppState;
 
@@ -52,7 +52,7 @@ pub async fn get_run(
 
     match run {
         Some(r) => Json(JobRun::from(r)).into_response(),
-        None => (StatusCode::NOT_FOUND, Json(json!({"error": "Run not found"}))).into_response(),
+        None => ApiError::run_not_found().into_response(),
     }
 }
 
@@ -157,12 +157,10 @@ pub async fn delete_run(
         Ok(r) if r.rows_affected() > 0 => {
             Json(json!({"success": true})).into_response()
         }
-        Ok(_) => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": "Run not found"}))).into_response()
-        }
+        Ok(_) => ApiError::run_not_found().into_response(),
         Err(e) => {
             tracing::error!("Failed to delete run {}: {}", run_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to delete run"}))).into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }
@@ -173,7 +171,7 @@ pub async fn delete_job_runs(
     Path(job_id): Path<i64>,
 ) -> impl IntoResponse {
     // Delete log entries from the separate logs database first
-    if let Err(e) = state.backup_service.delete_logs_for_job(job_id, &state.db).await {
+    if let Err(e) = state.backup_service.delete_logs_for_job(job_id).await {
         tracing::error!("Failed to delete logs for job {}: {}", job_id, e);
     }
 
@@ -189,7 +187,7 @@ pub async fn delete_job_runs(
         }
         Err(e) => {
             tracing::error!("Failed to delete runs for job {}: {}", job_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to delete runs"}))).into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }
@@ -214,7 +212,7 @@ pub async fn purge_all_runs(
         }
         Err(e) => {
             tracing::error!("Failed to purge all runs: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to purge runs"}))).into_response()
+            ApiError::internal_error().into_response()
         }
     }
 }

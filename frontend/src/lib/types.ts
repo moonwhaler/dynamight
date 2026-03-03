@@ -74,6 +74,8 @@ export interface SftpDestinationConfig {
   username: string;
   remote_path: string;
   key_based_auth: boolean;
+  /** SSH host key fingerprint for TOFU-based MITM protection ("SHA256:..."). Set after first successful connection test. */
+  host_key_fingerprint?: string | null;
 }
 
 export interface WebDavDestinationConfig {

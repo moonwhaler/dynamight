@@ -851,11 +851,6 @@ impl SyncProvider for RsyncProvider {
         Ok(result)
     }
 
-    async fn is_cancelled(&self, _run_id: i64) -> bool {
-        // Cancellation is now handled via ctx.check_cancelled()
-        false
-    }
-
     async fn get_storage_info(
         &self,
         destination: &DestinationConfig,

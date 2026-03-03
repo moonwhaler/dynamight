@@ -52,16 +52,6 @@ pub struct StorageInfo {
     pub supported: bool,
 }
 
-/// Progress update during sync (for future use with progress callbacks)
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct SyncProgress {
-    pub current_file: Option<String>,
-    pub bytes_transferred: i64,
-    pub total_bytes: Option<i64>,
-    pub percentage: Option<f32>,
-}
-
 /// Capabilities that a provider supports
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderCapabilities {
@@ -146,11 +136,6 @@ impl SyncContext {
         self.log(LogLevel::Error, message, source).await;
     }
 
-    #[allow(dead_code)]
-    pub async fn log_debug(&self, message: &str, source: &str) {
-        self.log(LogLevel::Debug, message, source).await;
-    }
-
     /// Check if the current run has been cancelled
     pub fn check_cancelled(&self) -> bool {
         (self.is_cancelled)(self.run_id)
@@ -219,12 +204,6 @@ pub trait SyncProvider: Send + Sync {
         Ok(StorageInfo::default())
     }
 
-    /// Check if a run has been cancelled (providers should check this periodically)
-    /// Deprecated: Use ctx.check_cancelled() instead
-    #[allow(dead_code)]
-    async fn is_cancelled(&self, _run_id: i64) -> bool {
-        false
-    }
 }
 
 /// Errors that can occur during provider operations

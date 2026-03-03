@@ -72,10 +72,8 @@ fn validate_exclude_pattern(pattern: &str) -> Result<(), String> {
 /// Validates that source directories don't have conflicting basenames.
 /// Returns Ok(()) if all basenames are unique, or Err with a list of duplicated basenames.
 fn validate_source_dirs_unique_basenames(source_dirs: &[String]) -> Result<(), Vec<String>> {
-    use std::collections::HashMap;
     use std::path::Path;
 
-    // Count occurrences of each basename
     let mut basename_counts: HashMap<String, Vec<&str>> = HashMap::new();
 
     for dir in source_dirs {
@@ -87,7 +85,6 @@ fn validate_source_dirs_unique_basenames(source_dirs: &[String]) -> Result<(), V
         basename_counts.entry(basename).or_default().push(dir);
     }
 
-    // Find basenames that appear more than once
     let duplicates: Vec<String> = basename_counts
         .into_iter()
         .filter(|(_, paths)| paths.len() > 1)
@@ -121,21 +118,21 @@ fn validate_exclude_dirs(source_dirs: &[String], exclude_dirs: &[String]) -> Res
 /// Validates display fields (name, description) for basic safety.
 /// Checks for length limits and control characters.
 /// Set `allow_empty` to true for optional fields like description.
-fn validate_display_field(value: &str, field_name: &str, max_len: usize, allow_empty: bool) -> Result<(), String> {
+fn validate_display_field(value: &str, field_name: &str, max_len: usize, allow_empty: bool) -> Result<(), ApiError> {
     if value.is_empty() {
         if allow_empty {
             return Ok(());
         }
-        return Err(format!("{} cannot be empty", field_name));
+        return Err(ApiError::field_required(field_name));
     }
 
     if value.len() > max_len {
-        return Err(format!("{} too long (max {} characters)", field_name, max_len));
+        return Err(ApiError::field_too_long(field_name, max_len));
     }
 
     // Reject null bytes and control characters (allow tabs and newlines for description)
     if value.bytes().any(|b| b == 0 || (b < 32 && b != b'\t' && b != b'\n' && b != b'\r')) {
-        return Err(format!("{} contains invalid control characters", field_name));
+        return Err(ApiError::invalid_pattern(0, value, "contains invalid control characters"));
     }
 
     Ok(())
@@ -148,9 +145,6 @@ fn validate_compress_dirs_options(
     source_dirs: &[String],
     allowed_browse_paths: &[String],
 ) -> Result<(), ApiError> {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
     // 1. staging_path must not be empty
     if opts.staging_path.trim().is_empty() {
         return Err(ApiError::compress_staging_path_required());
@@ -278,15 +272,13 @@ pub async fn create_job(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateJobRequest>,
 ) -> impl IntoResponse {
-    // Validate job name
-    if validate_display_field(&req.name, "Job name", 255, false).is_err() {
-        return ApiError::field_required("name").into_response();
+    if let Err(e) = validate_display_field(&req.name, "name", 255, false) {
+        return e.into_response();
     }
 
-    // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if validate_display_field(desc, "Description", 4096, true).is_err() {
-            return ApiError::field_too_long("description", 4096).into_response();
+        if let Err(e) = validate_display_field(desc, "description", 4096, true) {
+            return e.into_response();
         }
     }
 
@@ -430,17 +422,15 @@ pub async fn update_job(
 
     let existing = existing.unwrap();
 
-    // Validate job name if provided
     if let Some(ref name) = req.name {
-        if validate_display_field(name, "Job name", 255, false).is_err() {
-            return ApiError::field_required("name").into_response();
+        if let Err(e) = validate_display_field(name, "name", 255, false) {
+            return e.into_response();
         }
     }
 
-    // Validate job description if provided
     if let Some(ref desc) = req.description {
-        if validate_display_field(desc, "Description", 4096, true).is_err() {
-            return ApiError::field_too_long("description", 4096).into_response();
+        if let Err(e) = validate_display_field(desc, "description", 4096, true) {
+            return e.into_response();
         }
     }
 
@@ -656,12 +646,10 @@ pub async fn run_job(
         }
     };
 
-    // Spawn job execution
     let backup_service = state.backup_service.clone();
     let db = state.db.clone();
 
     tokio::spawn(async move {
-        // Update status to running
         let _ = sqlx::query("UPDATE job_runs SET status = ?, started_at = ? WHERE id = ?")
             .bind(JobRunStatus::Running.as_str())
             .bind(Utc::now())
@@ -669,77 +657,8 @@ pub async fn run_job(
             .execute(&db)
             .await;
 
-        // Execute
         let result = backup_service.execute_job(&job, run_id, None).await;
-
-        // Update completion status (but don't overwrite 'cancelled' status)
-        let (exit_code, files, bytes, errors) = match &result {
-            Ok(r) => (r.exit_code, r.files_transferred, r.bytes_transferred, r.error_count),
-            Err(_) => (1, 0, 0, 1),
-        };
-
-        // Check database for current status - if cancelled, preserve it
-        let current_status: Option<(String,)> = sqlx::query_as(
-            "SELECT status FROM job_runs WHERE id = ?"
-        )
-        .bind(run_id)
-        .fetch_optional(&db)
-        .await
-        .ok()
-        .flatten();
-
-        let was_cancelled = current_status.as_ref().map(|s| s.0.as_str()) == Some("cancelled");
-
-        if was_cancelled {
-            // Only update stats, preserve 'cancelled' status
-            let _ = sqlx::query(
-                r#"
-                UPDATE job_runs
-                SET exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ?
-                WHERE id = ? AND status = 'cancelled'
-                "#,
-            )
-            .bind(exit_code)
-            .bind(files)
-            .bind(bytes)
-            .bind(errors)
-            .bind(run_id)
-            .execute(&db)
-            .await;
-        } else {
-            let status = match &result {
-                Ok(r) => if r.error_count > 0 { JobRunStatus::Failed } else { JobRunStatus::Completed },
-                Err(_) => JobRunStatus::Failed,
-            };
-
-            let _ = sqlx::query(
-                r#"
-                UPDATE job_runs
-                SET status = ?, completed_at = ?, exit_code = ?,
-                    files_transferred = ?, bytes_transferred = ?, error_count = ?
-                WHERE id = ?
-                "#,
-            )
-            .bind(status.as_str())
-            .bind(Utc::now())
-            .bind(exit_code)
-            .bind(files)
-            .bind(bytes)
-            .bind(errors)
-            .bind(run_id)
-            .execute(&db)
-            .await;
-
-            // Update storage info after successful completion
-            // Use pre-captured storage_info from the sync result (captured before unmounting USB drives)
-            if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
-                let storage_info = result.as_ref().ok().and_then(|r| r.storage_info.clone());
-                let _ = backup_service.update_storage_info(id, &job, storage_info).await;
-            }
-        }
-
-        // Cleanup old runs
-        backup_service.cleanup_old_runs(id).await;
+        backup_service.finalize_run(run_id, id, &job, result).await;
     });
 
     (StatusCode::OK, Json(json!({"runId": run_id}))).into_response()
@@ -788,6 +707,7 @@ pub async fn clone_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
+    let timezone = state.config.timezone;
     // Fetch the job to clone
     let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
         .bind(id)
@@ -802,68 +722,83 @@ pub async fn clone_job(
         }
     };
 
-    // Generate a unique clone name
     let base_name = job.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ')' || c == '(' || c == ' ');
     let base_name = base_name.trim_end_matches(" (clone");
-    let clone_name = generate_unique_clone_name(&state.db, base_name).await;
 
-    // Insert the cloned job
-    let result = sqlx::query(
-        r#"
-        INSERT INTO jobs (
-            name, description, enabled,
-            usb_uuid, mount_point, auto_mount, auto_unmount,
-            source_dirs, backup_subdir,
-            sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity,
-            destination_type, destination_config, sync_options, credential_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-    )
-    .bind(&clone_name)
-    .bind(&job.description)
-    .bind(job.enabled)
-    .bind(&job.usb_uuid)
-    .bind(&job.mount_point)
-    .bind(job.auto_mount)
-    .bind(job.auto_unmount)
-    .bind(&job.source_dirs)
-    .bind(&job.backup_subdir)
-    .bind(job.sync_deletes)
-    .bind(&job.rsync_excludes)
-    .bind(job.checksum_mode)
-    .bind(job.compress)
-    .bind(job.dry_run)
-    .bind(job.bandwidth_limit)
-    .bind(&job.verbosity)
-    .bind(&job.destination_type)
-    .bind(&job.destination_config)
-    .bind(&job.sync_options)
-    .bind(job.credential_id)
-    .execute(&state.db)
-    .await;
+    // Attempt INSERT with optimistic naming: try "(clone)", then "(clone 2)", "(clone 3)", …
+    // On a UNIQUE constraint violation we increment the suffix and retry. This avoids the
+    // SELECT-then-INSERT TOCTOU race where two concurrent clones could both observe the same
+    // name as available and then collide on insert.
+    let new_id = {
+        let mut counter: u32 = 0;
+        loop {
+            let candidate = if counter == 0 {
+                format!("{} (clone)", base_name)
+            } else {
+                format!("{} (clone {})", base_name, counter + 1)
+            };
 
-    match result {
-        Ok(r) => {
-            let new_id = r.last_insert_rowid();
+            let result = sqlx::query(
+                r#"
+                INSERT INTO jobs (
+                    name, description, enabled,
+                    usb_uuid, mount_point, auto_mount, auto_unmount,
+                    source_dirs, backup_subdir,
+                    sync_deletes, rsync_excludes, checksum_mode, compress, dry_run, bandwidth_limit, verbosity,
+                    destination_type, destination_config, sync_options, credential_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&candidate)
+            .bind(&job.description)
+            .bind(job.enabled)
+            .bind(&job.usb_uuid)
+            .bind(&job.mount_point)
+            .bind(job.auto_mount)
+            .bind(job.auto_unmount)
+            .bind(&job.source_dirs)
+            .bind(&job.backup_subdir)
+            .bind(job.sync_deletes)
+            .bind(&job.rsync_excludes)
+            .bind(job.checksum_mode)
+            .bind(job.compress)
+            .bind(job.dry_run)
+            .bind(job.bandwidth_limit)
+            .bind(&job.verbosity)
+            .bind(&job.destination_type)
+            .bind(&job.destination_config)
+            .bind(&job.sync_options)
+            .bind(job.credential_id)
+            .execute(&state.db)
+            .await;
 
-            // Clone schedules from the original job
-            if let Err(e) = clone_job_schedules(&state.db, id, new_id).await {
-                tracing::error!("Failed to clone schedules for job {}: {:?}", id, e);
-                // Continue anyway - the job was created, just without schedules
-            }
-
-            let new_job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
-                .bind(new_id)
-                .fetch_optional(&state.db)
-                .await
-                .unwrap_or(None);
-
-            match new_job {
-                Some(j) => (StatusCode::CREATED, Json(JobResponse::from(j))).into_response(),
-                None => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
+            match result {
+                Ok(r) => break r.last_insert_rowid(),
+                Err(e) if e.as_database_error().map(|d| d.is_unique_violation()).unwrap_or(false) => {
+                    counter += 1;
+                    if counter > 100 {
+                        return ApiError::new(ErrorCode::JobCloneFailed).into_response();
+                    }
+                }
+                Err(_) => return ApiError::new(ErrorCode::JobCloneFailed).into_response(),
             }
         }
-        Err(_) => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
+    };
+
+    if let Err(e) = clone_job_schedules(&state.db, id, new_id, timezone).await {
+        tracing::error!("Failed to clone schedules for job {}: {:?}", id, e);
+        // Continue anyway - the job was created, just without schedules
+    }
+
+    let new_job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
+        .bind(new_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    match new_job {
+        Some(j) => (StatusCode::CREATED, Json(JobResponse::from(j))).into_response(),
+        None => ApiError::new(ErrorCode::JobCloneFailed).into_response(),
     }
 }
 
@@ -871,20 +806,20 @@ async fn clone_job_schedules(
     db: &sqlx::SqlitePool,
     original_job_id: i64,
     new_job_id: i64,
+    timezone: chrono_tz::Tz,
 ) -> Result<(), sqlx::Error> {
     use cron::Schedule as CronSchedule;
     use std::str::FromStr;
 
-    // Fetch all schedules for the original job
     let schedules: Vec<crate::models::Schedule> =
         sqlx::query_as("SELECT * FROM schedules WHERE job_id = ?")
             .bind(original_job_id)
             .fetch_all(db)
             .await?;
 
-    // Clone each schedule
     for schedule in schedules {
-        // Recalculate next_run_at for enabled schedules
+        // Recalculate next_run_at using the server's configured timezone.
+        // Using Utc here would produce wrong values on non-UTC servers.
         let next_run = if schedule.enabled {
             let cron_with_seconds = if schedule.cron_expression.split_whitespace().count() == 5 {
                 format!("0 {}", schedule.cron_expression)
@@ -893,7 +828,8 @@ async fn clone_job_schedules(
             };
             CronSchedule::from_str(&cron_with_seconds)
                 .ok()
-                .and_then(|s| s.upcoming(Utc).next())
+                .and_then(|s| s.upcoming(timezone).next())
+                .map(|dt| dt.with_timezone(&Utc))
         } else {
             None
         };
@@ -922,41 +858,6 @@ async fn clone_job_schedules(
     Ok(())
 }
 
-async fn generate_unique_clone_name(db: &sqlx::SqlitePool, base_name: &str) -> String {
-    let first_attempt = format!("{} (clone)", base_name);
-
-    // Check if the simple "(clone)" name is available
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
-        .bind(&first_attempt)
-        .fetch_optional(db)
-        .await
-        .unwrap_or(None);
-
-    if exists.is_none() {
-        return first_attempt;
-    }
-
-    // Find the next available number
-    let mut counter = 2;
-    loop {
-        let candidate = format!("{} (clone {})", base_name, counter);
-        let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM jobs WHERE name = ?")
-            .bind(&candidate)
-            .fetch_optional(db)
-            .await
-            .unwrap_or(None);
-
-        if exists.is_none() {
-            return candidate;
-        }
-        counter += 1;
-
-        // Safety limit
-        if counter > 100 {
-            return format!("{} (clone {})", base_name, chrono::Utc::now().timestamp());
-        }
-    }
-}
 
 /// Check if the destination has enough space for a sync operation
 /// POST /api/jobs/:id/check-space

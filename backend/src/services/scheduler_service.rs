@@ -64,8 +64,7 @@ impl SchedulerService {
                 s.id as schedule_id,
                 s.job_id,
                 s.cron_expression,
-                j.name as job_name,
-                j.enabled as job_enabled
+                j.name as job_name
             FROM schedules s
             JOIN jobs j ON s.job_id = j.id
             WHERE s.enabled = 1
@@ -140,9 +139,10 @@ impl SchedulerService {
             // Spawn job execution
             let backup_service = self.backup_service.clone();
             let db = self.db.clone();
+            let job_id = schedule.job_id;
+            let schedule_id = schedule.schedule_id;
 
             tokio::spawn(async move {
-                // Update status to running
                 let _ = sqlx::query(
                     "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ?",
                 )
@@ -152,82 +152,8 @@ impl SchedulerService {
                 .execute(&db)
                 .await;
 
-                // Execute
-                let result = backup_service
-                    .execute_job(&job, run_id, Some(schedule.schedule_id))
-                    .await;
-
-                // Update completion status (but don't overwrite 'cancelled' status)
-                let (exit_code, files, bytes, errors) = match &result {
-                    Ok(r) => (r.exit_code, r.files_transferred, r.bytes_transferred, r.error_count),
-                    Err(e) => {
-                        tracing::error!("Job execution failed: {}", e);
-                        (1, 0, 0, 1)
-                    }
-                };
-
-                // Check database for current status - if cancelled, preserve it
-                let current_status: Option<(String,)> = sqlx::query_as(
-                    "SELECT status FROM job_runs WHERE id = ?"
-                )
-                .bind(run_id)
-                .fetch_optional(&db)
-                .await
-                .ok()
-                .flatten();
-
-                let was_cancelled = current_status.as_ref().map(|s| s.0.as_str()) == Some("cancelled");
-
-                if was_cancelled {
-                    // Only update stats, preserve 'cancelled' status
-                    let _ = sqlx::query(
-                        r#"
-                        UPDATE job_runs
-                        SET exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ?
-                        WHERE id = ? AND status = 'cancelled'
-                        "#,
-                    )
-                    .bind(exit_code)
-                    .bind(files)
-                    .bind(bytes)
-                    .bind(errors)
-                    .bind(run_id)
-                    .execute(&db)
-                    .await;
-                } else {
-                    let status = match &result {
-                        Ok(r) => if r.error_count > 0 { JobRunStatus::Failed } else { JobRunStatus::Completed },
-                        Err(_) => JobRunStatus::Failed,
-                    };
-
-                    let _ = sqlx::query(
-                        r#"
-                        UPDATE job_runs
-                        SET status = ?, completed_at = ?, exit_code = ?,
-                            files_transferred = ?, bytes_transferred = ?, error_count = ?
-                        WHERE id = ?
-                        "#,
-                    )
-                    .bind(status.as_str())
-                    .bind(Utc::now())
-                    .bind(exit_code)
-                    .bind(files)
-                    .bind(bytes)
-                    .bind(errors)
-                    .bind(run_id)
-                    .execute(&db)
-                    .await;
-
-                    // Update storage info after successful completion
-                    // Use pre-captured storage_info from the sync result (captured before unmounting USB drives)
-                    if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
-                        let storage_info = result.as_ref().ok().and_then(|r| r.storage_info.clone());
-                        let _ = backup_service.update_storage_info(schedule.job_id, &job, storage_info).await;
-                    }
-                }
-
-                // Cleanup old runs
-                backup_service.cleanup_old_runs(schedule.job_id).await;
+                let result = backup_service.execute_job(&job, run_id, Some(schedule_id)).await;
+                backup_service.finalize_run(run_id, job_id, &job, result).await;
             });
         }
     }
@@ -252,8 +178,6 @@ struct ScheduleWithJob {
     job_id: i64,
     cron_expression: String,
     job_name: String,
-    #[allow(dead_code)]
-    job_enabled: bool,
 }
 
 fn calculate_next_run(cron_expr: &str, timezone: Tz) -> anyhow::Result<chrono::DateTime<Utc>> {

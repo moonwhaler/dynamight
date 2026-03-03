@@ -1,8 +1,10 @@
 //! Service for compressing source directories before transfer.
 //!
-//! Each source directory is individually archived (tar.gz, tar, or zip) and
-//! stored in a per-job staging subdirectory before being transferred to the
-//! destination via the configured provider.
+//! Each source directory is individually archived (tar.gz, tar, or zip) into a
+//! shared staging directory (`CompressDirsOptions::staging_path`). Archive filenames
+//! embed the job ID so multiple jobs can safely share the same staging path without
+//! collision. After archiving, the staging directory is passed to the provider as
+//! the effective source for the transfer.
 
 use crate::models::{CompressDirsOptions, CompressFormat};
 use anyhow::Context;

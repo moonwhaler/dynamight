@@ -6,10 +6,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::json;
 
-/// Error codes sent to the frontend for translation.
-/// These are prepared for gradual migration of handlers from inline error strings
-/// to structured error codes that can be translated on the frontend.
-#[allow(dead_code)]
+/// Structured error codes sent to the frontend for translation.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
@@ -25,6 +22,7 @@ pub enum ErrorCode {
     TotpInvalidCode,
     TotpNotEnabled,
     TotpSetupFailed,
+    #[allow(dead_code)]
     TotpAlreadyEnabled,
 
     // Password errors
@@ -59,6 +57,7 @@ pub enum ErrorCode {
     CredentialInUse,
     CredentialCreateFailed,
     CredentialUpdateFailed,
+    #[allow(dead_code)]
     CredentialDeleteFailed,
 
     // Validation errors
@@ -66,6 +65,7 @@ pub enum ErrorCode {
     ValidationFieldTooLong,
     ValidationInvalidPattern,
     SourceDirsRequired,
+    #[allow(dead_code)]
     CredentialsRequired,
     SourceDirsDuplicateBasenames,
     ExcludeDirNotInSource,
@@ -99,19 +99,20 @@ pub enum ErrorCode {
     // Run errors
     RunNotFound,
     RunCreateFailed,
+    #[allow(dead_code)]
     RunDeleteFailed,
+    #[allow(dead_code)]
     PurgeFailed,
 
     // Settings errors
+    #[allow(dead_code)]
     SettingsSaveFailed,
 
     // Generic
     InternalError,
 }
 
-/// API error response with error code and optional parameters for interpolation.
-/// Prepared for gradual migration of handlers.
-#[allow(dead_code)]
+/// API error response with error code and optional parameters for frontend interpolation.
 #[derive(Debug, Serialize)]
 pub struct ApiError {
     pub code: ErrorCode,
@@ -119,7 +120,6 @@ pub struct ApiError {
     pub params: Option<serde_json::Value>,
 }
 
-#[allow(dead_code)]
 impl ApiError {
     pub fn new(code: ErrorCode) -> Self {
         Self { code, params: None }
@@ -238,6 +238,7 @@ impl ApiError {
         Self::new(ErrorCode::CompressMaxArchivesInvalid)
     }
 
+    #[allow(dead_code)]
     pub fn credentials_required() -> Self {
         Self::new(ErrorCode::CredentialsRequired)
     }
@@ -266,6 +267,7 @@ impl ApiError {
         Self::new(ErrorCode::TotpNotEnabled)
     }
 
+    #[allow(dead_code)]
     pub fn totp_already_enabled() -> Self {
         Self::new(ErrorCode::TotpAlreadyEnabled)
     }
@@ -357,6 +359,7 @@ impl IntoResponse for ApiError {
             | ErrorCode::SourceDirsRequired
             | ErrorCode::CredentialsRequired
             | ErrorCode::SourceDirsDuplicateBasenames
+            | ErrorCode::ExcludeDirNotInSource
             | ErrorCode::InvalidCron
             | ErrorCode::TotpInvalidCode
             | ErrorCode::TotpNotEnabled
