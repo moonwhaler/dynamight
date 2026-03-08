@@ -6,6 +6,7 @@
   import type { UsbDrive } from '$lib/types';
   import BreadcrumbNav from '../components/filebrowser/BreadcrumbNav.svelte';
   import FileList from '../components/filebrowser/FileList.svelte';
+  import FileSearchBar from '../components/filebrowser/FileSearchBar.svelte';
   import DriveSelector from '../components/filebrowser/DriveSelector.svelte';
   import DeleteConfirmDialog from '../components/filebrowser/DeleteConfirmDialog.svelte';
   import ColumnSelector from '../components/ui/ColumnSelector.svelte';
@@ -13,6 +14,16 @@
 
   // Subscribe to store
   let browserState = $derived($fileBrowserStore);
+
+  // Search state
+  let searchQuery = $state('');
+  let isSearchOpen = $state(false);
+
+  const filteredEntries = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return browserState.entries;
+    return browserState.entries.filter(e => e.name.toLowerCase().includes(q));
+  });
 
   // New folder dialog state
   let showNewFolderDialog = $state(false);
@@ -29,18 +40,58 @@
     // Load drives and allowed paths
     fileBrowserStore.loadDrives();
     fileBrowserStore.loadAllowedPaths();
+
+    function handleGlobalKeydown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable;
+
+      if (e.key === '/' && !inInput && browserState.currentPath) {
+        e.preventDefault();
+        openSearch();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f' && browserState.currentPath) {
+        e.preventDefault();
+        openSearch();
+        return;
+      }
+
+      if (e.key === 'Escape' && isSearchOpen && !showNewFolderDialog) {
+        closeSearch();
+      }
+    }
+
+    document.addEventListener('keydown', handleGlobalKeydown);
+    return () => document.removeEventListener('keydown', handleGlobalKeydown);
   });
+
+  // Search helpers
+  function openSearch() {
+    isSearchOpen = true;
+  }
+
+  function closeSearch() {
+    isSearchOpen = false;
+    searchQuery = '';
+  }
 
   // Navigation handlers
   function handleNavigate(path: string) {
+    searchQuery = '';
+    isSearchOpen = false;
     fileBrowserStore.browsePath(path);
   }
 
   function handleGoUp() {
+    searchQuery = '';
+    isSearchOpen = false;
     fileBrowserStore.goUp();
   }
 
   function handleGoBack() {
+    searchQuery = '';
+    isSearchOpen = false;
     fileBrowserStore.goBack();
   }
 
@@ -194,6 +245,21 @@
         {/if}
       </button>
 
+      <!-- Search toggle (only when browsing) -->
+      {#if browserState.currentPath}
+        <button
+          type="button"
+          onclick={() => isSearchOpen ? closeSearch() : openSearch()}
+          class="py-2.5 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300
+            {isSearchOpen ? 'bg-primary-50 dark:bg-primary-900/20 !text-primary-600 dark:!text-primary-400 border-primary-200 dark:border-primary-800' : ''}"
+          title={m.filebrowser_search_toggle()}
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+      {/if}
+
       <!-- Column selector (only in list mode when browsing) -->
       {#if browserState.viewMode === 'list' && browserState.currentPath}
         <ColumnSelector
@@ -254,9 +320,18 @@
 
   <!-- File List -->
   {#if browserState.currentPath}
-    <div class="card">
+    <div class="card overflow-hidden">
+      {#if isSearchOpen}
+        <FileSearchBar
+          bind:query={searchQuery}
+          matchCount={filteredEntries.length}
+          totalCount={browserState.entries.length}
+          onClose={closeSearch}
+        />
+      {/if}
       <FileList
-        entries={browserState.entries}
+        entries={filteredEntries}
+        searchQuery={searchQuery}
         viewMode={browserState.viewMode}
         sortBy={browserState.sortBy}
         sortOrder={browserState.sortOrder}

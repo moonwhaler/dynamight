@@ -25,6 +25,7 @@
     selectable?: boolean;
     selectedPath?: string | null;
     onSelect?: (path: string) => void;
+    searchQuery?: string;
   }
 
   let {
@@ -44,6 +45,7 @@
     selectable = false,
     selectedPath = null,
     onSelect,
+    searchQuery = '',
   }: Props = $props();
 
   let tableContainerEl = $state<HTMLElement | null>(null);
@@ -163,11 +165,23 @@
 {:else if entries.length === 0}
   <div class="p-6 text-center">
     <div class="w-12 h-12 mx-auto mb-4 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
-      <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-      </svg>
+      {#if searchQuery.trim()}
+        <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      {:else}
+        <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+      {/if}
     </div>
-    <p class="text-gray-500 dark:text-gray-400">{m.filebrowser_empty()}</p>
+    {#if searchQuery.trim()}
+      <p class="text-gray-500 dark:text-gray-400">
+        {m.filebrowser_search_no_results({ query: searchQuery.trim() })}
+      </p>
+    {:else}
+      <p class="text-gray-500 dark:text-gray-400">{m.filebrowser_empty()}</p>
+    {/if}
   </div>
 {:else if viewMode === 'list'}
   <!-- List view with column management -->
@@ -262,6 +276,7 @@
             {selectable}
             selected={selectedPath === entry.path}
             {onSelect}
+            {searchQuery}
             visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
           />
         {/each}
@@ -283,6 +298,7 @@
         {selectable}
         selected={selectedPath === entry.path}
         {onSelect}
+        {searchQuery}
       />
     {/each}
   </div>

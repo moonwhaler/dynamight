@@ -614,6 +614,11 @@
   "filebrowser_delete_totp": "2FA Code",
   "filebrowser_delete_success": "File deleted successfully",
   "filebrowser_delete_success_folder": "Folder and contents deleted successfully",
+  "filebrowser_search_placeholder": "Search in this folder…",
+  "filebrowser_search_results": "{count} of {total}",
+  "filebrowser_search_no_results": "No files matching \"{query}\"",
+  "filebrowser_search_clear": "Clear search",
+  "filebrowser_search_toggle": "Search files",
 
   "error_file_not_found": "File not found",
   "error_not_a_file": "Cannot download a directory",

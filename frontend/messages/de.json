@@ -606,6 +606,11 @@
   "filebrowser_date_yesterday": "Gestern",
   "filebrowser_delete_success": "Datei erfolgreich gelöscht",
   "filebrowser_delete_success_folder": "Ordner und Inhalt erfolgreich gelöscht",
+  "filebrowser_search_placeholder": "In diesem Ordner suchen…",
+  "filebrowser_search_results": "{count} von {total}",
+  "filebrowser_search_no_results": "Keine Dateien für \"{query}\"",
+  "filebrowser_search_clear": "Suche löschen",
+  "filebrowser_search_toggle": "Dateien suchen",
 
   "error_file_not_found": "Datei nicht gefunden",
   "error_not_a_file": "Verzeichnisse können nicht heruntergeladen werden",

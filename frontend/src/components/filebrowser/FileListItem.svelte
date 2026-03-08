@@ -15,6 +15,7 @@
     selected?: boolean;
     onSelect?: (path: string) => void;
     visibleColumns?: string[];
+    searchQuery?: string;
   }
 
   let {
@@ -29,7 +30,20 @@
     selected = false,
     onSelect,
     visibleColumns = ['name', 'size', 'modified', 'actions'],
+    searchQuery = '',
   }: Props = $props();
+
+  function highlightSegments(text: string, query: string): { text: string; highlight: boolean }[] {
+    const q = query.trim();
+    if (!q) return [{ text, highlight: false }];
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) return [{ text, highlight: false }];
+    const result: { text: string; highlight: boolean }[] = [];
+    if (idx > 0) result.push({ text: text.slice(0, idx), highlight: false });
+    result.push({ text: text.slice(idx, idx + q.length), highlight: true });
+    if (idx + q.length < text.length) result.push({ text: text.slice(idx + q.length), highlight: false });
+    return result;
+  }
 
   const iconInfo = $derived(getFileIcon(entry.extension, entry.is_dir));
   const isDownloading = $derived(downloading === entry.path);
@@ -104,7 +118,11 @@
 
         <!-- Name -->
         <span class="truncate text-gray-900 dark:text-white {entry.is_dir ? 'font-medium' : ''}">
-          {entry.name}
+          {#each highlightSegments(entry.name, searchQuery) as seg (seg.text + seg.highlight)}
+            {#if seg.highlight}
+              <mark class="bg-yellow-200 dark:bg-yellow-800/50 text-inherit rounded-sm not-italic">{seg.text}</mark>
+            {:else}{seg.text}{/if}
+          {/each}
         </span>
       </div>
     </td>
@@ -185,7 +203,11 @@
 
         <!-- Name -->
         <span class="text-sm text-gray-900 dark:text-white truncate w-full font-medium">
-          {entry.name}
+          {#each highlightSegments(entry.name, searchQuery) as seg (seg.text + seg.highlight)}
+            {#if seg.highlight}
+              <mark class="bg-yellow-200 dark:bg-yellow-800/50 text-inherit rounded-sm not-italic">{seg.text}</mark>
+            {:else}{seg.text}{/if}
+          {/each}
         </span>
       </button>
 
@@ -216,7 +238,11 @@
 
       <!-- Name -->
       <span class="text-sm text-gray-900 dark:text-white truncate w-full">
-        {entry.name}
+        {#each highlightSegments(entry.name, searchQuery) as seg (seg.text + seg.highlight)}
+          {#if seg.highlight}
+            <mark class="bg-yellow-200 dark:bg-yellow-800/50 text-inherit rounded-sm not-italic">{seg.text}</mark>
+          {:else}{seg.text}{/if}
+        {/each}
       </span>
 
       <!-- Size -->
