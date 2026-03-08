@@ -355,8 +355,8 @@
                 </div>
 
                 <!-- Strategy selector -->
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{m.backup_import_strategy()}</label>
+                <div role="group" aria-labelledby="import-strategy-label">
+                  <span id="import-strategy-label" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{m.backup_import_strategy()}</span>
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <button
                       onclick={() => { importStrategy = 'merge'; importState = 'idle'; preview = null; }}
