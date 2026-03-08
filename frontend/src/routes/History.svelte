@@ -370,12 +370,6 @@
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.history_title()}</h1>
 
     <div class="flex items-center gap-2">
-      {#if runs.length > 0 && selectedJobId}
-        <button onclick={confirmPurgeJob} class="btn btn-secondary">{m.history_clear_job()}</button>
-      {/if}
-      <button onclick={confirmPurgeAll} disabled={runs.length === 0} class="btn btn-secondary">
-        {m.history_clear_all()}
-      </button>
       {#if runs.length > 0}
         <ColumnSelector
           visibleColumns={$historyTablePreferencesStore.visibleColumns}
@@ -387,6 +381,12 @@
           onReset={() => historyTablePreferencesStore.reset()}
         />
       {/if}
+      {#if runs.length > 0 && selectedJobId}
+        <button onclick={confirmPurgeJob} class="btn btn-secondary">{m.history_clear_job()}</button>
+      {/if}
+      <button onclick={confirmPurgeAll} disabled={runs.length === 0} class="btn btn-secondary">
+        {m.history_clear_all()}
+      </button>
     </div>
   </div>
 

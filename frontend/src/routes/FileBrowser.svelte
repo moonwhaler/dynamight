@@ -79,6 +79,7 @@
       switch (sortBy) {
         case 'name':     cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
         case 'size':     cmp = (a.size ?? 0) - (b.size ?? 0); break;
+        case 'type':     cmp = (a.extension ?? '').toLowerCase().localeCompare((b.extension ?? '').toLowerCase()); break;
         case 'modified': cmp = (a.modified ?? 0) - (b.modified ?? 0); break;
       }
       return sortOrder === 'asc' ? cmp : -cmp;
@@ -86,12 +87,14 @@
   }
 
   const filteredEntries = $derived.by(() => {
+    let base: DirectoryEntry[];
     if (searchMode === 'deep' && searchQuery.trim().length >= 2) {
-      return sortResults(deepSearchResults);
+      base = deepSearchResults;
+    } else {
+      const q = searchQuery.trim().toLowerCase();
+      base = !q ? browserState.entries : browserState.entries.filter(e => e.name.toLowerCase().includes(q));
     }
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return browserState.entries;
-    return browserState.entries.filter(e => e.name.toLowerCase().includes(q));
+    return sortResults(base);
   });
 
   // New folder dialog state
