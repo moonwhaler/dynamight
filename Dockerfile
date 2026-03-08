@@ -21,7 +21,7 @@ WORKDIR /app
 
 # Copy workspace files
 COPY Cargo.toml Cargo.lock ./
-COPY backend/Cargo.toml ./backend/
+COPY backend/Cargo.toml backend/build.rs ./backend/
 COPY migrations ./migrations
 
 # Create dummy main to cache dependencies
@@ -30,6 +30,10 @@ RUN cargo build --release --package dynamight 2>/dev/null || true
 
 # Build actual application
 COPY backend/src ./backend/src
+ARG BUILD_GIT_HASH=unknown
+ARG BUILD_DATE=unknown
+ENV BUILD_GIT_HASH=${BUILD_GIT_HASH}
+ENV BUILD_DATE=${BUILD_DATE}
 RUN touch backend/src/main.rs && cargo build --release --package dynamight
 
 # Stage 3: Runtime

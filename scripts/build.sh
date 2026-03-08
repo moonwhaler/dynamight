@@ -201,8 +201,16 @@ create_archive() {
 }
 
 build_docker() {
-    log_info "Building Docker image: ${DOCKER_FULL_IMAGE}..."
-    docker build -t "${DOCKER_FULL_IMAGE}" "$PROJECT_DIR"
+    local git_hash
+    git_hash=$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    local build_date
+    build_date=$(date +%Y-%m-%d)
+
+    log_info "Building Docker image: ${DOCKER_FULL_IMAGE} (${APP_VERSION}+${git_hash})..."
+    docker build \
+        --build-arg BUILD_GIT_HASH="${git_hash}" \
+        --build-arg BUILD_DATE="${build_date}" \
+        -t "${DOCKER_FULL_IMAGE}" "$PROJECT_DIR"
 
     # Always tag with the app version from Cargo.toml
     local versioned="${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${APP_VERSION}"
