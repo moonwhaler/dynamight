@@ -100,20 +100,24 @@ function createFileBrowserStore() {
     subscribe,
 
     async browsePath(path: string): Promise<boolean> {
-      update((s) => ({ ...s, loading: true, error: null }));
+      let previousPath = '';
+      update((s) => {
+        previousPath = s.currentPath;
+        return { ...s, loading: true, error: null, currentPath: path };
+      });
       try {
         const result = await api.system.browse(path);
         update((s) => {
           const sortedEntries = sortEntries(result.entries, s.sortBy, s.sortOrder);
-          const newHistory = s.currentPath && s.currentPath !== path
-            ? [...s.pathHistory, s.currentPath]
+          const newHistory = previousPath && previousPath !== result.path
+            ? [...s.pathHistory, previousPath]
             : s.pathHistory;
           return { ...s, currentPath: result.path, entries: sortedEntries, pathHistory: newHistory, loading: false, error: null };
         });
         return true;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(m.error_browse_path());
-        update((s) => ({ ...s, loading: false, error: message }));
+        update((s) => ({ ...s, loading: false, error: message, currentPath: previousPath }));
         return false;
       }
     },
