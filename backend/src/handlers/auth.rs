@@ -1,5 +1,5 @@
 use axum::{
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, Multipart, State},
     http::{header::SET_COOKIE, HeaderMap},
     response::{AppendHeaders, IntoResponse},
     Json,
@@ -10,9 +10,10 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::errors::ApiError;
+use crate::errors::{ApiError, ErrorCode};
 use crate::extractors::{extract_token_from_headers, AuthUser};
 use crate::models::{ChangePasswordRequest, LoginRequest, User, UserResponse};
+use crate::services::config_backup_service;
 use crate::services::AuthService;
 use crate::AppState;
 
@@ -380,5 +381,159 @@ pub async fn setup(
             tracing::error!("Failed to create admin user: {}", e);
             ApiError::internal_error().into_response()
         }
+    }
+}
+
+/// POST /auth/setup-from-backup - Restore from a .dmbackup file during initial setup (no user exists)
+pub async fn setup_from_backup(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    // Guard: only allowed when no users exist
+    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or((0,));
+
+    if user_count.0 > 0 {
+        return ApiError::setup_already_done().into_response();
+    }
+
+    // Parse multipart fields: file + password
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut password: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "file" => {
+                file_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|_| ApiError::new(ErrorCode::BackupInvalidFormat))
+                        .unwrap_or_default()
+                        .to_vec(),
+                );
+            }
+            "password" => {
+                password = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|_| ApiError::new(ErrorCode::BackupInvalidFormat))
+                        .unwrap_or_default(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let file_data = match file_data {
+        Some(d) if !d.is_empty() => d,
+        _ => return ApiError::new(ErrorCode::BackupInvalidFormat).into_response(),
+    };
+    let password = match password {
+        Some(p) if p.len() >= 8 => p,
+        _ => return ApiError::new(ErrorCode::BackupPasswordTooShort).into_response(),
+    };
+
+    // Decrypt backup
+    let yaml = match config_backup_service::decrypt_backup(&file_data, &password) {
+        Ok(y) => y,
+        Err(e) => return map_backup_error(e).into_response(),
+    };
+
+    // Parse
+    let backup = match config_backup_service::from_yaml(&yaml) {
+        Ok(b) => b,
+        Err(e) => return map_backup_error(e).into_response(),
+    };
+
+    let username = backup.user.username.clone();
+
+    // First, create the user from the backup so apply_import's Replace strategy can find it
+    let create_user_result = sqlx::query(
+        "INSERT INTO users (username, password_hash, totp_enabled, totp_secret) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&backup.user.username)
+    .bind(&backup.user.password_hash)
+    .bind(backup.user.totp_enabled)
+    .bind(&backup.user.totp_secret)
+    .execute(&state.db)
+    .await;
+
+    let user_id = match create_user_result {
+        Ok(r) => r.last_insert_rowid(),
+        Err(e) => {
+            tracing::error!("Failed to create user from backup: {}", e);
+            return ApiError::internal_error().into_response();
+        }
+    };
+
+    // Import recovery codes
+    for code_hash in &backup.user.recovery_codes {
+        if let Err(e) =
+            sqlx::query("INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)")
+                .bind(user_id)
+                .bind(code_hash)
+                .execute(&state.db)
+                .await
+        {
+            tracing::warn!("Failed to import recovery code: {}", e);
+        }
+    }
+
+    // Apply the rest of the backup (settings, credentials, jobs) using Replace strategy
+    let result = config_backup_service::apply_import(
+        &state.db,
+        &state.credential_service,
+        backup,
+        config_backup_service::ImportStrategy::Replace,
+    )
+    .await;
+
+    match result {
+        Ok(_) => {
+            tracing::info!(
+                "Setup from backup completed: user '{}' restored",
+                username
+            );
+            Json(json!({
+                "success": true,
+                "username": username
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Setup from backup failed: {}", e);
+            // Clean up the user we just created
+            sqlx::query("DELETE FROM recovery_codes WHERE user_id = ?")
+                .bind(user_id)
+                .execute(&state.db)
+                .await
+                .ok();
+            sqlx::query("DELETE FROM users WHERE id = ?")
+                .bind(user_id)
+                .execute(&state.db)
+                .await
+                .ok();
+            map_backup_error(e).into_response()
+        }
+    }
+}
+
+/// Map config_backup_service errors to API errors.
+fn map_backup_error(e: anyhow::Error) -> ApiError {
+    let msg = e.to_string();
+    if msg.starts_with("BACKUP_INVALID_PASSWORD") {
+        ApiError::new(ErrorCode::BackupInvalidPassword)
+    } else if msg.starts_with("BACKUP_INVALID_FORMAT") {
+        ApiError::new(ErrorCode::BackupInvalidFormat)
+    } else if msg.starts_with("BACKUP_UNSUPPORTED_VERSION") {
+        ApiError::new(ErrorCode::BackupUnsupportedVersion)
+    } else {
+        tracing::error!("Backup operation failed: {}", e);
+        ApiError::internal_error()
     }
 }

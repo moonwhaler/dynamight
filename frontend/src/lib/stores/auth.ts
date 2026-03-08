@@ -61,6 +61,20 @@ function createAuthStore() {
       }
     },
 
+    async setupFromBackup(file: File, password: string): Promise<boolean> {
+      update((s) => ({ ...s, loading: true, error: null }));
+      try {
+        await api.auth.setupFromBackup(file, password);
+        set({ user: null, isAuthenticated: false, setupRequired: false, loading: false, error: null, pendingTotpSession: null });
+        window.location.hash = '#/login';
+        return true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Restore failed';
+        update((s) => ({ ...s, loading: false, error: message }));
+        return false;
+      }
+    },
+
     async login(username: string, password: string): Promise<'success' | 'totp_required' | 'error'> {
       update((s) => ({ ...s, loading: true, error: null, pendingTotpSession: null }));
       try {

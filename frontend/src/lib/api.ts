@@ -244,6 +244,33 @@ export const api = {
       }),
     // Get current JWT token for WebSocket authentication
     getToken: () => request<{ token: string }>('/auth/token'),
+    // Setup from backup (initial setup only, no auth required)
+    setupFromBackup: async (file: File, password: string): Promise<{ success: boolean; username: string }> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('password', password);
+      const response = await fetch(`${API_BASE}/auth/setup-from-backup`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = String(m.error_generic());
+        let errorCode: string | undefined;
+        let errorParams: Record<string, string | number> | undefined;
+        try {
+          const errorData = JSON.parse(text);
+          if ('code' in errorData) {
+            errorCode = errorData.code;
+            errorParams = errorData.params;
+            errorMessage = String(translateErrorCode(errorData.code, errorData.params));
+          }
+        } catch { /* ignore */ }
+        throw new ApiError(response.status, errorMessage, errorCode, errorParams);
+      }
+      return response.json();
+    },
   },
 
   jobs: {

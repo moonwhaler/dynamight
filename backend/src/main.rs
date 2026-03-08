@@ -304,6 +304,7 @@ async fn main() -> anyhow::Result<()> {
     let public_routes = Router::new()
         .route("/auth/setup-required", get(handlers::auth::setup_required))
         .route("/auth/setup", post(handlers::auth::setup))
+        .route("/auth/setup-from-backup", post(handlers::auth::setup_from_backup))
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/totp/validate", post(handlers::totp::validate))
         .route("/auth/totp/recovery", post(handlers::totp::recovery))
