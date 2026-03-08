@@ -1,4 +1,5 @@
 import { createTablePreferencesStore } from './tablePreferences';
+import { createTableSortStore } from './tableSortStore';
 
 export type HistoryColumnKey = 'job' | 'status' | 'started' | 'duration' | 'files' | 'size' | 'actions';
 
@@ -14,6 +15,13 @@ export const HISTORY_DEFAULT_WIDTHS: Record<HistoryColumnKey, number> = {
   size: 100,
   actions: 90,
 };
+
+export type HistorySortColumn = 'job' | 'status' | 'started' | 'duration' | 'files' | 'size';
+export const historySortStore = createTableSortStore<HistorySortColumn>({
+  storageKey: 'dynamight-history-sort',
+  defaultSortBy: 'started',
+  defaultSortOrder: 'desc',
+});
 
 export const historyTablePreferencesStore = createTablePreferencesStore<HistoryColumnKey>({
   storageKey: 'dynamight-history-table-prefs',

@@ -5,6 +5,7 @@
   import { fileBrowserTablePreferencesStore, FB_FIXED } from '$lib/stores/fileBrowserTablePreferences';
   import type { FileBrowserColumnKey } from '$lib/stores/fileBrowserTablePreferences';
   import FileListItem from './FileListItem.svelte';
+  import SortIcon from '../ui/SortIcon.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
@@ -83,11 +84,6 @@
     } else if (onSortChange) {
       onSortChange(field);
     }
-  }
-
-  function getSortIcon(field: SortField) {
-    if (sortBy !== field) return null;
-    return sortOrder === 'asc' ? '↑' : '↓';
   }
 
   function startResize(col: FileBrowserColumnKey, e: MouseEvent) {
@@ -207,9 +203,7 @@
                   class="flex items-center gap-1 hover:text-gray-900 dark:hover:text-white"
                 >
                   {m.filebrowser_column_name()}
-                  {#if getSortIcon('name')}
-                    <span class="text-primary-500">{getSortIcon('name')}</span>
-                  {/if}
+                  <SortIcon active={sortBy === 'name'} order={sortOrder} />
                 </button>
               {:else if col === 'size'}
                 <div class="text-right">
@@ -219,9 +213,7 @@
                     class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
                   >
                     {m.filebrowser_column_size()}
-                    {#if getSortIcon('size')}
-                      <span class="text-primary-500">{getSortIcon('size')}</span>
-                    {/if}
+                    <SortIcon active={sortBy === 'size'} order={sortOrder} />
                   </button>
                 </div>
               {:else if col === 'modified'}
@@ -232,9 +224,7 @@
                     class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
                   >
                     {m.filebrowser_column_modified()}
-                    {#if getSortIcon('modified')}
-                      <span class="text-primary-500">{getSortIcon('modified')}</span>
-                    {/if}
+                    <SortIcon active={sortBy === 'modified'} order={sortOrder} />
                   </button>
                 </div>
               {:else if col === 'actions'}

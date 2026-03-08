@@ -1,4 +1,6 @@
 import { writable } from 'svelte/store';
+import { createTableSortStore } from './tableSortStore';
+export type { SortOrder } from './tableSortStore';
 
 export type ColumnKey = 'job' | 'status' | 'sources' | 'destination' | 'last_run' | 'schedule' | 'options' | 'actions';
 
@@ -151,3 +153,10 @@ export const tablePreferencesStore = createTablePreferencesStore<ColumnKey>({
   defaultWidths: DEFAULT_WIDTHS,
 });
 export { DEFAULT_VISIBLE, DEFAULT_WIDTHS };
+
+export type JobsSortColumn = 'job' | 'status' | 'sources' | 'destination' | 'last_run';
+export const jobsSortStore = createTableSortStore<JobsSortColumn>({
+  storageKey: 'dynamight-job-sort',
+  defaultSortBy: 'job',
+  defaultSortOrder: 'asc',
+});

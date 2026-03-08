@@ -2,8 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
-  import { historyTablePreferencesStore, HISTORY_FIXED, HISTORY_ALL, HISTORY_DEFAULT_VISIBLE } from '../lib/stores/historyTablePreferences';
-  import type { HistoryColumnKey } from '../lib/stores/historyTablePreferences';
+  import { historyTablePreferencesStore, HISTORY_FIXED, HISTORY_ALL, HISTORY_DEFAULT_VISIBLE, historySortStore } from '../lib/stores/historyTablePreferences';
+  import type { HistoryColumnKey, HistorySortColumn } from '../lib/stores/historyTablePreferences';
+  import SortIcon from '../components/ui/SortIcon.svelte';
   import type { Job, JobRun, LogEntry } from '../lib/types';
   import LogViewer from '../components/logs/LogViewer.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
@@ -61,6 +62,29 @@
     }
 
     return result;
+  });
+
+  const SORTABLE_HISTORY_COLS = new Set<HistoryColumnKey>(['job', 'status', 'started', 'duration', 'files', 'size']);
+
+  const sortedFilteredRuns = $derived.by(() => {
+    const { sortBy, sortOrder } = $historySortStore;
+    const STATUS_ORDER: Record<string, number> = { pending: 0, running: 1, completed: 2, failed: 3, cancelled: 4 };
+    return [...filteredRuns].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case 'job':      cmp = getJobName(a.job_id).localeCompare(getJobName(b.job_id)); break;
+        case 'status':   cmp = (STATUS_ORDER[a.status] ?? 0) - (STATUS_ORDER[b.status] ?? 0); break;
+        case 'started':  cmp = new Date(a.started_at ?? 0).getTime() - new Date(b.started_at ?? 0).getTime(); break;
+        case 'duration': {
+          const durA = a.completed_at && a.started_at ? new Date(a.completed_at).getTime() - new Date(a.started_at).getTime() : 0;
+          const durB = b.completed_at && b.started_at ? new Date(b.completed_at).getTime() - new Date(b.started_at).getTime() : 0;
+          cmp = durA - durB; break;
+        }
+        case 'files':    cmp = (a.files_transferred ?? 0) - (b.files_transferred ?? 0); break;
+        case 'size':     cmp = (a.bytes_transferred ?? 0) - (b.bytes_transferred ?? 0); break;
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
   });
 
   const activeFilterCount = $derived(
@@ -508,7 +532,18 @@
                   ondrop={(e) => onDrop(col, e)}
                   ondragend={onDragEnd}
                 >
-                  {columnLabel(col)}
+                  {#if SORTABLE_HISTORY_COLS.has(col)}
+                    <button
+                      type="button"
+                      onclick={() => historySortStore.handleSort(col as HistorySortColumn)}
+                      class="flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
+                    >
+                      {columnLabel(col)}
+                      <SortIcon active={$historySortStore.sortBy === col} order={$historySortStore.sortOrder} />
+                    </button>
+                  {:else}
+                    {columnLabel(col)}
+                  {/if}
                   {#if dragOverCol === col}
                     <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
                   {/if}
@@ -529,7 +564,7 @@
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {#each filteredRuns as run (run.id)}
+            {#each sortedFilteredRuns as run (run.id)}
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 {#each $historyTablePreferencesStore.visibleColumns as col (col)}
                   {#if col === 'job'}

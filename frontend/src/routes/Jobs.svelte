@@ -2,8 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { jobsStore } from '../lib/stores/jobs';
   import { viewPreferencesStore } from '../lib/stores/viewPreferences';
-  import { tablePreferencesStore, FIXED_COLUMNS } from '../lib/stores/tablePreferences';
-  import type { ColumnKey } from '../lib/stores/tablePreferences';
+  import { tablePreferencesStore, FIXED_COLUMNS, jobsSortStore } from '../lib/stores/tablePreferences';
+  import type { ColumnKey, JobsSortColumn } from '../lib/stores/tablePreferences';
+  import SortIcon from '../components/ui/SortIcon.svelte';
   import { statusStore } from '../lib/stores/logs';
   import JobCard from '../components/jobs/JobCard.svelte';
   import JobListRow from '../components/jobs/JobListRow.svelte';
@@ -51,6 +52,23 @@
     }
 
     return result;
+  });
+
+  const SORTABLE_JOB_COLS = new Set<ColumnKey>(['job', 'status', 'sources', 'destination', 'last_run']);
+
+  const sortedFilteredJobs = $derived.by(() => {
+    const { sortBy, sortOrder } = $jobsSortStore;
+    return [...filteredJobs].sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case 'job':         cmp = a.name.localeCompare(b.name); break;
+        case 'status':      cmp = (a.enabled ? 1 : 0) - (b.enabled ? 1 : 0); break;
+        case 'sources':     cmp = (a.source_dirs?.length ?? 0) - (b.source_dirs?.length ?? 0); break;
+        case 'destination': cmp = a.destination_type.localeCompare(b.destination_type); break;
+        case 'last_run':    cmp = new Date(a.last_run_at ?? 0).getTime() - new Date(b.last_run_at ?? 0).getTime(); break;
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
   });
 
   const activeFilterCount = $derived(
@@ -351,7 +369,7 @@
       </div>
     {:else if $viewPreferencesStore === 'grid'}
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {#each filteredJobs as job (job.id)}
+        {#each sortedFilteredJobs as job (job.id)}
           <JobCard {job} />
         {/each}
       </div>
@@ -382,7 +400,18 @@
                     ondrop={(e) => onDrop(col, e)}
                     ondragend={onDragEnd}
                   >
-                    {columnLabel(col)}
+                    {#if SORTABLE_JOB_COLS.has(col)}
+                      <button
+                        type="button"
+                        onclick={() => jobsSortStore.handleSort(col as JobsSortColumn)}
+                        class="flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
+                      >
+                        {columnLabel(col)}
+                        <SortIcon active={$jobsSortStore.sortBy === col} order={$jobsSortStore.sortOrder} />
+                      </button>
+                    {:else}
+                      {columnLabel(col)}
+                    {/if}
                     {#if dragOverCol === col}
                       <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
                     {/if}
@@ -403,7 +432,7 @@
               </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {#each filteredJobs as job (job.id)}
+              {#each sortedFilteredJobs as job (job.id)}
                 <JobListRow
                   {job}
                   onShowLogs={(runId) => { activeRunId = runId; activeJobId = job.id; }}
