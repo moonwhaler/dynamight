@@ -253,6 +253,7 @@
       {/if}
     </div>
   {:else}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
       class="card p-4 flex flex-col items-center gap-2 text-center {selected ? 'ring-2 ring-primary-500' : ''} {clickableFiles ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50' : ''}"
       onclick={clickableFiles ? handleClick : undefined}
