@@ -544,10 +544,14 @@
   "totp_setup_invalid_code": "Ungültiger Code. Bitte versuchen Sie es erneut.",
 
   "time_just_now": "gerade eben",
-  "time_minutes_ago": "vor {count}m",
-  "time_hours_ago": "vor {count}h",
-  "time_days_ago": "vor {count}T",
-  "time_weeks_ago": "vor {count}W",
+  "time_minute_ago": "vor 1 Minute",
+  "time_minutes_ago": "vor {count} Minuten",
+  "time_hour_ago": "vor 1 Stunde",
+  "time_hours_ago": "vor {count} Stunden",
+  "time_day_ago": "vor 1 Tag",
+  "time_days_ago": "vor {count} Tagen",
+  "time_week_ago": "vor 1 Woche",
+  "time_weeks_ago": "vor {count} Wochen",
 
   "nav_dashboard": "Dashboard",
   "nav_jobs": "Aufgaben",
@@ -875,7 +879,10 @@
   "jobs_sched_weekdays": "Mo–Fr um {time}",
   "jobs_sched_weekends": "Sa+So um {time}",
   "jobs_sched_custom": "Benutzerdefiniert: {cron}",
-  "time_in_minutes": "in {count}m",
-  "time_in_hours": "in {count}h",
-  "time_in_days": "in {count}d"
+  "time_in_minute": "in 1 Minute",
+  "time_in_minutes": "in {count} Minuten",
+  "time_in_hour": "in 1 Stunde",
+  "time_in_hours": "in {count} Stunden",
+  "time_in_day": "in 1 Tag",
+  "time_in_days": "in {count} Tagen"
 }

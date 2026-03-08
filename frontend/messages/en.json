@@ -552,10 +552,14 @@
   "totp_setup_invalid_code": "Invalid code. Please try again.",
 
   "time_just_now": "just now",
-  "time_minutes_ago": "{count}m ago",
-  "time_hours_ago": "{count}h ago",
-  "time_days_ago": "{count}d ago",
-  "time_weeks_ago": "{count}w ago",
+  "time_minute_ago": "1 minute ago",
+  "time_minutes_ago": "{count} minutes ago",
+  "time_hour_ago": "1 hour ago",
+  "time_hours_ago": "{count} hours ago",
+  "time_day_ago": "1 day ago",
+  "time_days_ago": "{count} days ago",
+  "time_week_ago": "1 week ago",
+  "time_weeks_ago": "{count} weeks ago",
 
   "nav_dashboard": "Dashboard",
   "nav_jobs": "Jobs",
@@ -889,7 +893,10 @@
   "jobs_sched_weekdays": "Weekdays at {time}",
   "jobs_sched_weekends": "Weekends at {time}",
   "jobs_sched_custom": "Custom: {cron}",
-  "time_in_minutes": "in {count}m",
-  "time_in_hours": "in {count}h",
-  "time_in_days": "in {count}d"
+  "time_in_minute": "in 1 minute",
+  "time_in_minutes": "in {count} minutes",
+  "time_in_hour": "in 1 hour",
+  "time_in_hours": "in {count} hours",
+  "time_in_day": "in 1 day",
+  "time_in_days": "in {count} days"
 }

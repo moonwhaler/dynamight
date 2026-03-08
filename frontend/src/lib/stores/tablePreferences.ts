@@ -13,7 +13,7 @@ const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
   status: 90,
   sources: 90,
   destination: 200,
-  last_run: 120,
+  last_run: 150,
   schedule: 180,
   options: 140,
   actions: 80,

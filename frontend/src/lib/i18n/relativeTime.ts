@@ -13,10 +13,10 @@ export function formatRelativeTime(dateStr: string | null | undefined): string {
   const diffWeeks = Math.floor(diffDays / 7);
 
   if (diffMins < 1) return m.time_just_now();
-  if (diffMins < 60) return m.time_minutes_ago({ count: diffMins });
-  if (diffHours < 24) return m.time_hours_ago({ count: diffHours });
-  if (diffDays < 7) return m.time_days_ago({ count: diffDays });
-  if (diffWeeks < 4) return m.time_weeks_ago({ count: diffWeeks });
+  if (diffMins < 60) return diffMins === 1 ? m.time_minute_ago() : m.time_minutes_ago({ count: diffMins });
+  if (diffHours < 24) return diffHours === 1 ? m.time_hour_ago() : m.time_hours_ago({ count: diffHours });
+  if (diffDays < 7) return diffDays === 1 ? m.time_day_ago() : m.time_days_ago({ count: diffDays });
+  if (diffWeeks < 4) return diffWeeks === 1 ? m.time_week_ago() : m.time_weeks_ago({ count: diffWeeks });
   return formatLocalizedDate(date);
 }
 
@@ -29,9 +29,9 @@ export function formatTimeUntil(dateStr: string | null | undefined): string {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  if (diffMins < 60) return m.time_in_minutes({ count: diffMins });
-  if (diffHours < 24) return m.time_in_hours({ count: diffHours });
-  if (diffDays < 7) return m.time_in_days({ count: diffDays });
+  if (diffMins < 60) return diffMins === 1 ? m.time_in_minute() : m.time_in_minutes({ count: diffMins });
+  if (diffHours < 24) return diffHours === 1 ? m.time_in_hour() : m.time_in_hours({ count: diffHours });
+  if (diffDays < 7) return diffDays === 1 ? m.time_in_day() : m.time_in_days({ count: diffDays });
   return formatLocalizedDate(date);
 }
 
