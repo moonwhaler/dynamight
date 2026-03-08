@@ -101,6 +101,9 @@ function createFileBrowserStore() {
 
   const { subscribe, set, update } = writable<FileBrowserState>(initialState);
 
+  // Monotonically increasing counter to invalidate stale dir-size responses
+  let dirSizeGeneration = 0;
+
   return {
     subscribe,
 
@@ -120,7 +123,8 @@ function createFileBrowserStore() {
           return { ...s, currentPath: result.path, entries: sortedEntries, pathHistory: newHistory, loading: false, loadingDirSizes: false, error: null };
         });
         // Fire-and-forget: fetch directory sizes lazily
-        this.fetchDirSizes(result.entries, result.path);
+        dirSizeGeneration++;
+        this.fetchDirSizes(result.entries, dirSizeGeneration);
         return true;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(m.error_browse_path());
@@ -150,7 +154,7 @@ function createFileBrowserStore() {
       return false;
     },
 
-    async fetchDirSizes(entries: DirectoryEntry[], browsedPath: string): Promise<void> {
+    async fetchDirSizes(entries: DirectoryEntry[], generation: number): Promise<void> {
       const dirPaths = entries.filter(e => e.is_dir).map(e => e.path);
       if (dirPaths.length === 0) return;
 
@@ -158,8 +162,8 @@ function createFileBrowserStore() {
       try {
         const result = await api.system.dirSizes(dirPaths);
         update((s) => {
-          // Guard: discard if user navigated away
-          if (s.currentPath !== browsedPath) return { ...s, loadingDirSizes: false };
+          // Guard: discard stale responses from previous navigations
+          if (generation !== dirSizeGeneration) return s;
           const sizeMap = result.sizes;
           if (Object.keys(sizeMap).length === 0) return { ...s, loadingDirSizes: false };
           const updatedEntries = s.entries.map(e => {
@@ -171,7 +175,10 @@ function createFileBrowserStore() {
           return { ...s, entries: sortEntries(updatedEntries, s.sortBy, s.sortOrder), loadingDirSizes: false };
         });
       } catch {
-        update((s) => ({ ...s, loadingDirSizes: false }));
+        update((s) => {
+          if (generation !== dirSizeGeneration) return s;
+          return { ...s, loadingDirSizes: false };
+        });
       }
     },
 
