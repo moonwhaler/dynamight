@@ -16,7 +16,7 @@ function translateDownloadError(code: string, _params?: Record<string, string | 
   }
 }
 
-export type SortField = 'name' | 'size' | 'modified';
+export type SortField = 'name' | 'size' | 'type' | 'modified';
 export type SortOrder = 'asc' | 'desc';
 export type ViewMode = 'list' | 'grid';
 
@@ -71,6 +71,7 @@ function sortEntries(entries: DirectoryEntry[], sortBy: SortField, sortOrder: So
     switch (sortBy) {
       case 'name':     comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
       case 'size':     comparison = (a.size ?? 0) - (b.size ?? 0); break;
+      case 'type':     comparison = (a.extension ?? '').toLowerCase().localeCompare((b.extension ?? '').toLowerCase()); break;
       case 'modified': comparison = (a.modified ?? 0) - (b.modified ?? 0); break;
     }
     return sortOrder === 'asc' ? comparison : -comparison;

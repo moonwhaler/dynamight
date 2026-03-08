@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fileBrowserStore } from '$lib/stores/fileBrowser';
+  import { fileBrowserStore, type SortField } from '$lib/stores/fileBrowser';
   import { fileBrowserTablePreferencesStore, FB_ALL, FB_FIXED, FB_DEFAULT_VISIBLE } from '$lib/stores/fileBrowserTablePreferences';
   import type { FileBrowserColumnKey } from '$lib/stores/fileBrowserTablePreferences';
   import type { UsbDrive, SearchMode, DirectoryEntry } from '$lib/types';
@@ -255,7 +255,7 @@
   }
 
   // Sort handlers
-  function handleSortChange(field: 'name' | 'size' | 'modified') {
+  function handleSortChange(field: SortField) {
     fileBrowserStore.setSortBy(field);
   }
 
@@ -267,6 +267,7 @@
     switch (col as FileBrowserColumnKey) {
       case 'name':     return m.filebrowser_column_name();
       case 'size':     return m.filebrowser_column_size();
+      case 'type':     return m.filebrowser_column_type();
       case 'modified': return m.filebrowser_column_modified();
       case 'actions':  return m.filebrowser_column_actions();
       default:         return col;

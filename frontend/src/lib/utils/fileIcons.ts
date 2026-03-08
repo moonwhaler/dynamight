@@ -92,6 +92,20 @@ export function getFileIcon(extension: string | null, isDir: boolean): FileIconI
   return extensionMap[extension.toLowerCase()] ?? defaultIcon;
 }
 
+export function formatFileType(extension: string | null, isDir: boolean): string {
+  const { icon } = getFileIcon(extension, isDir);
+  switch (icon) {
+    case 'folder':   return m.filebrowser_type_folder();
+    case 'image':    return m.filebrowser_type_image();
+    case 'document': return m.filebrowser_type_document();
+    case 'archive':  return m.filebrowser_type_archive();
+    case 'code':     return m.filebrowser_type_code();
+    case 'video':    return m.filebrowser_type_video();
+    case 'audio':    return m.filebrowser_type_audio();
+    default:         return m.filebrowser_type_file();
+  }
+}
+
 export function formatFileSize(bytes: number | null): string {
   return formatBytes(bytes);
 }

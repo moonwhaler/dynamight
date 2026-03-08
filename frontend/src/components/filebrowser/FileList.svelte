@@ -236,6 +236,15 @@
                     <SortIcon active={sortBy === 'size'} order={sortOrder} />
                   </button>
                 </div>
+              {:else if col === 'type'}
+                <button
+                  type="button"
+                  onclick={() => handleSort('type')}
+                  class="flex items-center gap-1 hover:text-gray-900 dark:hover:text-white"
+                >
+                  {m.filebrowser_column_type()}
+                  <SortIcon active={sortBy === 'type'} order={sortOrder} />
+                </button>
               {:else if col === 'modified'}
                 <div class="text-right">
                   <button
@@ -248,7 +257,7 @@
                   </button>
                 </div>
               {:else if col === 'actions'}
-                <span class="sr-only">{m.filebrowser_column_actions()}</span>
+                {m.filebrowser_column_actions()}
               {/if}
               {#if dragOverCol === col}
                 <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
