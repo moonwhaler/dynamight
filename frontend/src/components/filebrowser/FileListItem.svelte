@@ -14,6 +14,7 @@
     selectable?: boolean;
     selected?: boolean;
     onSelect?: (path: string) => void;
+    visibleColumns?: string[];
   }
 
   let {
@@ -27,6 +28,7 @@
     selectable = false,
     selected = false,
     onSelect,
+    visibleColumns = ['name', 'size', 'modified', 'actions'],
   }: Props = $props();
 
   const iconInfo = $derived(getFileIcon(entry.extension, entry.is_dir));
@@ -107,13 +109,17 @@
       </div>
     </td>
 
-    <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm hidden sm:table-cell">
-      {entry.is_dir ? '-' : formatFileSize(entry.size)}
-    </td>
+    {#if visibleColumns.includes('size')}
+      <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm">
+        {entry.is_dir ? '-' : formatFileSize(entry.size)}
+      </td>
+    {/if}
 
-    <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm hidden md:table-cell">
-      {formatDate(entry.modified)}
-    </td>
+    {#if visibleColumns.includes('modified')}
+      <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm">
+        {formatDate(entry.modified)}
+      </td>
+    {/if}
 
     <td class="px-4 py-2.5 text-right">
       <div class="flex items-center justify-end gap-1">

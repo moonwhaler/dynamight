@@ -212,7 +212,7 @@
   <div class="flex items-center border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
     <button
       onclick={() => viewPreferencesStore.setViewMode('grid')}
-      class="p-2 transition-colors {$viewPreferencesStore === 'grid'
+      class="py-2.5 px-2 transition-colors {$viewPreferencesStore === 'grid'
         ? 'bg-primary-600 text-white'
         : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
       title={m.jobs_grid_view()}
@@ -223,7 +223,7 @@
     </button>
     <button
       onclick={() => viewPreferencesStore.setViewMode('list')}
-      class="p-2 transition-colors {$viewPreferencesStore === 'list'
+      class="py-2.5 px-2 transition-colors {$viewPreferencesStore === 'list'
         ? 'bg-primary-600 text-white'
         : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
       title={m.jobs_list_view()}
@@ -238,7 +238,13 @@
 <div class="space-y-6">
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.jobs_title()}</h1>
-    <a href="#/jobs/new" class="btn btn-primary w-full sm:w-auto text-center">{m.dashboard_new_job()}</a>
+    <div class="flex items-center gap-2">
+      {@render viewToggle()}
+      {#if $viewPreferencesStore === 'list'}
+        <ColumnSelector />
+      {/if}
+      <a href="#/jobs/new" class="btn btn-primary sm:w-auto text-center">{m.dashboard_new_job()}</a>
+    </div>
   </div>
 
   {#if $jobsStore.loading}
@@ -289,12 +295,6 @@
             {/if}
           </button>
 
-          <div class="hidden lg:flex items-center gap-2">
-            {@render viewToggle()}
-            {#if $viewPreferencesStore === 'list'}
-              <ColumnSelector />
-            {/if}
-          </div>
         </div>
 
         <!-- Desktop: Status filter chips -->
@@ -317,11 +317,6 @@
         <!-- Mobile/Tablet: Expanded filters -->
         {#if showFilters}
           <div class="lg:hidden mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
-            <div class="space-y-2">
-              <span class="label">{m.common_view()}</span>
-              {@render viewToggle()}
-            </div>
-
             <div class="space-y-2">
               <span class="label">{m.jobs_last_run_status()}</span>
               <StatusFilterChips activeStatuses={statusFilters} onToggle={toggleStatus} />

@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { DirectoryEntry } from '$lib/types';
   import type { SortField, SortOrder, ViewMode } from '$lib/stores/fileBrowser';
+  import { fileBrowserTablePreferencesStore, FB_FIXED } from '$lib/stores/fileBrowserTablePreferences';
+  import type { FileBrowserColumnKey } from '$lib/stores/fileBrowserTablePreferences';
   import FileListItem from './FileListItem.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
@@ -42,6 +45,38 @@
     onSelect,
   }: Props = $props();
 
+  let tableContainerEl = $state<HTMLElement | null>(null);
+  let containerWidth = $state(0);
+  let dragCol = $state<FileBrowserColumnKey | null>(null);
+  let dragOverCol = $state<FileBrowserColumnKey | null>(null);
+  let resizing: { col: FileBrowserColumnKey; startX: number; startWidth: number } | null = null;
+
+  const storedTotalWidth = $derived(
+    $fileBrowserTablePreferencesStore.visibleColumns.reduce(
+      (sum, col) => sum + $fileBrowserTablePreferencesStore.columnWidths[col],
+      0
+    )
+  );
+
+  const effectiveWidths = $derived.by<Record<FileBrowserColumnKey, number>>(() => {
+    const cols = $fileBrowserTablePreferencesStore.visibleColumns;
+    const stored = $fileBrowserTablePreferencesStore.columnWidths;
+    const extra = containerWidth - storedTotalWidth;
+    if (extra <= 0 || storedTotalWidth === 0) return { ...stored };
+    const result = { ...stored };
+    for (const col of cols) {
+      result[col] = Math.round(stored[col] + extra * (stored[col] / storedTotalWidth));
+    }
+    return result;
+  });
+
+  $effect(() => {
+    if (!tableContainerEl) return;
+    const ro = new ResizeObserver((entries) => { containerWidth = entries[0].contentRect.width; });
+    ro.observe(tableContainerEl);
+    return () => ro.disconnect();
+  });
+
   function handleSort(field: SortField) {
     if (sortBy === field && onSortOrderToggle) {
       onSortOrderToggle();
@@ -54,6 +89,63 @@
     if (sortBy !== field) return null;
     return sortOrder === 'asc' ? '↑' : '↓';
   }
+
+  function startResize(col: FileBrowserColumnKey, e: MouseEvent) {
+    e.preventDefault();
+    resizing = { col, startX: e.clientX, startWidth: effectiveWidths[col] };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', onResizeEnd);
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!resizing) return;
+    fileBrowserTablePreferencesStore.setColumnWidth(resizing.col, resizing.startWidth + (e.clientX - resizing.startX));
+  }
+
+  function onResizeEnd() {
+    resizing = null;
+    document.body.style.userSelect = '';
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
+  }
+
+  function onDragStart(col: FileBrowserColumnKey, e: DragEvent) {
+    dragCol = col;
+    e.dataTransfer!.effectAllowed = 'move';
+  }
+
+  function onDragOver(col: FileBrowserColumnKey, e: DragEvent) {
+    if (!dragCol || dragCol === col || FB_FIXED.includes(col)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+    dragOverCol = col;
+  }
+
+  function onDrop(col: FileBrowserColumnKey, e: DragEvent) {
+    e.preventDefault();
+    if (!dragCol || dragCol === col || FB_FIXED.includes(col)) return;
+    const cols = [...$fileBrowserTablePreferencesStore.visibleColumns];
+    const fromIdx = cols.indexOf(dragCol);
+    const toIdx = cols.indexOf(col);
+    if (fromIdx < 0 || toIdx < 0) return;
+    cols.splice(fromIdx, 1);
+    cols.splice(fromIdx < toIdx ? toIdx - 1 : toIdx, 0, dragCol);
+    fileBrowserTablePreferencesStore.setColumnOrder(cols);
+    dragCol = null;
+    dragOverCol = null;
+  }
+
+  function onDragEnd() {
+    dragCol = null;
+    dragOverCol = null;
+  }
+
+  onDestroy(() => {
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
+    document.body.style.userSelect = '';
+  });
 </script>
 
 {#if loading}
@@ -82,50 +174,89 @@
     <p class="text-gray-500 dark:text-gray-400">{m.filebrowser_empty()}</p>
   </div>
 {:else if viewMode === 'list'}
-  <!-- List view -->
-  <div class="overflow-x-auto">
-    <table class="w-full">
+  <!-- List view with column management -->
+  <div class="overflow-x-auto" bind:this={tableContainerEl}>
+    <table
+      class="w-full table-fixed"
+      style="width: {Math.max(storedTotalWidth, containerWidth)}px"
+    >
+      <colgroup>
+        {#each $fileBrowserTablePreferencesStore.visibleColumns as col (col)}
+          <col style="width: {effectiveWidths[col]}px" />
+        {/each}
+      </colgroup>
       <thead class="bg-gray-50 dark:bg-gray-800/50 text-left text-sm">
         <tr>
-          <th class="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">
-            <button
-              type="button"
-              onclick={() => handleSort('name')}
-              class="flex items-center gap-1 hover:text-gray-900 dark:hover:text-white"
+          {#each $fileBrowserTablePreferencesStore.visibleColumns as col (col)}
+            <th
+              class="px-4 py-3 font-medium text-gray-600 dark:text-gray-300 relative select-none
+                {!FB_FIXED.includes(col) ? 'cursor-grab' : ''}
+                {dragOverCol === col ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
+              style="width: {effectiveWidths[col]}px"
+              draggable={!FB_FIXED.includes(col)}
+              ondragstart={!FB_FIXED.includes(col) ? (e) => onDragStart(col, e) : undefined}
+              ondragover={(e) => onDragOver(col, e)}
+              ondragleave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverCol === col) dragOverCol = null; }}
+              ondrop={(e) => onDrop(col, e)}
+              ondragend={onDragEnd}
             >
-              {m.filebrowser_column_name()}
-              {#if getSortIcon('name')}
-                <span class="text-primary-500">{getSortIcon('name')}</span>
+              {#if col === 'name'}
+                <button
+                  type="button"
+                  onclick={() => handleSort('name')}
+                  class="flex items-center gap-1 hover:text-gray-900 dark:hover:text-white"
+                >
+                  {m.filebrowser_column_name()}
+                  {#if getSortIcon('name')}
+                    <span class="text-primary-500">{getSortIcon('name')}</span>
+                  {/if}
+                </button>
+              {:else if col === 'size'}
+                <div class="text-right">
+                  <button
+                    type="button"
+                    onclick={() => handleSort('size')}
+                    class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
+                  >
+                    {m.filebrowser_column_size()}
+                    {#if getSortIcon('size')}
+                      <span class="text-primary-500">{getSortIcon('size')}</span>
+                    {/if}
+                  </button>
+                </div>
+              {:else if col === 'modified'}
+                <div class="text-right">
+                  <button
+                    type="button"
+                    onclick={() => handleSort('modified')}
+                    class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
+                  >
+                    {m.filebrowser_column_modified()}
+                    {#if getSortIcon('modified')}
+                      <span class="text-primary-500">{getSortIcon('modified')}</span>
+                    {/if}
+                  </button>
+                </div>
+              {:else if col === 'actions'}
+                <span class="sr-only">{m.filebrowser_column_actions()}</span>
               {/if}
-            </button>
-          </th>
-          <th class="px-4 py-3 font-medium text-gray-600 dark:text-gray-300 text-right hidden sm:table-cell">
-            <button
-              type="button"
-              onclick={() => handleSort('size')}
-              class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
-            >
-              {m.filebrowser_column_size()}
-              {#if getSortIcon('size')}
-                <span class="text-primary-500">{getSortIcon('size')}</span>
+              {#if dragOverCol === col}
+                <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
               {/if}
-            </button>
-          </th>
-          <th class="px-4 py-3 font-medium text-gray-600 dark:text-gray-300 text-right hidden md:table-cell">
-            <button
-              type="button"
-              onclick={() => handleSort('modified')}
-              class="flex items-center gap-1 ml-auto hover:text-gray-900 dark:hover:text-white"
-            >
-              {m.filebrowser_column_modified()}
-              {#if getSortIcon('modified')}
-                <span class="text-primary-500">{getSortIcon('modified')}</span>
+              {#if col !== 'actions'}
+                <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                <div
+                  class="absolute right-0 top-0 bottom-0 w-3 translate-x-1/2 z-10 cursor-col-resize group"
+                  onmousedown={(e) => startResize(col, e)}
+                  ondragstart={(e) => e.stopPropagation()}
+                  role="separator"
+                  aria-orientation="vertical"
+                >
+                  <div class="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700 group-hover:bg-primary-500 dark:group-hover:bg-primary-400 transition-colors duration-150"></div>
+                </div>
               {/if}
-            </button>
-          </th>
-          <th class="px-4 py-3 font-medium text-gray-600 dark:text-gray-300 text-right w-16">
-            <span class="sr-only">{m.filebrowser_column_actions()}</span>
-          </th>
+            </th>
+          {/each}
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
@@ -141,6 +272,7 @@
             {selectable}
             selected={selectedPath === entry.path}
             {onSelect}
+            visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
           />
         {/each}
       </tbody>

@@ -2,10 +2,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
+  import { historyTablePreferencesStore, HISTORY_FIXED, HISTORY_ALL, HISTORY_DEFAULT_VISIBLE } from '../lib/stores/historyTablePreferences';
+  import type { HistoryColumnKey } from '../lib/stores/historyTablePreferences';
   import type { Job, JobRun, LogEntry } from '../lib/types';
   import LogViewer from '../components/logs/LogViewer.svelte';
   import Spinner from '../components/ui/Spinner.svelte';
   import StatusFilterChips from '../components/ui/StatusFilterChips.svelte';
+  import ColumnSelector from '../components/ui/ColumnSelector.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { formatStatus, getStatusBadgeClass } from '$lib/i18n/status';
   import { formatDateTime, formatDurationBetween } from '$lib/i18n/relativeTime';
@@ -93,6 +96,9 @@
 
   onDestroy(() => {
     stopPolling();
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
+    document.body.style.userSelect = '';
   });
 
   function startPolling() {
@@ -173,6 +179,110 @@
     return $jobsStore.jobs.find((j) => j.id === jobId)?.name || `Job #${jobId}`;
   }
 
+  let tableContainerEl = $state<HTMLElement | null>(null);
+  let containerWidth = $state(0);
+  let dragCol = $state<HistoryColumnKey | null>(null);
+  let dragOverCol = $state<HistoryColumnKey | null>(null);
+  let resizing: { col: HistoryColumnKey; startX: number; startWidth: number } | null = null;
+
+  const storedTotalWidth = $derived(
+    $historyTablePreferencesStore.visibleColumns.reduce(
+      (sum, col) => sum + $historyTablePreferencesStore.columnWidths[col],
+      0
+    )
+  );
+
+  const effectiveWidths = $derived.by<Record<HistoryColumnKey, number>>(() => {
+    const cols = $historyTablePreferencesStore.visibleColumns;
+    const stored = $historyTablePreferencesStore.columnWidths;
+    const extra = containerWidth - storedTotalWidth;
+    if (extra <= 0 || storedTotalWidth === 0) return { ...stored };
+    const result = { ...stored };
+    for (const col of cols) {
+      result[col] = Math.round(stored[col] + extra * (stored[col] / storedTotalWidth));
+    }
+    return result;
+  });
+
+  function columnLabel(col: string): string {
+    switch (col as HistoryColumnKey) {
+      case 'job':      return m.history_table_job();
+      case 'status':   return m.history_table_status();
+      case 'started':  return m.history_table_started();
+      case 'duration': return m.history_table_duration();
+      case 'files':    return m.history_table_files();
+      case 'size':     return m.history_table_size();
+      case 'actions':  return m.common_actions();
+      default:         return col;
+    }
+  }
+
+  function handleColumnToggle(col: string) {
+    const key = col as HistoryColumnKey;
+    historyTablePreferencesStore.setColumnVisibility(
+      key,
+      !$historyTablePreferencesStore.visibleColumns.includes(key)
+    );
+  }
+
+  function startResize(col: HistoryColumnKey, e: MouseEvent) {
+    e.preventDefault();
+    resizing = { col, startX: e.clientX, startWidth: effectiveWidths[col] };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', onResizeEnd);
+  }
+
+  function onResizeMove(e: MouseEvent) {
+    if (!resizing) return;
+    historyTablePreferencesStore.setColumnWidth(resizing.col, resizing.startWidth + (e.clientX - resizing.startX));
+  }
+
+  function onResizeEnd() {
+    resizing = null;
+    document.body.style.userSelect = '';
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', onResizeEnd);
+  }
+
+  function onDragStart(col: HistoryColumnKey, e: DragEvent) {
+    dragCol = col;
+    e.dataTransfer!.effectAllowed = 'move';
+  }
+
+  function onDragOver(col: HistoryColumnKey, e: DragEvent) {
+    if (!dragCol || dragCol === col || HISTORY_FIXED.includes(col)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'move';
+    dragOverCol = col;
+  }
+
+  function onDrop(col: HistoryColumnKey, e: DragEvent) {
+    e.preventDefault();
+    if (!dragCol || dragCol === col || HISTORY_FIXED.includes(col)) return;
+    const cols = [...$historyTablePreferencesStore.visibleColumns];
+    const fromIdx = cols.indexOf(dragCol);
+    const toIdx = cols.indexOf(col);
+    if (fromIdx < 0 || toIdx < 0) return;
+    cols.splice(fromIdx, 1);
+    cols.splice(fromIdx < toIdx ? toIdx - 1 : toIdx, 0, dragCol);
+    historyTablePreferencesStore.setColumnOrder(cols);
+    dragCol = null;
+    dragOverCol = null;
+  }
+
+  function onDragEnd() {
+    dragCol = null;
+    dragOverCol = null;
+  }
+
+  $effect(() => {
+    if (!tableContainerEl) return;
+    const ro = new ResizeObserver((entries) => { containerWidth = entries[0].contentRect.width; });
+    ro.observe(tableContainerEl);
+    return () => ro.disconnect();
+  });
+
   let showPurgeConfirm = $state(false);
   let purgeType = $state<'all' | 'job' | 'single'>('all');
   let purgeTargetId = $state<number | null>(null);
@@ -242,6 +352,17 @@
       <button onclick={confirmPurgeAll} disabled={runs.length === 0} class="btn btn-secondary">
         {m.history_clear_all()}
       </button>
+      {#if runs.length > 0}
+        <ColumnSelector
+          visibleColumns={$historyTablePreferencesStore.visibleColumns}
+          allColumns={HISTORY_ALL}
+          fixedColumns={HISTORY_FIXED}
+          defaultVisible={HISTORY_DEFAULT_VISIBLE}
+          columnLabel={columnLabel}
+          onToggle={handleColumnToggle}
+          onReset={() => historyTablePreferencesStore.reset()}
+        />
+      {/if}
     </div>
   </div>
 
@@ -362,54 +483,96 @@
     </div>
   {:else}
     <div class="card overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+      <div class="overflow-x-auto" bind:this={tableContainerEl}>
+        <table
+          class="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700"
+          style="width: {Math.max(storedTotalWidth, containerWidth)}px"
+        >
+          <colgroup>
+            {#each $historyTablePreferencesStore.visibleColumns as col (col)}
+              <col style="width: {effectiveWidths[col]}px" />
+            {/each}
+          </colgroup>
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_job()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_status()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap">{m.history_table_started()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden sm:table-cell">{m.history_table_duration()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_files()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase hidden md:table-cell">{m.history_table_size()}</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{m.history_table_actions()}</th>
+              {#each $historyTablePreferencesStore.visibleColumns as col (col)}
+                <th
+                  class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase relative select-none
+                    {!HISTORY_FIXED.includes(col) ? 'cursor-grab' : ''}
+                    {dragOverCol === col ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
+                  style="width: {effectiveWidths[col]}px"
+                  draggable={!HISTORY_FIXED.includes(col)}
+                  ondragstart={!HISTORY_FIXED.includes(col) ? (e) => onDragStart(col, e) : undefined}
+                  ondragover={(e) => onDragOver(col, e)}
+                  ondragleave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverCol === col) dragOverCol = null; }}
+                  ondrop={(e) => onDrop(col, e)}
+                  ondragend={onDragEnd}
+                >
+                  {columnLabel(col)}
+                  {#if dragOverCol === col}
+                    <div class="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-500 pointer-events-none"></div>
+                  {/if}
+                  {#if col !== 'actions'}
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <div
+                      class="absolute right-0 top-0 bottom-0 w-3 translate-x-1/2 z-10 cursor-col-resize group"
+                      onmousedown={(e) => startResize(col, e)}
+                      ondragstart={(e) => e.stopPropagation()}
+                      role="separator"
+                      aria-orientation="vertical"
+                    >
+                      <div class="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700 group-hover:bg-primary-500 dark:group-hover:bg-primary-400 transition-colors duration-150"></div>
+                    </div>
+                  {/if}
+                </th>
+              {/each}
             </tr>
           </thead>
           <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             {#each filteredRuns as run (run.id)}
               <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
-                <td class="px-4 py-3">
-                  <span class="badge {getStatusBadgeClass(run.status)}">{formatStatus(run.status)}</span>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDateTime(run.started_at)}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
-                  {formatDurationBetween(run.started_at, run.completed_at)}
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{run.files_transferred ?? '-'}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 hidden md:table-cell">{formatBytes(run.bytes_transferred)}</td>
-                <td class="px-4 py-3">
-                  <div class="flex items-center gap-2">
-                    <button
-                      onclick={() => selectRun(run)}
-                      class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 p-1"
-                      title={m.history_logs()}
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </button>
-                    <button
-                      onclick={() => confirmDeleteRun(run.id)}
-                      class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm p-1"
-                      title={m.history_delete_this_run()}
-                    >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  </div>
-                </td>
+                {#each $historyTablePreferencesStore.visibleColumns as col (col)}
+                  {#if col === 'job'}
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{getJobName(run.job_id)}</td>
+                  {:else if col === 'status'}
+                    <td class="px-4 py-3">
+                      <span class="badge {getStatusBadgeClass(run.status)}">{formatStatus(run.status)}</span>
+                    </td>
+                  {:else if col === 'started'}
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDateTime(run.started_at)}</td>
+                  {:else if col === 'duration'}
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                      {formatDurationBetween(run.started_at, run.completed_at)}
+                    </td>
+                  {:else if col === 'files'}
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{run.files_transferred ?? '-'}</td>
+                  {:else if col === 'size'}
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{formatBytes(run.bytes_transferred)}</td>
+                  {:else if col === 'actions'}
+                    <td class="px-4 py-3">
+                      <div class="flex items-center gap-2">
+                        <button
+                          onclick={() => selectRun(run)}
+                          class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 p-1"
+                          title={m.history_logs()}
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        </button>
+                        <button
+                          onclick={() => confirmDeleteRun(run.id)}
+                          class="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm p-1"
+                          title={m.history_delete_this_run()}
+                        >
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  {/if}
+                {/each}
               </tr>
             {/each}
           </tbody>

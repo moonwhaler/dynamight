@@ -2,8 +2,6 @@ import { writable } from 'svelte/store';
 
 export type ColumnKey = 'job' | 'status' | 'sources' | 'destination' | 'last_run' | 'schedule' | 'options' | 'actions';
 
-const STORAGE_KEY = 'dynamight-job-table-prefs';
-
 export const FIXED_COLUMNS: ColumnKey[] = ['job', 'actions'];
 export const ALL_COLUMNS: ColumnKey[] = ['job', 'status', 'sources', 'destination', 'last_run', 'schedule', 'options', 'actions'];
 
@@ -19,72 +17,79 @@ const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
   actions: 80,
 };
 
-interface TablePreferences {
-  visibleColumns: ColumnKey[];
-  columnWidths: Record<ColumnKey, number>;
+interface TablePreferences<T extends string> {
+  visibleColumns: T[];
+  columnWidths: Record<T, number>;
 }
 
-function validatePreferences(raw: unknown): TablePreferences {
-  const defaults: TablePreferences = {
-    visibleColumns: DEFAULT_VISIBLE,
-    columnWidths: { ...DEFAULT_WIDTHS },
-  };
+export function createTablePreferencesStore<T extends string>(config: {
+  storageKey: string;
+  allColumns: readonly T[];
+  fixedColumns: readonly T[];
+  defaultVisible: readonly T[];
+  defaultWidths: Record<T, number>;
+}) {
+  const { storageKey, allColumns, fixedColumns, defaultVisible, defaultWidths } = config;
+  const firstFixed = fixedColumns[0];
+  const lastFixed = fixedColumns[fixedColumns.length - 1];
 
-  if (!raw || typeof raw !== 'object') return defaults;
-  const r = raw as Record<string, unknown>;
+  function validatePreferences(raw: unknown): TablePreferences<T> {
+    const defaults: TablePreferences<T> = {
+      visibleColumns: [...defaultVisible],
+      columnWidths: { ...defaultWidths },
+    };
 
-  // Validate visibleColumns
-  let visibleColumns: ColumnKey[] = DEFAULT_VISIBLE;
-  if (Array.isArray(r.visibleColumns)) {
-    const filtered = r.visibleColumns.filter((c): c is ColumnKey =>
-      ALL_COLUMNS.includes(c as ColumnKey)
-    );
-    // Ensure 'job' is first and 'actions' is last
-    const withoutFixed = filtered.filter((c) => !FIXED_COLUMNS.includes(c));
-    visibleColumns = ['job', ...withoutFixed, 'actions'];
+    if (!raw || typeof raw !== 'object') return defaults;
+    const r = raw as Record<string, unknown>;
+
+    let visibleColumns: T[] = [...defaultVisible];
+    if (Array.isArray(r.visibleColumns)) {
+      const filtered = (r.visibleColumns as unknown[]).filter(
+        (c): c is T => typeof c === 'string' && (allColumns as readonly string[]).includes(c)
+      );
+      const withoutFixed = filtered.filter((c) => !fixedColumns.includes(c));
+      visibleColumns = [firstFixed, ...withoutFixed, lastFixed];
+    }
+
+    let columnWidths: Record<T, number> = { ...defaultWidths };
+    if (r.columnWidths && typeof r.columnWidths === 'object') {
+      const rawWidths = r.columnWidths as Record<string, unknown>;
+      for (const col of allColumns) {
+        const w = rawWidths[col as string];
+        if (typeof w === 'number' && w >= 60) {
+          columnWidths[col] = w;
+        }
+      }
+    }
+
+    return { visibleColumns, columnWidths };
   }
 
-  // Validate columnWidths
-  let columnWidths: Record<ColumnKey, number> = { ...DEFAULT_WIDTHS };
-  if (r.columnWidths && typeof r.columnWidths === 'object') {
-    const rawWidths = r.columnWidths as Record<string, unknown>;
-    for (const col of ALL_COLUMNS) {
-      const w = rawWidths[col];
-      if (typeof w === 'number' && w >= 60) {
-        columnWidths[col] = w;
-      }
+  function loadFromStorage(): TablePreferences<T> {
+    if (typeof window === 'undefined') {
+      return { visibleColumns: [...defaultVisible], columnWidths: { ...defaultWidths } };
+    }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (!stored) return { visibleColumns: [...defaultVisible], columnWidths: { ...defaultWidths } };
+      return validatePreferences(JSON.parse(stored));
+    } catch {
+      return { visibleColumns: [...defaultVisible], columnWidths: { ...defaultWidths } };
     }
   }
 
-  return { visibleColumns, columnWidths };
-}
-
-function loadFromStorage(): TablePreferences {
-  if (typeof window === 'undefined') {
-    return { visibleColumns: DEFAULT_VISIBLE, columnWidths: { ...DEFAULT_WIDTHS } };
+  function saveToStorage(prefs: TablePreferences<T>) {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(prefs));
+    } catch {
+      // ignore storage errors
+    }
   }
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return { visibleColumns: DEFAULT_VISIBLE, columnWidths: { ...DEFAULT_WIDTHS } };
-    return validatePreferences(JSON.parse(stored));
-  } catch {
-    return { visibleColumns: DEFAULT_VISIBLE, columnWidths: { ...DEFAULT_WIDTHS } };
-  }
-}
 
-function saveToStorage(prefs: TablePreferences) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-  } catch {
-    // ignore storage errors
-  }
-}
+  const { subscribe, set, update } = writable<TablePreferences<T>>(loadFromStorage());
 
-function createTablePreferencesStore() {
-  const { subscribe, set, update } = writable<TablePreferences>(loadFromStorage());
-
-  function persist(prefs: TablePreferences) {
+  function persist(prefs: TablePreferences<T>) {
     set(prefs);
     saveToStorage(prefs);
   }
@@ -92,16 +97,15 @@ function createTablePreferencesStore() {
   return {
     subscribe,
 
-    setColumnVisibility(col: ColumnKey, visible: boolean) {
-      if (FIXED_COLUMNS.includes(col)) return;
+    setColumnVisibility(col: T, visible: boolean) {
+      if (fixedColumns.includes(col)) return;
       update((prefs) => {
         const current = prefs.visibleColumns;
-        let next: ColumnKey[];
+        let next: T[];
         if (visible) {
           if (current.includes(col)) return prefs;
-          // Insert before 'actions'
-          const withoutActions = current.filter((c) => c !== 'actions');
-          next = [...withoutActions, col, 'actions'];
+          const withoutLast = current.filter((c) => c !== lastFixed);
+          next = [...withoutLast, col, lastFixed];
         } else {
           next = current.filter((c) => c !== col);
         }
@@ -111,18 +115,17 @@ function createTablePreferencesStore() {
       });
     },
 
-    setColumnOrder(cols: ColumnKey[]) {
+    setColumnOrder(cols: T[]) {
       update((prefs) => {
-        // Ensure fixed columns are in correct positions
-        const withoutFixed = cols.filter((c) => !FIXED_COLUMNS.includes(c));
-        const ordered: ColumnKey[] = ['job', ...withoutFixed, 'actions'];
+        const withoutFixed = cols.filter((c) => !fixedColumns.includes(c));
+        const ordered: T[] = [firstFixed, ...withoutFixed, lastFixed];
         const updated = { ...prefs, visibleColumns: ordered };
         saveToStorage(updated);
         return updated;
       });
     },
 
-    setColumnWidth(col: ColumnKey, width: number) {
+    setColumnWidth(col: T, width: number) {
       update((prefs) => {
         const clamped = Math.max(60, Math.round(width));
         const updated = {
@@ -135,10 +138,16 @@ function createTablePreferencesStore() {
     },
 
     reset() {
-      persist({ visibleColumns: DEFAULT_VISIBLE, columnWidths: { ...DEFAULT_WIDTHS } });
+      persist({ visibleColumns: [...defaultVisible], columnWidths: { ...defaultWidths } });
     },
   };
 }
 
-export const tablePreferencesStore = createTablePreferencesStore();
+export const tablePreferencesStore = createTablePreferencesStore<ColumnKey>({
+  storageKey: 'dynamight-job-table-prefs',
+  allColumns: ALL_COLUMNS,
+  fixedColumns: FIXED_COLUMNS,
+  defaultVisible: DEFAULT_VISIBLE,
+  defaultWidths: DEFAULT_WIDTHS,
+});
 export { DEFAULT_VISIBLE, DEFAULT_WIDTHS };

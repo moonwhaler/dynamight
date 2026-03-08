@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fileBrowserStore } from '$lib/stores/fileBrowser';
+  import { fileBrowserTablePreferencesStore, FB_ALL, FB_FIXED, FB_DEFAULT_VISIBLE } from '$lib/stores/fileBrowserTablePreferences';
+  import type { FileBrowserColumnKey } from '$lib/stores/fileBrowserTablePreferences';
   import type { UsbDrive } from '$lib/types';
   import BreadcrumbNav from '../components/filebrowser/BreadcrumbNav.svelte';
   import FileList from '../components/filebrowser/FileList.svelte';
   import DriveSelector from '../components/filebrowser/DriveSelector.svelte';
   import DeleteConfirmDialog from '../components/filebrowser/DeleteConfirmDialog.svelte';
+  import ColumnSelector from '../components/ui/ColumnSelector.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   // Subscribe to store
@@ -114,6 +117,24 @@
     fileBrowserStore.toggleSortOrder();
   }
 
+  function columnLabel(col: string): string {
+    switch (col as FileBrowserColumnKey) {
+      case 'name':     return m.filebrowser_column_name();
+      case 'size':     return m.filebrowser_column_size();
+      case 'modified': return m.filebrowser_column_modified();
+      case 'actions':  return m.filebrowser_column_actions();
+      default:         return col;
+    }
+  }
+
+  function handleColumnToggle(col: string) {
+    const key = col as FileBrowserColumnKey;
+    fileBrowserTablePreferencesStore.setColumnVisibility(
+      key,
+      !$fileBrowserTablePreferencesStore.visibleColumns.includes(key)
+    );
+  }
+
   // New folder handlers
   function openNewFolderDialog() {
     newFolderName = '';
@@ -159,7 +180,7 @@
       <button
         type="button"
         onclick={toggleViewMode}
-        class="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+        class="py-2.5 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
         title={browserState.viewMode === 'list' ? 'Grid view' : 'List view'}
       >
         {#if browserState.viewMode === 'list'}
@@ -172,6 +193,19 @@
           </svg>
         {/if}
       </button>
+
+      <!-- Column selector (only in list mode when browsing) -->
+      {#if browserState.viewMode === 'list' && browserState.currentPath}
+        <ColumnSelector
+          visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
+          allColumns={FB_ALL}
+          fixedColumns={FB_FIXED}
+          defaultVisible={FB_DEFAULT_VISIBLE}
+          {columnLabel}
+          onToggle={handleColumnToggle}
+          onReset={() => fileBrowserTablePreferencesStore.reset()}
+        />
+      {/if}
 
       <!-- New folder button (only when browsing a path) -->
       {#if browserState.currentPath}
