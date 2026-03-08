@@ -480,6 +480,8 @@
   "settings_confirm_kill_process": "Vor dem Stoppen bestätigen",
   "settings_confirm_kill_process_desc": "Bestätigungsdialog anzeigen, bevor ein laufender Backup-Prozess beendet wird.",
   "settings_filebrowser_title": "Dateibrowser",
+  "settings_show_directory_sizes": "Verzeichnisgrößen anzeigen",
+  "settings_show_directory_sizes_desc": "Berechnet und zeigt die Gesamtgröße von Verzeichnissen an. Dies kann das Durchsuchen bei Verzeichnissen mit vielen Dateien verlangsamen.",
   "settings_delete_verification_label": "Lösch-Verifizierungszeitraum",
   "settings_delete_verification_desc": "Zeitfenster nach der Passwortverifizierung, in dem Dateien ohne erneute Passworteingabe gelöscht werden können.",
   "settings_delete_verification_minutes": "Minuten",

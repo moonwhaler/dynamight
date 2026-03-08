@@ -29,6 +29,7 @@
     clickableFiles?: boolean;
     basePath?: string;
     deepSearchLoading?: boolean;
+    loadingDirSizes?: boolean;
   }
 
   let {
@@ -52,6 +53,7 @@
     clickableFiles = false,
     basePath = '',
     deepSearchLoading = false,
+    loadingDirSizes = false,
   }: Props = $props();
 
   let tableContainerEl = $state<HTMLElement | null>(null);
@@ -295,6 +297,7 @@
             {clickableFiles}
             {basePath}
             visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
+            loadingSize={loadingDirSizes && entry.is_dir && entry.size == null}
           />
         {/each}
       </tbody>
@@ -318,6 +321,7 @@
         {searchQuery}
         {clickableFiles}
         {basePath}
+        loadingSize={loadingDirSizes && entry.is_dir && entry.size == null}
       />
     {/each}
   </div>

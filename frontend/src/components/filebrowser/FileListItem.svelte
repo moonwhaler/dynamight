@@ -18,6 +18,7 @@
     searchQuery?: string;
     clickableFiles?: boolean;
     basePath?: string;
+    loadingSize?: boolean;
   }
 
   let {
@@ -35,6 +36,7 @@
     searchQuery = '',
     clickableFiles = false,
     basePath = '',
+    loadingSize = false,
   }: Props = $props();
 
   const relativePath = $derived.by(() => {
@@ -156,7 +158,11 @@
         </td>
       {:else if col === 'size'}
         <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm">
-          {entry.is_dir ? '-' : formatFileSize(entry.size)}
+          {#if loadingSize && entry.size == null}
+            <span class="inline-block w-12 h-4 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></span>
+          {:else}
+            {entry.size != null ? formatFileSize(entry.size) : '-'}
+          {/if}
         </td>
       {:else if col === 'modified'}
         <td class="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400 text-sm">
@@ -237,6 +243,11 @@
         </span>
         {#if relativePath}
           <span class="text-xs text-gray-400 dark:text-gray-500 truncate w-full">{relativePath}</span>
+        {/if}
+        {#if loadingSize && entry.size == null}
+          <span class="inline-block w-12 h-3 rounded bg-gray-200 dark:bg-gray-700 animate-pulse"></span>
+        {:else if entry.size != null}
+          <span class="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(entry.size)}</span>
         {/if}
       </button>
 

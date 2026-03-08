@@ -360,8 +360,20 @@ impl MountService {
             .collect())
     }
 
+    /// Calculate the total size of a directory recursively.
+    pub fn calculate_dir_size(path: &std::path::Path) -> u64 {
+        WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.metadata().ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .sum()
+    }
+
     /// Browse a directory path
-    pub fn browse_path(&self, path: &str) -> Result<Vec<DirectoryEntry>, MountError> {
+    pub fn browse_path(&self, path: &str, include_dir_sizes: bool) -> Result<Vec<DirectoryEntry>, MountError> {
         let entries = std::fs::read_dir(path)?;
         let mut result = Vec::new();
 
@@ -391,15 +403,19 @@ impl MountService {
                 None
             };
 
+            let size = if metadata.is_file() {
+                Some(metadata.len())
+            } else if include_dir_sizes {
+                Some(Self::calculate_dir_size(&entry.path()))
+            } else {
+                None
+            };
+
             result.push(DirectoryEntry {
                 name,
                 path: entry.path().to_string_lossy().to_string(),
                 is_dir,
-                size: if metadata.is_file() {
-                    Some(metadata.len())
-                } else {
-                    None
-                },
+                size,
                 modified,
                 extension,
             });

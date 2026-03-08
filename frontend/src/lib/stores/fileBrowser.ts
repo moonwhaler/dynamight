@@ -35,6 +35,7 @@ interface FileBrowserState {
   viewMode: ViewMode;
   sortBy: SortField;
   sortOrder: SortOrder;
+  loadingDirSizes: boolean;
   error: string | null;
 }
 
@@ -94,6 +95,7 @@ function createFileBrowserStore() {
     viewMode: loadPreference(STORAGE_KEYS.viewMode, 'list'),
     sortBy: loadPreference(STORAGE_KEYS.sortBy, 'name'),
     sortOrder: loadPreference(STORAGE_KEYS.sortOrder, 'asc'),
+    loadingDirSizes: false,
     error: null,
   };
 
@@ -115,8 +117,10 @@ function createFileBrowserStore() {
           const newHistory = previousPath && previousPath !== result.path
             ? [...s.pathHistory, previousPath]
             : s.pathHistory;
-          return { ...s, currentPath: result.path, entries: sortedEntries, pathHistory: newHistory, loading: false, error: null };
+          return { ...s, currentPath: result.path, entries: sortedEntries, pathHistory: newHistory, loading: false, loadingDirSizes: false, error: null };
         });
+        // Fire-and-forget: fetch directory sizes lazily
+        this.fetchDirSizes(result.entries, result.path);
         return true;
       } catch (e) {
         const message = e instanceof Error ? e.message : String(m.error_browse_path());
@@ -144,6 +148,31 @@ function createFileBrowserStore() {
       });
       if (previousPath) return this.browsePath(previousPath);
       return false;
+    },
+
+    async fetchDirSizes(entries: DirectoryEntry[], browsedPath: string): Promise<void> {
+      const dirPaths = entries.filter(e => e.is_dir).map(e => e.path);
+      if (dirPaths.length === 0) return;
+
+      update((s) => ({ ...s, loadingDirSizes: true }));
+      try {
+        const result = await api.system.dirSizes(dirPaths);
+        update((s) => {
+          // Guard: discard if user navigated away
+          if (s.currentPath !== browsedPath) return { ...s, loadingDirSizes: false };
+          const sizeMap = result.sizes;
+          if (Object.keys(sizeMap).length === 0) return { ...s, loadingDirSizes: false };
+          const updatedEntries = s.entries.map(e => {
+            if (e.is_dir && e.path in sizeMap) {
+              return { ...e, size: sizeMap[e.path] };
+            }
+            return e;
+          });
+          return { ...s, entries: sortEntries(updatedEntries, s.sortBy, s.sortOrder), loadingDirSizes: false };
+        });
+      } catch {
+        update((s) => ({ ...s, loadingDirSizes: false }));
+      }
     },
 
     async loadDrives(): Promise<void> {
@@ -389,6 +418,7 @@ function createFileBrowserStore() {
         ...initialState,
         deleting: null,
         deleteVerifiedUntil: null,
+        loadingDirSizes: false,
         viewMode: loadPreference(STORAGE_KEYS.viewMode, 'list'),
         sortBy: loadPreference(STORAGE_KEYS.sortBy, 'name'),
         sortOrder: loadPreference(STORAGE_KEYS.sortOrder, 'asc'),

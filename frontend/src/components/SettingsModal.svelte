@@ -45,6 +45,10 @@
   let searchTimeoutLoading = $state(false);
   let initialSearchTimeout = $state<number | null>(null);
 
+  // Show directory sizes state
+  let showDirectorySizes = $state(false);
+  let showDirectorySizesLoading = $state(false);
+
   function resetPasswordForm() {
     currentPassword = '';
     newPassword = '';
@@ -81,6 +85,7 @@
       searchTimeoutSeconds = settings.search_timeout_seconds;
       initialSearchTimeout = settings.search_timeout_seconds;
       searchTimeoutInput = settings.search_timeout_seconds?.toString() ?? '10';
+      showDirectorySizes = settings.show_directory_sizes ?? false;
     } catch (err) {
       console.error('Failed to load settings:', err);
     }
@@ -232,6 +237,20 @@
       searchTimeoutInput = initialSearchTimeout?.toString() ?? '10';
     } finally {
       searchTimeoutLoading = false;
+    }
+  }
+
+  async function handleShowDirectorySizesChange(checked: boolean) {
+    showDirectorySizesLoading = true;
+    try {
+      await api.settings.update({ show_directory_sizes: checked });
+      showDirectorySizes = checked;
+      showToast({ message: m.settings_saved(), variant: 'success' });
+    } catch (err) {
+      showToast({ message: err instanceof Error ? err.message : m.settings_save_error(), variant: 'error' });
+      showDirectorySizes = !checked;
+    } finally {
+      showDirectorySizesLoading = false;
     }
   }
 
@@ -437,6 +456,32 @@
                 <!-- File Browser Section -->
                 <div class="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                   <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{m.settings_filebrowser_title()}</h4>
+
+                  <label class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors">
+                    <div class="relative flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={showDirectorySizes}
+                        onchange={(e) => handleShowDirectorySizesChange(e.currentTarget.checked)}
+                        disabled={showDirectorySizesLoading}
+                        class="peer sr-only"
+                      />
+                      <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"></div>
+                      <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"></div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-2">
+                        {m.settings_show_directory_sizes()}
+                        {#if showDirectorySizesLoading}
+                          <svg class="w-4 h-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        {/if}
+                      </div>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{m.settings_show_directory_sizes_desc()}</p>
+                    </div>
+                  </label>
 
                   <div class="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

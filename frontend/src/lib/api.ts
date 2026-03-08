@@ -336,11 +336,13 @@ export const api = {
       max_runs_per_job: number | null;
       delete_verification_window_minutes: number | null;
       search_timeout_seconds: number | null;
+      show_directory_sizes: boolean | null;
     }>('/settings'),
     update: (settings: {
       max_runs_per_job?: number | null;
       delete_verification_window_minutes?: number | null;
       search_timeout_seconds?: number | null;
+      show_directory_sizes?: boolean;
     }) =>
       request<{ success: boolean }>('/settings', {
         method: 'PUT',
@@ -396,6 +398,11 @@ export const api = {
       }),
     deleteStatus: () =>
       request<{ verified: boolean; expires_at?: number }>('/system/delete-status'),
+    dirSizes: (paths: string[]) =>
+      request<{ sizes: Record<string, number> }>('/system/dir-sizes', {
+        method: 'POST',
+        body: JSON.stringify({ paths }),
+      }),
   },
 
   credentials: {

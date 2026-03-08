@@ -454,6 +454,7 @@
         clickableFiles={searchMode === 'deep'}
         basePath={deepSearchBasePath}
         {deepSearchLoading}
+        loadingDirSizes={browserState.loadingDirSizes}
       />
     </div>
   {:else}

@@ -215,10 +215,9 @@ pub async fn browse_path(
         return ApiError::path_not_allowed().into_response();
     }
 
-    match state
-        .mount_service
-        .browse_path(&canonical.to_string_lossy())
-    {
+    let canonical_str = canonical.to_string_lossy().to_string();
+
+    match state.mount_service.browse_path(&canonical_str, false) {
         Ok(entries) => Json(json!({
             "path": canonical.to_string_lossy(),
             "entries": entries
@@ -226,6 +225,100 @@ pub async fn browse_path(
         .into_response(),
         Err(e) => {
             tracing::error!("Failed to browse path '{}': {}", canonical.display(), e);
+            ApiError::new(ErrorCode::BrowseFailed).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DirSizesRequest {
+    pub paths: Vec<String>,
+}
+
+/// POST /system/dir-sizes - Compute directory sizes in batch with caching
+pub async fn dir_sizes(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DirSizesRequest>,
+) -> impl IntoResponse {
+    // Early return if feature is disabled
+    let enabled = *state.show_directory_sizes.read().await;
+    if !enabled {
+        return Json(json!({ "sizes": {} })).into_response();
+    }
+
+    // Cap the number of paths to prevent abuse
+    if req.paths.len() > 200 {
+        return ApiError::new(ErrorCode::BrowseFailed).into_response();
+    }
+
+    // Validate and canonicalize all paths
+    let mut valid_paths: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for path_str in &req.paths {
+        let path = Path::new(path_str);
+        if !is_path_allowed(path, &state.config.allowed_browse_paths) {
+            continue;
+        }
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
+            continue;
+        }
+        if !canonical.is_dir() {
+            continue;
+        }
+        valid_paths.push((path_str.clone(), canonical));
+    }
+
+    let cache = state.dir_size_cache.clone();
+    let ttl = Duration::from_secs(60);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut sizes: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+        for (original_path, canonical) in &valid_paths {
+            // Check cache
+            {
+                let cache_read = cache.read().unwrap();
+                if let Some(&(size, computed_at)) = cache_read.get(canonical) {
+                    if computed_at.elapsed() < ttl {
+                        sizes.insert(original_path.clone(), size);
+                        continue;
+                    }
+                }
+            }
+
+            // Cache miss: compute size
+            let size = crate::services::MountService::calculate_dir_size(canonical);
+
+            // Update cache
+            {
+                let mut cache_write = cache.write().unwrap();
+                // Evict oldest entries when cache exceeds 10,000
+                if cache_write.len() >= 10_000 {
+                    if let Some(oldest_key) = cache_write
+                        .iter()
+                        .min_by_key(|(_, (_, t))| *t)
+                        .map(|(k, _)| k.clone())
+                    {
+                        cache_write.remove(&oldest_key);
+                    }
+                }
+                cache_write.insert(canonical.clone(), (size, Instant::now()));
+            }
+
+            sizes.insert(original_path.clone(), size);
+        }
+
+        sizes
+    })
+    .await;
+
+    match result {
+        Ok(sizes) => Json(json!({ "sizes": sizes })).into_response(),
+        Err(e) => {
+            tracing::error!("Dir sizes task failed: {}", e);
             ApiError::new(ErrorCode::BrowseFailed).into_response()
         }
     }

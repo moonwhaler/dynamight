@@ -15,6 +15,7 @@ use axum::{
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,6 +42,11 @@ pub struct AppState {
     pub delete_verifications: RwLock<HashMap<i64, Instant>>,
     /// Configurable timeout for recursive file search (in seconds).
     pub search_timeout_seconds: RwLock<u32>,
+    /// Whether to calculate and show directory sizes in the file browser.
+    pub show_directory_sizes: RwLock<bool>,
+    /// In-memory cache for directory sizes (path -> (size, computed_at)).
+    /// Uses std::sync::RwLock because it's accessed inside spawn_blocking.
+    pub dir_size_cache: Arc<std::sync::RwLock<HashMap<PathBuf, (u64, Instant)>>>,
 }
 
 use tower::ServiceBuilder;
@@ -242,6 +248,18 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|(value,)| value.parse::<u32>().ok())
         .unwrap_or(10);
 
+    // Check for show_directory_sizes in database, default to false if not set
+    let db_show_dir_sizes: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = 'show_directory_sizes'"
+    )
+    .fetch_optional(&db)
+    .await
+    .unwrap_or(None);
+
+    let show_directory_sizes = db_show_dir_sizes
+        .map(|(value,)| value == "true")
+        .unwrap_or(false);
+
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
@@ -300,6 +318,8 @@ async fn main() -> anyhow::Result<()> {
         log_tx,
         delete_verifications: RwLock::new(HashMap::new()),
         search_timeout_seconds: RwLock::new(search_timeout_seconds),
+        show_directory_sizes: RwLock::new(show_directory_sizes),
+        dir_size_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
     });
 
     // Start periodic cleanup of expired pending TOTP sessions
@@ -372,6 +392,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/generate-mount-point", post(handlers::system::generate_mount_point))
         .route("/system/verify-delete-access", post(handlers::system::verify_delete_access))
         .route("/system/delete", delete(handlers::system::delete_path))
+        .route("/system/dir-sizes", post(handlers::system::dir_sizes))
         .route("/system/delete-status", get(handlers::system::delete_status))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
