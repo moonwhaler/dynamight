@@ -149,7 +149,25 @@ function createFileBrowserStore() {
       update((s) => ({ ...s, loadingDrives: true }));
       try {
         const drives = await api.system.drives();
-        update((s) => ({ ...s, drives, loadingDrives: false }));
+        update((s) => {
+          const newState = { ...s, drives, loadingDrives: false };
+
+          // If currently browsing a drive that's no longer mounted, reset the view
+          if (s.currentPath) {
+            const wasOnDrive = s.drives.some(d => d.mountpoint && s.currentPath.startsWith(d.mountpoint));
+            if (wasOnDrive) {
+              const stillMounted = drives.some(d => d.mountpoint && s.currentPath.startsWith(d.mountpoint));
+              if (!stillMounted) {
+                newState.currentPath = '';
+                newState.entries = [];
+                newState.pathHistory = [];
+                newState.error = null;
+              }
+            }
+          }
+
+          return newState;
+        });
       } catch {
         update((s) => ({ ...s, loadingDrives: false }));
       }
