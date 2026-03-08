@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.7", features = ["ws", "macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "limit", "set-header"] }
@@ -16,6 +16,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 
 # Authentication
 argon2 = "0.5"
@@ -63,6 +64,12 @@ walkdir = "2"
 # Encryption for credentials
 aes-gcm = "0.10"
 sha2 = "0.10"
+
+# Encryption for config backup (OpenSSL-compatible AES-256-CBC)
+pbkdf2 = "0.12"
+cbc = "0.1"
+aes = "0.8"
+hmac = "0.12"
 
 # Cloud providers
 aws-sdk-s3 = "1"

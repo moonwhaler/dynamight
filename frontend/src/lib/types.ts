@@ -406,6 +406,27 @@ export function createDefaultDestination(type: DestinationType): DestinationConf
   }
 }
 
+// Config backup types
+export interface ImportPreview {
+  valid: boolean;
+  version: number;
+  settings_count: number;
+  credentials_count: number;
+  jobs_count: number;
+  schedules_count: number;
+  conflicts: string[];
+  has_oauth_credentials: boolean;
+}
+
+export interface ImportResult {
+  success: boolean;
+  settings_imported: number;
+  credentials_imported: number;
+  jobs_imported: number;
+  schedules_imported: number;
+  warnings: string[];
+}
+
 // Helper function to create default sync options
 export function createDefaultSyncOptions(): SyncOptions {
   return {

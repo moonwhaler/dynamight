@@ -109,6 +109,13 @@ pub enum ErrorCode {
     #[allow(dead_code)]
     SettingsSaveFailed,
 
+    // Config backup errors
+    BackupInvalidPassword,
+    BackupInvalidFormat,
+    BackupUnsupportedVersion,
+    BackupJobsRunning,
+    BackupPasswordTooShort,
+
     // Generic
     InternalError,
 }
@@ -371,7 +378,14 @@ impl IntoResponse for ApiError {
             | ErrorCode::CompressStagingPathNotAllowed
             | ErrorCode::CompressStagingOverlapsSource
             | ErrorCode::CompressInvalidCustomName
-            | ErrorCode::CompressMaxArchivesInvalid => StatusCode::BAD_REQUEST,
+            | ErrorCode::CompressMaxArchivesInvalid
+            | ErrorCode::BackupInvalidPassword
+            | ErrorCode::BackupInvalidFormat
+            | ErrorCode::BackupUnsupportedVersion
+            | ErrorCode::BackupPasswordTooShort => StatusCode::BAD_REQUEST,
+
+            // 409 Conflict - backup refused while jobs running
+            ErrorCode::BackupJobsRunning => StatusCode::CONFLICT,
 
             // 428 Precondition Required - verification needed
             ErrorCode::DeleteVerificationRequired => StatusCode::PRECONDITION_REQUIRED,

@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod config_backup;
 pub mod credentials;
 pub mod jobs;
 pub mod logs;

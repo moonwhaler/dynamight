@@ -23,6 +23,8 @@ import type {
   CredentialProviderType,
   DestinationConfig,
   SpaceCheckResponse,
+  ImportPreview,
+  ImportResult,
 } from './types';
 import * as m from '$lib/paraglide/messages.js';
 
@@ -123,6 +125,13 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
 
     // Run errors
     RUN_NOT_FOUND: () => m.error_generic(),
+
+    // Config backup errors
+    BACKUP_INVALID_PASSWORD: () => m.backup_invalid_password(),
+    BACKUP_INVALID_FORMAT: () => m.backup_invalid_file(),
+    BACKUP_UNSUPPORTED_VERSION: () => m.backup_unsupported_version(),
+    BACKUP_JOBS_RUNNING: () => m.backup_jobs_running(),
+    BACKUP_PASSWORD_TOO_SHORT: () => m.backup_password_too_short(),
   };
 
   const translator = translations[code];
@@ -380,6 +389,77 @@ export const api = {
       request<{ success: boolean }>(`/credentials/${id}`, { method: 'DELETE' }),
     getUsage: (id: number) =>
       request<CredentialUsage>(`/credentials/${id}/usage`),
+  },
+
+  configBackup: {
+    export: async (password: string): Promise<Blob> => {
+      const response = await fetch(`${API_BASE}/config/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = String(m.backup_export_error());
+        try {
+          const errorData = JSON.parse(text);
+          if ('code' in errorData) {
+            errorMessage = String(translateErrorCode(errorData.code, errorData.params));
+          }
+        } catch { /* ignore */ }
+        throw new ApiError(response.status, errorMessage);
+      }
+      return response.blob();
+    },
+
+    preview: async (file: File, password: string, strategy: 'merge' | 'replace'): Promise<ImportPreview> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('password', password);
+      formData.append('strategy', strategy);
+      const response = await fetch(`${API_BASE}/config/import/preview`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = String(m.backup_import_error());
+        try {
+          const errorData = JSON.parse(text);
+          if ('code' in errorData) {
+            errorMessage = String(translateErrorCode(errorData.code, errorData.params));
+          }
+        } catch { /* ignore */ }
+        throw new ApiError(response.status, errorMessage);
+      }
+      return response.json();
+    },
+
+    import: async (file: File, password: string, strategy: 'merge' | 'replace'): Promise<ImportResult> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('password', password);
+      formData.append('strategy', strategy);
+      const response = await fetch(`${API_BASE}/config/import`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = String(m.backup_import_error());
+        try {
+          const errorData = JSON.parse(text);
+          if ('code' in errorData) {
+            errorMessage = String(translateErrorCode(errorData.code, errorData.params));
+          }
+        } catch { /* ignore */ }
+        throw new ApiError(response.status, errorMessage);
+      }
+      return response.json();
+    },
   },
 
   providers: {

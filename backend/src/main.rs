@@ -352,6 +352,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/delete-status", get(handlers::system::delete_status))
         // Settings
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
+        // Config backup/restore
+        .route("/config/export", post(handlers::config_backup::export_config))
+        .route("/config/import", post(handlers::config_backup::import_config))
+        .route("/config/import/preview", post(handlers::config_backup::preview_import))
         // Credentials
         .route("/credentials", get(handlers::credentials::list_credentials).post(handlers::credentials::create_credential))
         .route("/credentials/:id", get(handlers::credentials::get_credential).put(handlers::credentials::update_credential).delete(handlers::credentials::delete_credential))

@@ -462,6 +462,12 @@ impl CredentialService {
         })
     }
 
+    /// Encrypt credential data for import (public wrapper around encrypt).
+    /// Used by the config backup service when importing credentials.
+    pub fn encrypt_for_import(&self, data: &CredentialData) -> Result<Vec<u8>> {
+        self.encrypt(data)
+    }
+
     /// Check if a specific credential uses legacy encryption format.
     pub async fn is_legacy_format(&self, db: &SqlitePool, id: i64) -> Result<Option<bool>> {
         let row: Option<(Vec<u8>,)> =

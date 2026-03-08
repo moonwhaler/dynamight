@@ -2,11 +2,13 @@
   import { authStore } from '../../lib/stores/auth';
   import { themeStore } from '../../lib/stores/theme';
   import SettingsModal from '../SettingsModal.svelte';
+  import BackupRestoreModal from '../BackupRestoreModal.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   let { onMenuToggle }: { onMenuToggle?: () => void } = $props();
 
   let showSettingsModal = $state(false);
+  let showBackupModal = $state(false);
   let showSettingsMenu = $state(false);
   let menuRef = $state<HTMLDivElement | null>(null);
   let logoLoaded = $state(false);
@@ -154,6 +156,18 @@
                 <span>{m.common_settings()}</span>
               </button>
 
+              <!-- Backup & Restore -->
+              <button
+                onclick={() => { showBackupModal = true; showSettingsMenu = false; }}
+                class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                role="menuitem"
+              >
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                </svg>
+                <span>{m.backup_menu_label()}</span>
+              </button>
+
               <!-- Mobile Logout -->
               <div class="sm:hidden border-t border-gray-100 dark:border-gray-700 my-1"></div>
               <button
@@ -182,3 +196,4 @@
 </nav>
 
 <SettingsModal bind:open={showSettingsModal} />
+<BackupRestoreModal bind:open={showBackupModal} />
