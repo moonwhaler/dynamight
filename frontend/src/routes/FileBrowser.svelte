@@ -3,7 +3,8 @@
   import { fileBrowserStore } from '$lib/stores/fileBrowser';
   import { fileBrowserTablePreferencesStore, FB_ALL, FB_FIXED, FB_DEFAULT_VISIBLE } from '$lib/stores/fileBrowserTablePreferences';
   import type { FileBrowserColumnKey } from '$lib/stores/fileBrowserTablePreferences';
-  import type { UsbDrive } from '$lib/types';
+  import type { UsbDrive, SearchMode, DirectoryEntry } from '$lib/types';
+  import { api } from '$lib/api';
   import BreadcrumbNav from '../components/filebrowser/BreadcrumbNav.svelte';
   import FileList from '../components/filebrowser/FileList.svelte';
   import FileSearchBar from '../components/filebrowser/FileSearchBar.svelte';
@@ -18,8 +19,76 @@
   // Search state
   let searchQuery = $state('');
   let isSearchOpen = $state(false);
+  let searchMode: SearchMode = $state('local');
+  let deepSearchResults: DirectoryEntry[] = $state([]);
+  let deepSearchLoading = $state(false);
+  let deepSearchTruncated = $state(false);
+  let deepSearchTimedOut = $state(false);
+  let deepSearchBasePath = $state('');
+  // These must NOT be $state — reading them inside functions called during
+  // async work would create reactive dependencies and cause infinite loops.
+  let abortController: AbortController | null = null;
+
+  function abortDeepSearch() {
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+    }
+  }
+
+  async function performDeepSearch() {
+    const q = searchQuery.trim();
+    const path = browserState.currentPath;
+
+    if (searchMode !== 'deep' || q.length < 2 || !path) return;
+
+    abortDeepSearch();
+    deepSearchLoading = true;
+    deepSearchTimedOut = false;
+
+    const controller = new AbortController();
+    abortController = controller;
+    try {
+      const res = await api.system.search(path, q, 200, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        deepSearchResults = res.results;
+        deepSearchTruncated = res.truncated;
+        deepSearchTimedOut = res.timed_out;
+        deepSearchBasePath = res.base_path;
+      }
+    } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      if (!controller.signal.aborted) {
+        deepSearchResults = [];
+        deepSearchTruncated = false;
+        deepSearchTimedOut = false;
+        deepSearchBasePath = '';
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        deepSearchLoading = false;
+      }
+    }
+  }
+
+  function sortResults(entries: DirectoryEntry[]): DirectoryEntry[] {
+    const { sortBy, sortOrder } = browserState;
+    return [...entries].sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      let cmp = 0;
+      switch (sortBy) {
+        case 'name':     cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
+        case 'size':     cmp = (a.size ?? 0) - (b.size ?? 0); break;
+        case 'modified': cmp = (a.modified ?? 0) - (b.modified ?? 0); break;
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+  }
 
   const filteredEntries = $derived.by(() => {
+    if (searchMode === 'deep' && searchQuery.trim().length >= 2) {
+      return sortResults(deepSearchResults);
+    }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return browserState.entries;
     return browserState.entries.filter(e => e.name.toLowerCase().includes(q));
@@ -72,26 +141,52 @@
   }
 
   function closeSearch() {
+    abortDeepSearch();
     isSearchOpen = false;
     searchQuery = '';
+    searchMode = 'local';
+    deepSearchResults = [];
+    deepSearchLoading = false;
+    deepSearchTruncated = false;
+    deepSearchTimedOut = false;
+    deepSearchBasePath = '';
+  }
+
+  function handleSearchModeChange(mode: SearchMode) {
+    searchMode = mode;
+    if (mode === 'local') {
+      abortDeepSearch();
+      deepSearchResults = [];
+      deepSearchLoading = false;
+      deepSearchTruncated = false;
+      deepSearchTimedOut = false;
+      deepSearchBasePath = '';
+    }
   }
 
   // Navigation handlers
   function handleNavigate(path: string) {
-    searchQuery = '';
-    isSearchOpen = false;
+    // In deep search mode, clicking a file navigates to its parent directory
+    if (searchMode === 'deep') {
+      // Check if this is a file (not a directory in the deep results)
+      const entry = deepSearchResults.find(e => e.path === path);
+      if (entry && !entry.is_dir) {
+        const parentDir = path.split('/').slice(0, -1).join('/');
+        closeSearch();
+        fileBrowserStore.browsePath(parentDir);
+        return;
+      }
+      // Directory: navigate into it and close search
+      closeSearch();
+    }
     fileBrowserStore.browsePath(path);
   }
 
   function handleGoUp() {
-    searchQuery = '';
-    isSearchOpen = false;
     fileBrowserStore.goUp();
   }
 
   function handleGoBack() {
-    searchQuery = '';
-    isSearchOpen = false;
     fileBrowserStore.goBack();
   }
 
@@ -327,6 +422,13 @@
           matchCount={filteredEntries.length}
           totalCount={browserState.entries.length}
           onClose={closeSearch}
+          {searchMode}
+          onSearchModeChange={handleSearchModeChange}
+          onSearch={performDeepSearch}
+          {deepSearchLoading}
+          {deepSearchTruncated}
+          {deepSearchTimedOut}
+          deepSearchCount={deepSearchResults.length}
         />
       {/if}
       <FileList
@@ -344,6 +446,9 @@
         onDelete={handleDelete}
         onSortChange={handleSortChange}
         onSortOrderToggle={handleSortOrderToggle}
+        clickableFiles={searchMode === 'deep'}
+        basePath={deepSearchBasePath}
+        {deepSearchLoading}
       />
     </div>
   {:else}

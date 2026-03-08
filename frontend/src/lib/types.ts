@@ -308,6 +308,8 @@ export interface UsbDrive {
   available: string | null;
 }
 
+export type SearchMode = 'local' | 'deep';
+
 export interface DirectoryEntry {
   name: string;
   path: string;

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use thiserror::Error;
+use walkdir::WalkDir;
 
 #[derive(Debug, Error)]
 pub enum MountError {
@@ -414,6 +415,94 @@ impl MountService {
         Ok(result)
     }
 
+    /// Search recursively for files matching a query
+    pub fn search_path(
+        &self,
+        base_path: &str,
+        query: &str,
+        max_results: usize,
+        max_depth: usize,
+    ) -> Result<(Vec<DirectoryEntry>, bool), MountError> {
+        let query_lower = query.to_lowercase();
+        let is_glob = query_lower.contains('*') || query_lower.contains('?');
+        let mut results = Vec::new();
+        let mut truncated = false;
+
+        let walker = WalkDir::new(base_path)
+            .max_depth(max_depth)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                // Skip hidden directories (but not the root)
+                if e.depth() > 0 && e.file_name().to_string_lossy().starts_with('.') {
+                    return false;
+                }
+                true
+            });
+
+        for entry in walker {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            if entry.depth() == 0 {
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+            let matches = if is_glob {
+                glob_match(&query_lower, &name_lower)
+            } else {
+                name_lower.contains(&query_lower)
+            };
+            if !matches {
+                continue;
+            }
+
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            let is_dir = metadata.is_dir();
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+            let extension = if !is_dir {
+                std::path::Path::new(&name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|s| s.to_lowercase())
+            } else {
+                None
+            };
+
+            results.push(DirectoryEntry {
+                name,
+                path: entry.path().to_string_lossy().to_string(),
+                is_dir,
+                size: if metadata.is_file() {
+                    Some(metadata.len())
+                } else {
+                    None
+                },
+                modified,
+                extension,
+            });
+
+            if results.len() >= max_results {
+                truncated = true;
+                break;
+            }
+        }
+
+        Ok((results, truncated))
+    }
+
     /// Generate a safe mount point path from a drive label
     pub fn generate_mount_point(&self, label: Option<&str>, uuid: &str) -> String {
         let base = label
@@ -451,4 +540,37 @@ impl Default for MountService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Simple glob matching supporting `*` (any sequence) and `?` (single char).
+/// Both pattern and text should be pre-lowercased for case-insensitive matching.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (plen, tlen) = (p.len(), t.len());
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
+
+    while ti < tlen {
+        if pi < plen && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < plen && p[pi] == '*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < plen && p[pi] == '*' {
+        pi += 1;
+    }
+
+    pi == plen
 }

@@ -155,6 +155,75 @@ pub async fn browse_path(
 }
 
 #[derive(Deserialize)]
+pub struct SearchQuery {
+    pub path: String,
+    pub query: String,
+    pub max_results: Option<usize>,
+}
+
+pub async fn search_path(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SearchQuery>,
+) -> impl IntoResponse {
+    if params.path.is_empty() {
+        return ApiError::field_required("path").into_response();
+    }
+    if params.query.is_empty() {
+        return ApiError::field_required("query").into_response();
+    }
+
+    let path_obj = Path::new(&params.path);
+    if !is_path_allowed(path_obj, &state.config.allowed_browse_paths) {
+        return ApiError::path_not_allowed().into_response();
+    }
+    let canonical = match std::fs::canonicalize(&params.path) {
+        Ok(p) => p,
+        Err(_) => return ApiError::new(ErrorCode::SearchFailed).into_response(),
+    };
+    if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    let max_results = params.max_results.unwrap_or(200).min(200);
+    let canonical_str = canonical.to_string_lossy().to_string();
+    let query = params.query.clone();
+
+    let timeout_secs = *state.search_timeout_seconds.read().await;
+
+    let search_result = tokio::time::timeout(
+        Duration::from_secs(timeout_secs as u64),
+        tokio::task::spawn_blocking(move || {
+            let ms = crate::services::MountService;
+            ms.search_path(&canonical_str, &query, max_results, 20)
+        }),
+    )
+    .await;
+
+    match search_result {
+        Ok(Ok(Ok((results, truncated)))) => Json(json!({
+            "base_path": canonical.to_string_lossy(),
+            "query": params.query,
+            "results": results,
+            "truncated": truncated,
+            "timed_out": false,
+        }))
+        .into_response(),
+        Err(_) => {
+            // Timeout elapsed
+            Json(json!({
+                "base_path": canonical.to_string_lossy(),
+                "query": params.query,
+                "results": [],
+                "truncated": false,
+                "timed_out": true,
+            }))
+            .into_response()
+        }
+        _ => ApiError::new(ErrorCode::SearchFailed).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct MkdirRequest {
     pub path: String,
 }

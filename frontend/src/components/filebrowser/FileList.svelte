@@ -26,6 +26,9 @@
     selectedPath?: string | null;
     onSelect?: (path: string) => void;
     searchQuery?: string;
+    clickableFiles?: boolean;
+    basePath?: string;
+    deepSearchLoading?: boolean;
   }
 
   let {
@@ -46,6 +49,9 @@
     selectedPath = null,
     onSelect,
     searchQuery = '',
+    clickableFiles = false,
+    basePath = '',
+    deepSearchLoading = false,
   }: Props = $props();
 
   let tableContainerEl = $state<HTMLElement | null>(null);
@@ -146,7 +152,7 @@
   });
 </script>
 
-{#if loading}
+{#if loading || (deepSearchLoading && entries.length === 0)}
   <div class="flex items-center justify-center py-12">
     <svg class="w-8 h-8 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -277,6 +283,8 @@
             selected={selectedPath === entry.path}
             {onSelect}
             {searchQuery}
+            {clickableFiles}
+            {basePath}
             visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
           />
         {/each}
@@ -299,6 +307,8 @@
         selected={selectedPath === entry.path}
         {onSelect}
         {searchQuery}
+        {clickableFiles}
+        {basePath}
       />
     {/each}
   </div>

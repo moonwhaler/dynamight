@@ -16,6 +16,8 @@
     onSelect?: (path: string) => void;
     visibleColumns?: string[];
     searchQuery?: string;
+    clickableFiles?: boolean;
+    basePath?: string;
   }
 
   let {
@@ -31,7 +33,16 @@
     onSelect,
     visibleColumns = ['name', 'size', 'modified', 'actions'],
     searchQuery = '',
+    clickableFiles = false,
+    basePath = '',
   }: Props = $props();
+
+  const relativePath = $derived.by(() => {
+    if (!basePath) return '';
+    const dir = entry.path.split('/').slice(0, -1).join('/');
+    if (dir === basePath) return '';
+    return dir.startsWith(basePath + '/') ? dir.slice(basePath.length + 1) : '';
+  });
 
   function highlightSegments(text: string, query: string): { text: string; highlight: boolean }[] {
     const q = query.trim();
@@ -49,8 +60,12 @@
   const isDownloading = $derived(downloading === entry.path);
   const isDeleting = $derived(deleting === entry.path);
 
+  const isClickable = $derived(entry.is_dir || clickableFiles || (selectable && onSelect));
+
   function handleClick() {
     if (entry.is_dir) {
+      onNavigate(entry.path);
+    } else if (clickableFiles) {
       onNavigate(entry.path);
     } else if (selectable && onSelect) {
       onSelect(entry.path);
@@ -71,10 +86,10 @@
 {#if viewMode === 'list'}
   <!-- List view row -->
   <tr
-    class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors {entry.is_dir ? 'cursor-pointer' : ''} {selected ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
+    class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors {isClickable ? 'cursor-pointer' : ''} {selected ? 'bg-primary-50 dark:bg-primary-900/20' : ''}"
     onclick={handleClick}
-    role={entry.is_dir ? 'button' : undefined}
-    tabindex={entry.is_dir ? 0 : undefined}
+    role={isClickable ? 'button' : undefined}
+    tabindex={isClickable ? 0 : undefined}
     onkeydown={(e) => e.key === 'Enter' && handleClick()}
   >
     <td class="px-4 py-2.5">
@@ -117,13 +132,20 @@
         </div>
 
         <!-- Name -->
-        <span class="truncate text-gray-900 dark:text-white {entry.is_dir ? 'font-medium' : ''}">
-          {#each highlightSegments(entry.name, searchQuery) as seg (seg.text + seg.highlight)}
-            {#if seg.highlight}
-              <mark class="bg-yellow-200 dark:bg-yellow-800/50 text-inherit rounded-sm not-italic">{seg.text}</mark>
-            {:else}{seg.text}{/if}
-          {/each}
-        </span>
+        <div class="truncate">
+          <span class="text-gray-900 dark:text-white {entry.is_dir ? 'font-medium' : ''}">
+            {#each highlightSegments(entry.name, searchQuery) as seg (seg.text + seg.highlight)}
+              {#if seg.highlight}
+                <mark class="bg-yellow-200 dark:bg-yellow-800/50 text-inherit rounded-sm not-italic">{seg.text}</mark>
+              {:else}{seg.text}{/if}
+            {/each}
+          </span>
+          {#if relativePath}
+            <span class="text-xs text-gray-400 dark:text-gray-500 truncate block">
+              {relativePath}
+            </span>
+          {/if}
+        </div>
       </div>
     </td>
 
@@ -209,6 +231,9 @@
             {:else}{seg.text}{/if}
           {/each}
         </span>
+        {#if relativePath}
+          <span class="text-xs text-gray-400 dark:text-gray-500 truncate w-full">{relativePath}</span>
+        {/if}
       </button>
 
       <!-- Delete button for folders -->
@@ -228,7 +253,13 @@
       {/if}
     </div>
   {:else}
-    <div class="card p-4 flex flex-col items-center gap-2 text-center {selected ? 'ring-2 ring-primary-500' : ''}">
+    <div
+      class="card p-4 flex flex-col items-center gap-2 text-center {selected ? 'ring-2 ring-primary-500' : ''} {clickableFiles ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50' : ''}"
+      onclick={clickableFiles ? handleClick : undefined}
+      role={clickableFiles ? 'button' : undefined}
+      tabindex={clickableFiles ? 0 : undefined}
+      onkeydown={clickableFiles ? (e) => e.key === 'Enter' && handleClick() : undefined}
+    >
       <!-- Icon -->
       <div class="w-12 h-12 flex items-center justify-center">
         <svg class="w-10 h-10 {iconInfo.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -244,6 +275,9 @@
           {:else}{seg.text}{/if}
         {/each}
       </span>
+      {#if relativePath}
+        <span class="text-xs text-gray-400 dark:text-gray-500 truncate w-full">{relativePath}</span>
+      {/if}
 
       <!-- Size -->
       <span class="text-xs text-gray-500 dark:text-gray-400">

@@ -38,6 +38,8 @@ pub struct AppState {
     /// Tracks when each user last verified their credentials for file deletion.
     /// Maps user_id -> last verification timestamp.
     pub delete_verifications: RwLock<HashMap<i64, Instant>>,
+    /// Configurable timeout for recursive file search (in seconds).
+    pub search_timeout_seconds: RwLock<u32>,
 }
 
 use tower::ServiceBuilder;
@@ -218,6 +220,18 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|(value,)| value.parse::<u32>().ok())
         .or(Some(5));
 
+    // Check for search_timeout_seconds in database, default to 10 if not set
+    let db_search_timeout: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = 'search_timeout_seconds'"
+    )
+    .fetch_optional(&db)
+    .await
+    .unwrap_or(None);
+
+    let search_timeout_seconds = db_search_timeout
+        .and_then(|(value,)| value.parse::<u32>().ok())
+        .unwrap_or(10);
+
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
     let mount_service = MountService::new();
@@ -275,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
         credential_service,
         log_tx,
         delete_verifications: RwLock::new(HashMap::new()),
+        search_timeout_seconds: RwLock::new(search_timeout_seconds),
     });
 
     // Start scheduler
@@ -327,6 +342,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/system/mount", post(handlers::system::mount_drive))
         .route("/system/unmount", post(handlers::system::unmount_drive))
         .route("/system/browse", get(handlers::system::browse_path))
+        .route("/system/search", get(handlers::system::search_path))
         .route("/system/mkdir", post(handlers::system::create_directory))
         .route("/system/allowed-paths", get(handlers::system::allowed_paths))
         .route("/system/download", get(handlers::system::download_file))

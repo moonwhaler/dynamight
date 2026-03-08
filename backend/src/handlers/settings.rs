@@ -10,12 +10,14 @@ use crate::AppState;
 pub struct AppSettings {
     pub max_runs_per_job: Option<u32>,
     pub delete_verification_window_minutes: Option<u32>,
+    pub search_timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSettingsRequest {
     pub max_runs_per_job: Option<u32>,
     pub delete_verification_window_minutes: Option<u32>,
+    pub search_timeout_seconds: Option<u32>,
 }
 
 pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -43,9 +45,22 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
         .and_then(|(value,)| value.parse::<u32>().ok())
         .or(Some(5));
 
+    // Get search_timeout_seconds from database, default to 10 if not set
+    let search_timeout_db: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = 'search_timeout_seconds'"
+    )
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
+    let search_timeout_seconds = search_timeout_db
+        .and_then(|(value,)| value.parse::<u32>().ok())
+        .or(Some(10));
+
     Json(AppSettings {
         max_runs_per_job,
         delete_verification_window_minutes,
+        search_timeout_seconds,
     })
 }
 
@@ -115,6 +130,31 @@ pub async fn update_settings(
                 .execute(&state.db)
                 .await;
         }
+    }
+
+    // Update or insert search_timeout_seconds setting
+    if let Some(value) = req.search_timeout_seconds {
+        // Clamp value between 3 and 60 seconds
+        let clamped_value = value.clamp(3, 60);
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES ('search_timeout_seconds', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            "#
+        )
+        .bind(clamped_value.to_string())
+        .execute(&state.db)
+        .await;
+
+        if let Err(e) = result {
+            tracing::error!("Failed to update search_timeout_seconds setting: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to save setting"})));
+        }
+
+        // Update in-memory value
+        *state.search_timeout_seconds.write().await = clamped_value;
     }
 
     (StatusCode::OK, Json(json!({"success": true})))

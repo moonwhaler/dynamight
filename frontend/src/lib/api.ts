@@ -118,6 +118,9 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     DELETE_VERIFICATION_REQUIRED: () => m.error_delete_verification_required(),
     DELETE_VERIFICATION_FAILED: () => m.error_delete_verification_failed(),
 
+    // Search errors
+    SEARCH_FAILED: () => m.error_search_failed(),
+
     // Run errors
     RUN_NOT_FOUND: () => m.error_generic(),
   };
@@ -296,10 +299,12 @@ export const api = {
     get: () => request<{
       max_runs_per_job: number | null;
       delete_verification_window_minutes: number | null;
+      search_timeout_seconds: number | null;
     }>('/settings'),
     update: (settings: {
       max_runs_per_job?: number | null;
       delete_verification_window_minutes?: number | null;
+      search_timeout_seconds?: number | null;
     }) =>
       request<{ success: boolean }>('/settings', {
         method: 'PUT',
@@ -334,6 +339,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ uuid, label }),
       }),
+    search: (path: string, query: string, maxResults = 200, options?: { signal?: AbortSignal }) =>
+      request<{ base_path: string; query: string; results: DirectoryEntry[]; truncated: boolean; timed_out: boolean }>(
+        `/system/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&max_results=${maxResults}`,
+        options?.signal ? { signal: options.signal } : {}
+      ),
     // Direct URL for browser-native file download
     downloadUrl: (path: string) =>
       `${API_BASE}/system/download?path=${encodeURIComponent(path)}`,

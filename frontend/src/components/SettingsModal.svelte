@@ -39,6 +39,12 @@
   let deleteVerificationLoading = $state(false);
   let initialDeleteVerificationWindow = $state<number | null>(null);
 
+  // Search timeout state
+  let searchTimeoutSeconds = $state<number | null>(null);
+  let searchTimeoutInput = $state('');
+  let searchTimeoutLoading = $state(false);
+  let initialSearchTimeout = $state<number | null>(null);
+
   function resetPasswordForm() {
     currentPassword = '';
     newPassword = '';
@@ -72,6 +78,9 @@
       deleteVerificationWindow = settings.delete_verification_window_minutes;
       initialDeleteVerificationWindow = settings.delete_verification_window_minutes;
       deleteVerificationInput = settings.delete_verification_window_minutes?.toString() ?? '5';
+      searchTimeoutSeconds = settings.search_timeout_seconds;
+      initialSearchTimeout = settings.search_timeout_seconds;
+      searchTimeoutInput = settings.search_timeout_seconds?.toString() ?? '10';
     } catch (err) {
       console.error('Failed to load settings:', err);
     }
@@ -196,6 +205,33 @@
       deleteVerificationInput = initialDeleteVerificationWindow?.toString() ?? '5';
     } finally {
       deleteVerificationLoading = false;
+    }
+  }
+
+  async function handleSearchTimeoutChange() {
+    const value = parseInt(searchTimeoutInput, 10);
+
+    if (isNaN(value) || value < 3 || value > 60) {
+      showToast({ message: m.settings_search_timeout_invalid(), variant: 'error' });
+      searchTimeoutInput = initialSearchTimeout?.toString() ?? '10';
+      return;
+    }
+
+    if (value === initialSearchTimeout) {
+      return;
+    }
+
+    searchTimeoutLoading = true;
+    try {
+      await api.settings.update({ search_timeout_seconds: value });
+      searchTimeoutSeconds = value;
+      initialSearchTimeout = value;
+      showToast({ message: m.settings_saved(), variant: 'success' });
+    } catch (err) {
+      showToast({ message: err instanceof Error ? err.message : m.settings_save_error(), variant: 'error' });
+      searchTimeoutInput = initialSearchTimeout?.toString() ?? '10';
+    } finally {
+      searchTimeoutLoading = false;
     }
   }
 
@@ -427,6 +463,40 @@
                         />
                         <span class="text-sm text-gray-500 dark:text-gray-400">{m.settings_delete_verification_minutes()}</span>
                         {#if deleteVerificationLoading}
+                          <svg class="w-4 h-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                      <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-primary-100 dark:bg-primary-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                          <svg class="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <div class="font-medium text-gray-900 dark:text-white text-sm">{m.settings_search_timeout_label()}</div>
+                          <p class="text-xs text-gray-500 dark:text-gray-400">{m.settings_search_timeout_desc()}</p>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="3"
+                          max="60"
+                          bind:value={searchTimeoutInput}
+                          onchange={handleSearchTimeoutChange}
+                          disabled={searchTimeoutLoading}
+                          class="input w-20 text-sm text-center"
+                        />
+                        <span class="text-sm text-gray-500 dark:text-gray-400">{m.settings_search_timeout_seconds()}</span>
+                        {#if searchTimeoutLoading}
                           <svg class="w-4 h-4 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>

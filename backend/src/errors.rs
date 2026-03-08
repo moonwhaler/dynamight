@@ -82,6 +82,7 @@ pub enum ErrorCode {
     PathTraversalNotAllowed,
     DirectoryCreateFailed,
     BrowseFailed,
+    SearchFailed,
     MountFailed,
     UnmountFailed,
     DrivesListFailed,
