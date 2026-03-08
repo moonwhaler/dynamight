@@ -1,6 +1,6 @@
 services:
   dynamight:
-    build: .
+    image: ghcr.io/moonwhaler/dynamight:latest
     container_name: dynamight
     restart: unless-stopped
 

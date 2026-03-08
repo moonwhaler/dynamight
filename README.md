@@ -65,15 +65,19 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 ### Using Docker (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/dynamight.git
-cd dynamight
+# Create a directory for Dynamight
+mkdir dynamight && cd dynamight
 
-# Create configuration file
+# Download the example config and docker-compose file
+curl -O https://raw.githubusercontent.com/moonwhaler/dynamight/main/dynamight.toml.example
+curl -O https://raw.githubusercontent.com/moonwhaler/dynamight/main/docker-compose.yml
+
+# Create your configuration
 cp dynamight.toml.example dynamight.toml
 
-# Edit dynamight.toml and set jwt_secret (required)
-# Generate with: openssl rand -base64 32
+# Set a secure JWT secret (required)
+NEW_SECRET=$(openssl rand -base64 32)
+sed -i "s|CHANGE-ME-generate-with-openssl-rand-base64-32|${NEW_SECRET}|" dynamight.toml
 
 # Start the container
 docker compose up -d
@@ -86,7 +90,7 @@ Access the UI at **http://localhost:8080** and complete the setup wizard to crea
 ```yaml
 services:
   dynamight:
-    build: .
+    image: ghcr.io/moonwhaler/dynamight:latest
     container_name: dynamight
     restart: unless-stopped
     cap_add:
@@ -96,9 +100,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # Configuration file
       - ./dynamight.toml:/app/config/dynamight.toml:ro
-      # Persistent data
       - dynamight-data:/app/data
       - dynamight-logs:/app/logs
       - /mnt:/mnt:rshared
@@ -243,7 +245,14 @@ Creates `dist/dynamight-<timestamp>.tar.gz` containing:
 ### Building Docker Image
 
 ```bash
+# Build locally
 docker build -t dynamight .
+
+# Or use the build script (builds native package + Docker image)
+./scripts/build.sh
+
+# Build and push to registry
+./scripts/build.sh --docker-only --push
 ```
 
 ## Server Deployment

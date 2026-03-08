@@ -12,7 +12,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Backend
-FROM rust:1.83-alpine AS backend-builder
+FROM rust:1-alpine AS backend-builder
 
 # Install build dependencies
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
@@ -20,7 +20,7 @@ RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 WORKDIR /app
 
 # Copy workspace files
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY backend/Cargo.toml ./backend/
 COPY migrations ./migrations
 

@@ -248,54 +248,56 @@ pub async fn dir_sizes(
 
     // Cap the number of paths to prevent abuse
     if req.paths.len() > 200 {
+        tracing::warn!("dir_sizes: rejected request with {} paths (max 200)", req.paths.len());
         return ApiError::new(ErrorCode::BrowseFailed).into_response();
     }
 
-    // Validate and canonicalize all paths
-    let mut valid_paths: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for path_str in &req.paths {
-        let path = Path::new(path_str);
-        if !is_path_allowed(path, &state.config.allowed_browse_paths) {
-            continue;
-        }
-        let canonical = match std::fs::canonicalize(path) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
-            continue;
-        }
-        if !canonical.is_dir() {
-            continue;
-        }
-        valid_paths.push((path_str.clone(), canonical));
-    }
-
+    // Move all validation + computation into spawn_blocking to avoid
+    // blocking the async runtime with canonicalize/is_dir syscalls
+    let allowed_paths = state.config.allowed_browse_paths.clone();
     let cache = state.dir_size_cache.clone();
-    let ttl = Duration::from_secs(60);
+    let paths = req.paths;
 
     let result = tokio::task::spawn_blocking(move || {
+        let ttl = Duration::from_secs(60);
         let mut sizes: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
-        for (original_path, canonical) in &valid_paths {
-            // Check cache
-            {
-                let cache_read = cache.read().unwrap();
-                if let Some(&(size, computed_at)) = cache_read.get(canonical) {
-                    if computed_at.elapsed() < ttl {
-                        sizes.insert(original_path.clone(), size);
-                        continue;
-                    }
-                }
+        for path_str in &paths {
+            let path = Path::new(path_str);
+            if !is_path_allowed(path, &allowed_paths) {
+                continue;
+            }
+            let canonical = match std::fs::canonicalize(path) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !is_path_allowed(&canonical, &allowed_paths) {
+                continue;
+            }
+            if !canonical.is_dir() {
+                continue;
+            }
+
+            // Check cache (handle poisoned lock gracefully)
+            let cached = cache.read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&canonical)
+                .and_then(|&(size, computed_at)| {
+                    if computed_at.elapsed() < ttl { Some(size) } else { None }
+                });
+
+            if let Some(size) = cached {
+                sizes.insert(path_str.clone(), size);
+                continue;
             }
 
             // Cache miss: compute size
-            let size = crate::services::MountService::calculate_dir_size(canonical);
+            let size = crate::services::MountService::calculate_dir_size(&canonical);
 
-            // Update cache
+            // Update cache (handle poisoned lock gracefully)
             {
-                let mut cache_write = cache.write().unwrap();
-                // Evict oldest entries when cache exceeds 10,000
+                let mut cache_write = cache.write()
+                    .unwrap_or_else(|e| e.into_inner());
                 if cache_write.len() >= 10_000 {
                     if let Some(oldest_key) = cache_write
                         .iter()
@@ -305,10 +307,10 @@ pub async fn dir_sizes(
                         cache_write.remove(&oldest_key);
                     }
                 }
-                cache_write.insert(canonical.clone(), (size, Instant::now()));
+                cache_write.insert(canonical, (size, Instant::now()));
             }
 
-            sizes.insert(original_path.clone(), size);
+            sizes.insert(path_str.clone(), size);
         }
 
         sizes
@@ -318,7 +320,7 @@ pub async fn dir_sizes(
     match result {
         Ok(sizes) => Json(json!({ "sizes": sizes })).into_response(),
         Err(e) => {
-            tracing::error!("Dir sizes task failed: {}", e);
+            tracing::error!("Dir sizes task panicked: {}", e);
             ApiError::new(ErrorCode::BrowseFailed).into_response()
         }
     }
