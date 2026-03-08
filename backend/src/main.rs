@@ -350,7 +350,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/totp/validate", post(handlers::totp::validate))
         .route("/auth/totp/recovery", post(handlers::totp::recovery))
-        .route("/system/health", get(handlers::system::health));
+        .route("/system/health", get(handlers::system::health))
+        .route("/system/version", get(handlers::system::version));
 
     // Protected routes (authentication required)
     let protected_routes = Router::new()

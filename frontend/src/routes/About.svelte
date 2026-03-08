@@ -1,5 +1,22 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { api } from '$lib/api';
   import * as m from '$lib/paraglide/messages.js';
+
+  let version = $state('');
+  let build = $state('');
+  let buildDate = $state('');
+
+  onMount(async () => {
+    try {
+      const info = await api.system.version();
+      version = info.version;
+      build = info.build;
+      buildDate = info.date;
+    } catch {
+      // Version endpoint unavailable — leave empty
+    }
+  });
 </script>
 
 <div class="-m-4 sm:-m-6 min-h-[calc(100vh-4rem)] flex items-center justify-center relative overflow-hidden">
@@ -42,6 +59,22 @@
 
       <!-- Info items -->
       <div class="space-y-4">
+        <!-- Version -->
+        {#if version}
+          <div class="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
+            <div class="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-700/50 flex items-center justify-center">
+              <svg class="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+            </div>
+            <span>{m.about_version()}</span>
+            <span class="font-mono font-medium text-gray-900 dark:text-white">{version}</span>
+            {#if build}
+              <span class="text-xs font-mono text-gray-400 dark:text-gray-500">({build})</span>
+            {/if}
+          </div>
+        {/if}
+
         <!-- License -->
         <div class="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
           <div class="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-100 dark:bg-gray-700/50 flex items-center justify-center">

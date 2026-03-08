@@ -351,6 +351,8 @@ export const api = {
   },
 
   system: {
+    version: () =>
+      request<{ version: string; build: string; date: string }>('/system/version'),
     drives: () => request<UsbDrive[]>('/system/drives'),
     browse: (path: string) =>
       request<{ path: string; entries: DirectoryEntry[] }>(

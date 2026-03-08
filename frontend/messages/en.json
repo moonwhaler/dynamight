@@ -585,6 +585,7 @@
   "nav_theme_dark": "Dark Mode",
 
   "about_tagline": "A self-hosted backup management system. Schedule, sync, and secure your data across local drives, cloud storage, and remote servers.",
+  "about_version": "Version:",
   "about_license": "License:",
   "about_author": "Author:",
   "about_view_on_github": "View on GitHub",

@@ -450,7 +450,16 @@ pub async fn create_directory(
 
 pub async fn health() -> impl IntoResponse {
     Json(json!({
-        "status": "healthy"
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+pub async fn version() -> impl IntoResponse {
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "build": env!("BUILD_GIT_HASH"),
+        "date": env!("BUILD_DATE"),
     }))
 }
 

@@ -577,6 +577,7 @@
   "nav_theme_dark": "Dunkler Modus",
 
   "about_tagline": "Ein selbst gehostetes Backup-Verwaltungssystem. Planen, synchronisieren und sichern Sie Ihre Daten auf lokalen Laufwerken, Cloud-Speicher und Remote-Servern.",
+  "about_version": "Version:",
   "about_license": "Lizenz:",
   "about_author": "Autor:",
   "about_view_on_github": "Auf GitHub ansehen",
