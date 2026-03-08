@@ -34,12 +34,31 @@ pub async fn require_auth(
         )
     })?;
 
-    state.auth_service.validate_token(&token).map_err(|_| {
+    let claims = state.auth_service.validate_token(&token).map_err(|_| {
         (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Invalid or expired token"})),
         )
     })?;
+
+    // Check if the token was issued before the user's last password change.
+    // This invalidates all sessions when the password is changed.
+    let password_changed_at: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
+        sqlx::query_as("SELECT password_changed_at FROM users WHERE id = ?")
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+
+    if let Some((Some(changed_at),)) = password_changed_at {
+        let token_issued_at = claims.iat as i64;
+        if token_issued_at < changed_at.timestamp() {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"code": "SESSION_EXPIRED"})),
+            ));
+        }
+    }
 
     Ok(next.run(request).await)
 }

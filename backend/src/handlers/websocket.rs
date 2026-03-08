@@ -19,6 +19,39 @@ pub struct WsAuthQuery {
     token: Option<String>,
 }
 
+/// Validate a WebSocket token and check session validity (including password change invalidation).
+async fn validate_ws_token(
+    token: &str,
+    state: &AppState,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let claims = state.auth_service.validate_token(token).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid or expired token"})),
+        )
+    })?;
+
+    // Check if token was issued before password change (session invalidation)
+    let password_changed_at: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
+        sqlx::query_as("SELECT password_changed_at FROM users WHERE id = ?")
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+
+    if let Some((Some(changed_at),)) = password_changed_at {
+        let token_issued_at = claims.iat as i64;
+        if token_issued_at < changed_at.timestamp() {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Session expired"})),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn ws_logs_handler(
     ws: WebSocketUpgrade,
     Path(run_id): Path<i64>,
@@ -33,12 +66,7 @@ pub async fn ws_logs_handler(
         )
     })?;
 
-    state.auth_service.validate_token(&token).map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid or expired token"})),
-        )
-    })?;
+    validate_ws_token(&token, &state).await?;
 
     Ok(ws.on_upgrade(move |socket| handle_logs_socket(socket, run_id, state)))
 }
@@ -96,12 +124,7 @@ pub async fn ws_status_handler(
         )
     })?;
 
-    state.auth_service.validate_token(&token).map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid or expired token"})),
-        )
-    })?;
+    validate_ws_token(&token, &state).await?;
 
     Ok(ws.on_upgrade(move |socket| handle_status_socket(socket, state)))
 }

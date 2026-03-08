@@ -13,6 +13,13 @@ pub struct User {
     pub totp_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Timestamp of last password change, used for session invalidation.
+    /// Tokens issued before this time are rejected by the auth middleware.
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    pub password_changed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing)]
+    pub pending_totp_secret: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +63,9 @@ pub struct TotpSetupResponse {
 #[derive(Debug, Deserialize)]
 pub struct TotpEnableRequest {
     pub code: String,
-    pub secret: String,
+    /// Kept for backward compatibility but ignored — server uses its stored pending secret.
+    #[allow(dead_code)]
+    pub secret: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

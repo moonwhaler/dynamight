@@ -286,6 +286,11 @@ pub async fn change_password(
     AuthUser(user): AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
+    // Validate new password length
+    if req.new_password.len() < 8 {
+        return ApiError::password_too_short().into_response();
+    }
+
     // Verify current password
     let valid =
         AuthService::verify_password(&req.current_password, &user.password_hash).unwrap_or(false);
@@ -302,15 +307,29 @@ pub async fn change_password(
         }
     };
 
-    // Update password
-    let result = sqlx::query("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    // Update password and record change timestamp for session invalidation.
+    // All tokens issued before password_changed_at will be rejected.
+    let result = sqlx::query(
+        "UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    )
         .bind(&new_hash)
         .bind(user.id)
         .execute(&state.db)
         .await;
 
     match result {
-        Ok(_) => Json(json!({"success": true})).into_response(),
+        Ok(_) => {
+            // Generate a new token so the current session remains valid
+            let token = match state.auth_service.generate_token(user.id) {
+                Ok(t) => t,
+                Err(_) => return ApiError::internal_error().into_response(),
+            };
+            let cookie = build_auth_cookie(&token, state.config.secure_cookies);
+            (
+                AppendHeaders([(SET_COOKIE, cookie)]),
+                Json(json!({"success": true})),
+            ).into_response()
+        }
         Err(_) => ApiError::internal_error().into_response(),
     }
 }
@@ -338,17 +357,7 @@ pub async fn setup(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SetupRequest>,
 ) -> impl IntoResponse {
-    // Check if any users already exist
-    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or((0,));
-
-    if user_count.0 > 0 {
-        return ApiError::setup_already_done().into_response();
-    }
-
-    // Validate input
+    // Validate input before doing any DB work
     let username = req.username.trim();
     if username.is_empty() || username.len() < 3 {
         return ApiError::username_too_short().into_response();
@@ -358,7 +367,7 @@ pub async fn setup(
         return ApiError::password_too_short().into_response();
     }
 
-    // Hash password and create user
+    // Hash password
     let password_hash = match AuthService::hash_password(&req.password) {
         Ok(h) => h,
         Err(_) => {
@@ -366,16 +375,25 @@ pub async fn setup(
         }
     };
 
-    let result = sqlx::query("INSERT INTO users (username, password_hash) VALUES (?, ?)")
+    // Atomic check-and-insert: only inserts if no users exist yet.
+    // This prevents the TOCTOU race condition where two concurrent setup
+    // requests could both see 0 users and both create admin accounts.
+    let result = sqlx::query(
+        "INSERT INTO users (username, password_hash) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)"
+    )
         .bind(username)
         .bind(&password_hash)
         .execute(&state.db)
         .await;
 
     match result {
-        Ok(_) => {
+        Ok(r) if r.rows_affected() > 0 => {
             tracing::info!("Initial admin user '{}' created via setup", username);
             Json(json!({"success": true})).into_response()
+        }
+        Ok(_) => {
+            // No rows inserted means users already exist
+            ApiError::setup_already_done().into_response()
         }
         Err(e) => {
             tracing::error!("Failed to create admin user: {}", e);
@@ -389,17 +407,7 @@ pub async fn setup_from_backup(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    // Guard: only allowed when no users exist
-    let user_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or((0,));
-
-    if user_count.0 > 0 {
-        return ApiError::setup_already_done().into_response();
-    }
-
-    // Parse multipart fields: file + password
+    // Parse multipart fields first (before DB check to avoid holding locks)
     let mut file_data: Option<Vec<u8>> = None;
     let mut password: Option<String> = None;
 
@@ -452,9 +460,10 @@ pub async fn setup_from_backup(
 
     let username = backup.user.username.clone();
 
-    // First, create the user from the backup so apply_import's Replace strategy can find it
+    // Atomically create user only if no users exist (prevents race condition)
     let create_user_result = sqlx::query(
-        "INSERT INTO users (username, password_hash, totp_enabled, totp_secret) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (username, password_hash, totp_enabled, totp_secret) \
+         SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)",
     )
     .bind(&backup.user.username)
     .bind(&backup.user.password_hash)
@@ -464,7 +473,10 @@ pub async fn setup_from_backup(
     .await;
 
     let user_id = match create_user_result {
-        Ok(r) => r.last_insert_rowid(),
+        Ok(r) if r.rows_affected() > 0 => r.last_insert_rowid(),
+        Ok(_) => {
+            return ApiError::setup_already_done().into_response();
+        }
         Err(e) => {
             tracing::error!("Failed to create user from backup: {}", e);
             return ApiError::internal_error().into_response();

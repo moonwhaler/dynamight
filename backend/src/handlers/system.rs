@@ -19,6 +19,60 @@ use crate::handlers::auth::extract_client_ip;
 use crate::services::{AuthService, TotpService};
 use crate::AppState;
 
+/// System paths that must never be used as mount points.
+const DENIED_MOUNT_PREFIXES: &[&str] = &[
+    "/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+    "/boot", "/proc", "/sys", "/dev", "/run", "/var", "/tmp",
+    "/root", "/home", "/app", "/opt",
+];
+
+/// Validate that a UUID string matches the standard format.
+fn is_valid_uuid(uuid: &str) -> bool {
+    let uuid = uuid.trim();
+    if uuid.len() != 36 {
+        return false;
+    }
+    uuid.chars().enumerate().all(|(i, c)| {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            c == '-'
+        } else {
+            c.is_ascii_hexdigit()
+        }
+    })
+}
+
+/// Validate that a mount point is safe and within allowed paths.
+fn is_mount_point_allowed(mount_point: &str, allowed_paths: &[String]) -> bool {
+    let path = Path::new(mount_point);
+
+    // Reject path traversal
+    if mount_point.contains("..") {
+        return false;
+    }
+
+    // Must be absolute
+    if !path.is_absolute() {
+        return false;
+    }
+
+    // Reject exact matches to dangerous system paths
+    let normalized = mount_point.trim_end_matches('/');
+    for denied in DENIED_MOUNT_PREFIXES {
+        if normalized == *denied {
+            return false;
+        }
+    }
+
+    // Must be under /mnt/ or one of the allowed browse paths
+    let under_mnt = mount_point.starts_with("/mnt/") && mount_point.len() > 5;
+    let under_allowed = allowed_paths.iter().any(|allowed| {
+        mount_point.starts_with(allowed.as_str())
+            && mount_point.len() > allowed.len()
+    });
+
+    under_mnt || under_allowed
+}
+
 /// Check if a path is within one of the allowed base paths.
 /// Uses canonicalization to prevent symlink bypass attacks.
 fn is_path_allowed(path: &Path, allowed_paths: &[String]) -> bool {
@@ -78,6 +132,20 @@ pub async fn mount_drive(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MountRequest>,
 ) -> impl IntoResponse {
+    // Security: validate UUID format to prevent abuse
+    if !is_valid_uuid(&req.uuid) {
+        return ApiError::new(ErrorCode::InvalidUuidFormat).into_response();
+    }
+
+    // Security: validate mount point is in allowed paths
+    if !is_mount_point_allowed(&req.mount_point, &state.config.allowed_browse_paths) {
+        tracing::warn!(
+            "Mount denied: mount_point '{}' is not in allowed paths",
+            req.mount_point
+        );
+        return ApiError::new(ErrorCode::MountPointNotAllowed).into_response();
+    }
+
     match state.mount_service.mount_by_uuid(&req.uuid, &req.mount_point) {
         Ok(_) => Json(json!({"success": true})).into_response(),
         Err(_) => ApiError::new(ErrorCode::MountFailed).into_response(),
@@ -93,6 +161,15 @@ pub async fn unmount_drive(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UnmountRequest>,
 ) -> impl IntoResponse {
+    // Security: validate mount point is in allowed paths
+    if !is_mount_point_allowed(&req.mount_point, &state.config.allowed_browse_paths) {
+        tracing::warn!(
+            "Unmount denied: mount_point '{}' is not in allowed paths",
+            req.mount_point
+        );
+        return ApiError::new(ErrorCode::MountPointNotAllowed).into_response();
+    }
+
     match state.mount_service.unmount(&req.mount_point) {
         Ok(_) => Json(json!({"success": true})).into_response(),
         Err(_) => ApiError::new(ErrorCode::UnmountFailed).into_response(),
@@ -240,8 +317,30 @@ pub async fn create_directory(
         return ApiError::new(ErrorCode::PathTraversalNotAllowed).into_response();
     }
 
-    // Security: check if path is in allowed directories
+    // Security: check if path is in allowed directories (string-based pre-check)
     if !is_path_allowed(path, &state.config.allowed_browse_paths) {
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // Security: canonicalize the deepest existing ancestor to prevent symlink bypass.
+    // This prevents attacks like: /mnt/evil -> /etc, then creating /mnt/evil/new_dir
+    // would create /etc/new_dir.
+    let mut ancestor = path.to_path_buf();
+    while !ancestor.exists() {
+        if !ancestor.pop() {
+            return ApiError::path_not_allowed().into_response();
+        }
+    }
+    let canonical_ancestor = match ancestor.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return ApiError::path_not_allowed().into_response(),
+    };
+    if !is_path_allowed(&canonical_ancestor, &state.config.allowed_browse_paths) {
+        tracing::warn!(
+            "Mkdir denied: ancestor '{}' resolved to '{}' which is outside allowed paths",
+            ancestor.display(),
+            canonical_ancestor.display()
+        );
         return ApiError::path_not_allowed().into_response();
     }
 
@@ -256,8 +355,7 @@ pub async fn create_directory(
 
 pub async fn health() -> impl IntoResponse {
     Json(json!({
-        "status": "healthy",
-        "version": env!("CARGO_PKG_VERSION")
+        "status": "healthy"
     }))
 }
 

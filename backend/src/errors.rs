@@ -84,6 +84,8 @@ pub enum ErrorCode {
     BrowseFailed,
     SearchFailed,
     MountFailed,
+    MountPointNotAllowed,
+    InvalidUuidFormat,
     UnmountFailed,
     DrivesListFailed,
     MountsListFailed,
@@ -355,7 +357,8 @@ impl IntoResponse for ApiError {
             // 403 Forbidden
             ErrorCode::SetupAlreadyDone
             | ErrorCode::PathNotAllowed
-            | ErrorCode::PathTraversalNotAllowed => StatusCode::FORBIDDEN,
+            | ErrorCode::PathTraversalNotAllowed
+            | ErrorCode::MountPointNotAllowed => StatusCode::FORBIDDEN,
 
             // 400 Bad Request - validation errors
             ErrorCode::PasswordTooShort
@@ -371,6 +374,7 @@ impl IntoResponse for ApiError {
             | ErrorCode::InvalidCron
             | ErrorCode::TotpInvalidCode
             | ErrorCode::TotpNotEnabled
+            | ErrorCode::InvalidUuidFormat
             | ErrorCode::NotAFile
             | ErrorCode::FileTooLarge
             | ErrorCode::DeleteVerificationFailed

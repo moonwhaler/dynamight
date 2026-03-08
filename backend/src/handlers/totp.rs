@@ -58,6 +58,7 @@ async fn get_current_user(
 }
 
 /// POST /auth/totp/setup - Generate a new TOTP secret and QR code
+/// The secret is stored server-side to prevent client substitution during enable.
 pub async fn setup(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -83,6 +84,20 @@ pub async fn setup(
         }
     };
 
+    // Store the generated secret server-side so the enable step uses it
+    // instead of trusting a client-supplied secret
+    let result = sqlx::query(
+        "UPDATE users SET pending_totp_secret = ? WHERE id = ?",
+    )
+    .bind(&secret)
+    .bind(user.id)
+    .execute(&state.db)
+    .await;
+
+    if result.is_err() {
+        return ApiError::totp_setup_failed().into_response();
+    }
+
     Json(TotpSetupResponse {
         secret,
         qr_code,
@@ -92,6 +107,7 @@ pub async fn setup(
 }
 
 /// POST /auth/totp/enable - Verify code and enable 2FA
+/// Uses the server-side stored secret from the setup step, ignoring any client-supplied secret.
 pub async fn enable(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -102,8 +118,17 @@ pub async fn enable(
         Err(e) => return e.into_response(),
     };
 
-    // Verify the TOTP code
-    let valid = match TotpService::verify_code(&req.secret, &req.code) {
+    // Use the server-side stored secret, not the client-supplied one
+    let secret = match &user.pending_totp_secret {
+        Some(s) => s.clone(),
+        None => {
+            // No pending secret - setup was not called first
+            return ApiError::totp_setup_failed().into_response();
+        }
+    };
+
+    // Verify the TOTP code against the server-stored secret
+    let valid = match TotpService::verify_code(&secret, &req.code) {
         Ok(v) => v,
         Err(_) => {
             return ApiError::totp_invalid_code().into_response();
@@ -125,11 +150,11 @@ pub async fn enable(
         }
     };
 
-    // Update user with TOTP secret
+    // Update user with TOTP secret from server-side storage and clear pending secret
     let result = sqlx::query(
-        "UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE users SET totp_secret = ?, totp_enabled = 1, pending_totp_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
-    .bind(&req.secret)
+    .bind(&secret)
     .bind(user.id)
     .execute(&mut *tx)
     .await;
@@ -215,9 +240,9 @@ pub async fn disable(
         return ApiError::totp_invalid_code().into_response();
     }
 
-    // Disable 2FA
+    // Disable 2FA and clear any pending setup secret
     let result = sqlx::query(
-        "UPDATE users SET totp_secret = NULL, totp_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE users SET totp_secret = NULL, totp_enabled = 0, pending_totp_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     )
     .bind(user.id)
     .execute(&state.db)

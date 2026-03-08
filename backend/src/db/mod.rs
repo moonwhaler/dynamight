@@ -42,6 +42,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Pending TOTP secret: server-side storage during 2FA setup to prevent
+    // client from substituting a different secret during the enable step
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN pending_totp_secret TEXT DEFAULT NULL")
+        .execute(pool)
+        .await;
+
     // Pending TOTP sessions for 2FA login flow
     let _ = sqlx::query(
         r#"
@@ -112,6 +118,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
     let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_jobs_destination_type ON jobs(destination_type)")
+        .execute(pool)
+        .await;
+
+    // Session invalidation: track when password was last changed
+    // Tokens issued before this timestamp are rejected
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN password_changed_at DATETIME DEFAULT NULL")
         .execute(pool)
         .await;
 

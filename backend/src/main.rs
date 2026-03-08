@@ -14,6 +14,7 @@ use axum::{
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,7 +46,7 @@ pub struct AppState {
 use tower::ServiceBuilder;
 
 /// Build security headers layers.
-/// Includes HSTS (when secure_cookies enabled), CSP, and other security headers.
+/// Includes HSTS (when secure_cookies enabled), CSP, Permissions-Policy, and other security headers.
 #[allow(clippy::type_complexity)] // Tower's ServiceBuilder produces complex nested types by design
 fn build_security_headers(config: &Config) -> tower::ServiceBuilder<
     tower::layer::util::Stack<
@@ -58,7 +59,10 @@ fn build_security_headers(config: &Config) -> tower::ServiceBuilder<
                     SetResponseHeaderLayer<HeaderValue>,
                     tower::layer::util::Stack<
                         SetResponseHeaderLayer<HeaderValue>,
-                        tower::layer::util::Identity,
+                        tower::layer::util::Stack<
+                            SetResponseHeaderLayer<HeaderValue>,
+                            tower::layer::util::Identity,
+                        >,
                     >,
                 >,
             >,
@@ -104,6 +108,12 @@ fn build_security_headers(config: &Config) -> tower::ServiceBuilder<
     let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
         header::REFERRER_POLICY,
         HeaderValue::from_static("strict-origin-when-cross-origin"),
+    ));
+
+    // Permissions-Policy: Restrict browser features not needed by this application
+    let builder = builder.layer(SetResponseHeaderLayer::if_not_present(
+        axum::http::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
     ));
 
     // Strict-Transport-Security (HSTS): Only when secure cookies are enabled (HTTPS mode)
@@ -292,6 +302,18 @@ async fn main() -> anyhow::Result<()> {
         search_timeout_seconds: RwLock::new(search_timeout_seconds),
     });
 
+    // Start periodic cleanup of expired pending TOTP sessions
+    let cleanup_db = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            let _ = sqlx::query("DELETE FROM pending_totp_sessions WHERE expires_at < datetime('now')")
+                .execute(&cleanup_db)
+                .await;
+        }
+    });
+
     // Start scheduler
     let scheduler = SchedulerService::new(db.clone(), backup_service, config.timezone);
     tokio::spawn(async move {
@@ -377,6 +399,11 @@ async fn main() -> anyhow::Result<()> {
         .merge(public_routes)
         .merge(protected_routes)
         .merge(ws_routes)
+        // Prevent caching of sensitive API responses
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-cache"),
+        ))
         // Apply request body size limit to prevent DoS attacks via large payloads
         .layer(RequestBodyLimitLayer::new(state.config.max_request_body_size));
 
@@ -395,7 +422,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
