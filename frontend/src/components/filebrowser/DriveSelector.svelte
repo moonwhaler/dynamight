@@ -7,6 +7,7 @@
     drives: UsbDrive[];
     allowedPaths: string[];
     loadingDrives: boolean;
+    loadingAllowedPaths: boolean;
     onBrowseDrive: (drive: UsbDrive) => void;
     onBrowsePath: (path: string) => void;
     onMount: (drive: UsbDrive) => void;
@@ -19,6 +20,7 @@
     drives,
     allowedPaths,
     loadingDrives,
+    loadingAllowedPaths,
     onBrowseDrive,
     onBrowsePath,
     onMount,
@@ -30,9 +32,9 @@
   type TabType = 'paths' | 'drives';
   let activeTab = $state<TabType>('paths');
 
-  // Set default tab based on available options
+  // Set default tab based on available options (only after loading completes)
   $effect(() => {
-    if (allowedPaths.length === 0 && drives.length > 0) {
+    if (!loadingAllowedPaths && allowedPaths.length === 0 && drives.length > 0) {
       activeTab = 'drives';
     }
   });
@@ -63,7 +65,7 @@
   <!-- Segmented Tab Control -->
   <div class="flex items-center gap-2">
     <div class="inline-flex rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
-      {#if allowedPaths.length > 0}
+      {#if allowedPaths.length > 0 || loadingAllowedPaths}
         <button
           type="button"
           onclick={() => activeTab = 'paths'}
@@ -72,13 +74,15 @@
               ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 {loadingAllowedPaths ? 'animate-pulse' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
           {m.filebrowser_local_paths()}
-          <span class="text-xs px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">
-            {allowedPaths.length}
-          </span>
+          {#if !loadingAllowedPaths}
+            <span class="text-xs px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">
+              {allowedPaths.length}
+            </span>
+          {/if}
         </button>
       {/if}
       <button
@@ -120,32 +124,66 @@
   <!-- Tab Content -->
   <div class="min-h-[60px]">
     <!-- Local Paths Tab -->
-    {#if activeTab === 'paths' && allowedPaths.length > 0}
-      <div class="flex flex-wrap gap-2">
-        {#each allowedPaths as path (path)}
-          <button
-            type="button"
-            onclick={() => onBrowsePath(path)}
-            class="group flex items-center gap-2 px-3 py-2 rounded-lg border transition-all
-              {isPathActive(path)
-                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
-                : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}"
-          >
-            <svg class="w-5 h-5 {isPathActive(path) ? 'text-primary-500' : 'text-yellow-500'}" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-            </svg>
-            <div class="text-left">
-              <div class="text-sm font-medium">{getPathLabel(path)}</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-48">{path}</div>
+    {#if activeTab === 'paths'}
+      {#if loadingAllowedPaths}
+        <div class="flex flex-wrap gap-2">
+          {#each [1, 2] as _}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 animate-pulse">
+              <div class="w-5 h-5 rounded bg-gray-200 dark:bg-gray-700"></div>
+              <div>
+                <div class="h-4 w-20 rounded bg-gray-200 dark:bg-gray-700 mb-1"></div>
+                <div class="h-3 w-32 rounded bg-gray-200 dark:bg-gray-700"></div>
+              </div>
             </div>
-          </button>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      {:else if allowedPaths.length > 0}
+        <div class="flex flex-wrap gap-2">
+          {#each allowedPaths as path (path)}
+            <button
+              type="button"
+              onclick={() => onBrowsePath(path)}
+              class="group flex items-center gap-2 px-3 py-2 rounded-lg border transition-all
+                {isPathActive(path)
+                  ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}"
+            >
+              <svg class="w-5 h-5 {isPathActive(path) ? 'text-primary-500' : 'text-yellow-500'}" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+              </svg>
+              <div class="text-left">
+                <div class="text-sm font-medium">{getPathLabel(path)}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-48">{path}</div>
+              </div>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <div class="flex items-center justify-center py-4 text-gray-500 dark:text-gray-400">
+          <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          <span class="text-sm">{m.filebrowser_no_paths()}</span>
+        </div>
+      {/if}
     {/if}
 
     <!-- USB Drives Tab -->
     {#if activeTab === 'drives'}
-      {#if drives.length === 0}
+      {#if loadingDrives && drives.length === 0}
+        <div class="flex flex-wrap gap-2">
+          {#each [1, 2] as _}
+            <div class="flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 animate-pulse">
+              <div class="w-9 h-9 rounded-lg bg-gray-200 dark:bg-gray-700"></div>
+              <div>
+                <div class="h-4 w-24 rounded bg-gray-200 dark:bg-gray-700 mb-1"></div>
+                <div class="h-3 w-28 rounded bg-gray-200 dark:bg-gray-700"></div>
+              </div>
+              <div class="h-6 w-14 rounded-md bg-gray-200 dark:bg-gray-700"></div>
+            </div>
+          {/each}
+        </div>
+      {:else if drives.length === 0}
         <div class="flex items-center justify-center py-4 text-gray-500 dark:text-gray-400">
           <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />

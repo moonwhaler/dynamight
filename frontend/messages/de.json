@@ -575,6 +575,7 @@
   "filebrowser_usb_drives": "USB-Laufwerke",
   "filebrowser_local_paths": "Lokale Pfade",
   "filebrowser_no_drives": "Keine USB-Laufwerke erkannt",
+  "filebrowser_no_paths": "Keine lokalen Pfade konfiguriert",
   "filebrowser_mount": "Einbinden",
   "filebrowser_unmount": "Aushängen",
   "filebrowser_mounted": "Eingebunden",

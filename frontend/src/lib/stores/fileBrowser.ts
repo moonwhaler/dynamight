@@ -30,6 +30,7 @@ interface FileBrowserState {
   deleteVerifiedUntil: number | null;
   drives: UsbDrive[];
   loadingDrives: boolean;
+  loadingAllowedPaths: boolean;
   allowedPaths: string[];
   viewMode: ViewMode;
   sortBy: SortField;
@@ -87,6 +88,7 @@ function createFileBrowserStore() {
     deleteVerifiedUntil: null,
     drives: [],
     loadingDrives: false,
+    loadingAllowedPaths: false,
     allowedPaths: [],
     viewMode: loadPreference(STORAGE_KEYS.viewMode, 'list'),
     sortBy: loadPreference(STORAGE_KEYS.sortBy, 'name'),
@@ -154,11 +156,12 @@ function createFileBrowserStore() {
     },
 
     async loadAllowedPaths(): Promise<void> {
+      update((s) => ({ ...s, loadingAllowedPaths: true }));
       try {
         const result = await api.system.allowedPaths();
-        update((s) => ({ ...s, allowedPaths: result.paths }));
+        update((s) => ({ ...s, allowedPaths: result.paths, loadingAllowedPaths: false }));
       } catch {
-        // Silent failure
+        update((s) => ({ ...s, loadingAllowedPaths: false }));
       }
     },
 

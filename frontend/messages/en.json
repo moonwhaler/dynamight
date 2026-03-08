@@ -583,6 +583,7 @@
   "filebrowser_usb_drives": "USB Drives",
   "filebrowser_local_paths": "Local Paths",
   "filebrowser_no_drives": "No USB drives detected",
+  "filebrowser_no_paths": "No local paths configured",
   "filebrowser_mount": "Mount",
   "filebrowser_unmount": "Unmount",
   "filebrowser_mounted": "Mounted",

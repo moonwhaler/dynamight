@@ -390,6 +390,7 @@
       drives={browserState.drives}
       allowedPaths={browserState.allowedPaths}
       loadingDrives={browserState.loadingDrives}
+      loadingAllowedPaths={browserState.loadingAllowedPaths}
       currentPath={browserState.currentPath}
       onBrowseDrive={handleBrowseDrive}
       onBrowsePath={handleNavigate}
