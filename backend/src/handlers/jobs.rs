@@ -912,3 +912,252 @@ pub async fn check_job_space(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CompressDirsOptions, CompressFormat};
+
+    // ── validate_exclude_pattern ──
+
+    #[test]
+    fn exclude_pattern_valid_simple() {
+        assert!(validate_exclude_pattern("*.log").is_ok());
+    }
+
+    #[test]
+    fn exclude_pattern_valid_path() {
+        assert!(validate_exclude_pattern("build/output/**").is_ok());
+    }
+
+    #[test]
+    fn exclude_pattern_valid_special_chars() {
+        assert!(validate_exclude_pattern("foo[0-9]_bar?baz").is_ok());
+    }
+
+    #[test]
+    fn exclude_pattern_valid_with_spaces() {
+        assert!(validate_exclude_pattern("my folder/file name").is_ok());
+    }
+
+    #[test]
+    fn exclude_pattern_empty_rejected() {
+        assert!(validate_exclude_pattern("").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_too_long_rejected() {
+        let long = "a".repeat(4097);
+        assert!(validate_exclude_pattern(&long).is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_null_byte_rejected() {
+        assert!(validate_exclude_pattern("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_control_char_rejected() {
+        assert!(validate_exclude_pattern("foo\x07bar").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_shell_injection_dollar_paren() {
+        assert!(validate_exclude_pattern("$(rm -rf /)").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_shell_injection_backtick() {
+        assert!(validate_exclude_pattern("`whoami`").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_shell_injection_semicolon() {
+        assert!(validate_exclude_pattern("foo;rm -rf /").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_shell_injection_pipe() {
+        assert!(validate_exclude_pattern("foo|cat /etc/passwd").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_shell_injection_redirect() {
+        assert!(validate_exclude_pattern("foo>bar").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_leading_dash_rejected() {
+        assert!(validate_exclude_pattern("-exclude").is_err());
+    }
+
+    #[test]
+    fn exclude_pattern_max_length_accepted() {
+        let exact = "a".repeat(4096);
+        assert!(validate_exclude_pattern(&exact).is_ok());
+    }
+
+    // ── validate_source_dirs_unique_basenames ──
+
+    #[test]
+    fn unique_basenames_ok() {
+        let dirs = vec!["/data/photos".into(), "/data/videos".into()];
+        assert!(validate_source_dirs_unique_basenames(&dirs).is_ok());
+    }
+
+    #[test]
+    fn duplicate_basenames_err() {
+        let dirs = vec!["/mnt/a/photos".into(), "/mnt/b/photos".into()];
+        let err = validate_source_dirs_unique_basenames(&dirs).unwrap_err();
+        assert!(err.contains(&"photos".to_string()));
+    }
+
+    #[test]
+    fn root_path_uses_backup_basename() {
+        // Two root paths should collide on "backup"
+        let dirs = vec!["/".into(), "/".into()];
+        let err = validate_source_dirs_unique_basenames(&dirs).unwrap_err();
+        assert!(err.contains(&"backup".to_string()));
+    }
+
+    // ── validate_exclude_dirs ──
+
+    #[test]
+    fn exclude_dirs_valid_child() {
+        let sources = vec!["/data".into()];
+        let excludes = vec!["/data/tmp".into()];
+        assert!(validate_exclude_dirs(&sources, &excludes).is_ok());
+    }
+
+    #[test]
+    fn exclude_dirs_equal_rejected() {
+        let sources = vec!["/data".into()];
+        let excludes = vec!["/data".into()];
+        assert!(validate_exclude_dirs(&sources, &excludes).is_err());
+    }
+
+    #[test]
+    fn exclude_dirs_not_under_source_rejected() {
+        let sources = vec!["/data".into()];
+        let excludes = vec!["/other/tmp".into()];
+        assert!(validate_exclude_dirs(&sources, &excludes).is_err());
+    }
+
+    // ── validate_display_field ──
+
+    #[test]
+    fn display_field_valid() {
+        assert!(validate_display_field("My Job", "name", 100, false).is_ok());
+    }
+
+    #[test]
+    fn display_field_empty_rejected() {
+        assert!(validate_display_field("", "name", 100, false).is_err());
+    }
+
+    #[test]
+    fn display_field_empty_allowed() {
+        assert!(validate_display_field("", "name", 100, true).is_ok());
+    }
+
+    #[test]
+    fn display_field_too_long() {
+        let long = "x".repeat(101);
+        assert!(validate_display_field(&long, "name", 100, false).is_err());
+    }
+
+    #[test]
+    fn display_field_null_byte_rejected() {
+        assert!(validate_display_field("foo\0bar", "name", 100, false).is_err());
+    }
+
+    #[test]
+    fn display_field_control_char_rejected() {
+        assert!(validate_display_field("foo\x07bar", "name", 100, false).is_err());
+    }
+
+    #[test]
+    fn display_field_tab_and_newline_allowed() {
+        assert!(validate_display_field("line1\tline2\nline3\rline4", "desc", 200, false).is_ok());
+    }
+
+    // ── validate_compress_dirs_options ──
+
+    fn make_opts(staging: &str, custom_name: Option<&str>, max_archives: Option<u32>) -> CompressDirsOptions {
+        CompressDirsOptions {
+            enabled: true,
+            format: CompressFormat::default(),
+            add_timestamp: false,
+            custom_name: custom_name.map(|s| s.to_string()),
+            max_archives_per_dir: max_archives,
+            staging_path: staging.to_string(),
+            password: None,
+            store_only: false,
+        }
+    }
+
+    #[test]
+    fn compress_opts_valid() {
+        let opts = make_opts("/mnt/staging", None, Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_ok());
+    }
+
+    #[test]
+    fn compress_opts_empty_staging_rejected() {
+        let opts = make_opts("", None, Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+
+    #[test]
+    fn compress_opts_staging_not_under_allowed() {
+        let opts = make_opts("/other/staging", None, Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+
+    #[test]
+    fn compress_opts_staging_overlaps_source() {
+        let opts = make_opts("/mnt/data/staging", None, Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+
+    #[test]
+    fn compress_opts_invalid_custom_name() {
+        let opts = make_opts("/mnt/staging", Some("bad name!@#$%^&"), Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+
+    #[test]
+    fn compress_opts_valid_custom_name() {
+        let opts = make_opts("/mnt/staging", Some("my_backup-2024"), Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_ok());
+    }
+
+    #[test]
+    fn compress_opts_custom_name_too_long() {
+        let long_name = "a".repeat(65);
+        let opts = make_opts("/mnt/staging", Some(&long_name), Some(5));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+
+    #[test]
+    fn compress_opts_max_archives_zero_rejected() {
+        let opts = make_opts("/mnt/staging", None, Some(0));
+        let sources = vec!["/mnt/data".into()];
+        let allowed = vec!["/mnt".into()];
+        assert!(validate_compress_dirs_options(&opts, &sources, &allowed).is_err());
+    }
+}

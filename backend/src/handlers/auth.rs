@@ -549,3 +549,129 @@ fn map_backup_error(e: anyhow::Error) -> ApiError {
         ApiError::internal_error()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    // ── ip_in_cidr ──
+
+    #[test]
+    fn ip_in_cidr_same_subnet() {
+        let ip: IpAddr = "192.168.1.100".parse().unwrap();
+        let network: IpAddr = "192.168.1.0".parse().unwrap();
+        assert!(ip_in_cidr(&ip, &network, 24));
+    }
+
+    #[test]
+    fn ip_in_cidr_different_subnet() {
+        let ip: IpAddr = "192.168.2.100".parse().unwrap();
+        let network: IpAddr = "192.168.1.0".parse().unwrap();
+        assert!(!ip_in_cidr(&ip, &network, 24));
+    }
+
+    #[test]
+    fn ip_in_cidr_prefix_zero_matches_all() {
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let network: IpAddr = "192.168.1.0".parse().unwrap();
+        assert!(ip_in_cidr(&ip, &network, 0));
+    }
+
+    #[test]
+    fn ip_in_cidr_prefix_too_large_v4() {
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let network: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!ip_in_cidr(&ip, &network, 33));
+    }
+
+    #[test]
+    fn ip_in_cidr_ipv6_same_prefix() {
+        let ip: IpAddr = "fd00::1".parse().unwrap();
+        let network: IpAddr = "fd00::".parse().unwrap();
+        assert!(ip_in_cidr(&ip, &network, 64));
+    }
+
+    #[test]
+    fn ip_in_cidr_mismatched_families() {
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let network: IpAddr = "::1".parse().unwrap();
+        assert!(!ip_in_cidr(&ip, &network, 24));
+    }
+
+    // ── is_trusted_proxy ──
+
+    #[test]
+    fn trusted_proxy_exact_match() {
+        let proxies = vec!["10.0.0.1".to_string()];
+        assert!(is_trusted_proxy("10.0.0.1", &proxies));
+    }
+
+    #[test]
+    fn trusted_proxy_cidr_match() {
+        let proxies = vec!["10.0.0.0/8".to_string()];
+        assert!(is_trusted_proxy("10.255.0.1", &proxies));
+    }
+
+    #[test]
+    fn trusted_proxy_no_match() {
+        let proxies = vec!["10.0.0.1".to_string()];
+        assert!(!is_trusted_proxy("192.168.1.1", &proxies));
+    }
+
+    #[test]
+    fn trusted_proxy_empty_list() {
+        let proxies: Vec<String> = vec![];
+        assert!(!is_trusted_proxy("10.0.0.1", &proxies));
+    }
+
+    #[test]
+    fn trusted_proxy_invalid_ip() {
+        let proxies = vec!["10.0.0.1".to_string()];
+        assert!(!is_trusted_proxy("not-an-ip", &proxies));
+    }
+
+    // ── build_auth_cookie / build_logout_cookie ──
+
+    #[test]
+    fn auth_cookie_secure_flag() {
+        let cookie = build_auth_cookie("abc123", true);
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("token=abc123"));
+    }
+
+    #[test]
+    fn auth_cookie_no_secure_flag() {
+        let cookie = build_auth_cookie("abc123", false);
+        assert!(!cookie.contains("Secure"));
+        assert!(cookie.contains("token=abc123"));
+    }
+
+    #[test]
+    fn logout_cookie_max_age_zero() {
+        let cookie = build_logout_cookie(true);
+        assert!(cookie.contains("Max-Age=0"));
+    }
+
+    // ── extract_client_ip ──
+
+    #[test]
+    fn extract_ip_direct_no_proxies() {
+        let headers = HeaderMap::new();
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 12345);
+        let proxies: Vec<String> = vec![];
+        let ip = extract_client_ip(&headers, Some(&addr), &proxies);
+        assert_eq!(ip, "192.168.1.50");
+    }
+
+    #[test]
+    fn extract_ip_xff_trusted_proxy() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.50, 10.0.0.1".parse().unwrap());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 12345);
+        let proxies = vec!["10.0.0.1".to_string()];
+        let ip = extract_client_ip(&headers, Some(&addr), &proxies);
+        assert_eq!(ip, "203.0.113.50");
+    }
+}

@@ -429,4 +429,189 @@ mod tests {
         assert!(json.contains("name"));
         assert!(json.contains("255"));
     }
+
+    // --- HTTP status code tests via IntoResponse ---
+
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn test_invalid_credentials_status() {
+        let resp = ApiError::invalid_credentials().into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_not_authenticated_status() {
+        let resp = ApiError::not_authenticated().into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_token_invalid_status() {
+        let resp = ApiError::token_invalid().into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_session_expired_status() {
+        let resp = ApiError::new(ErrorCode::SessionExpired).into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_job_not_found_status() {
+        let resp = ApiError::job_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_schedule_not_found_status() {
+        let resp = ApiError::schedule_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_credential_not_found_status() {
+        let resp = ApiError::credential_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_run_not_found_status() {
+        let resp = ApiError::run_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_user_not_found_status() {
+        let resp = ApiError::user_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_file_not_found_status() {
+        let resp = ApiError::file_not_found().into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_rate_limited_status() {
+        let resp = ApiError::rate_limited(30).into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_setup_already_done_status() {
+        let resp = ApiError::setup_already_done().into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_path_not_allowed_status() {
+        let resp = ApiError::path_not_allowed().into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_password_too_short_status() {
+        let resp = ApiError::password_too_short().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_password_incorrect_status() {
+        let resp = ApiError::password_incorrect().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_username_too_short_status() {
+        let resp = ApiError::username_too_short().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_source_dirs_required_status() {
+        let resp = ApiError::source_dirs_required().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_invalid_cron_status() {
+        let resp = ApiError::invalid_cron().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_job_already_running_status() {
+        let resp = ApiError::job_already_running().into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn test_job_name_exists_status() {
+        let resp = ApiError::job_name_exists().into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn test_credential_in_use_status() {
+        let resp = ApiError::credential_in_use().into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn test_delete_verification_required_status() {
+        let resp = ApiError::delete_verification_required().into_response();
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_REQUIRED);
+    }
+
+    #[test]
+    fn test_internal_error_status() {
+        let resp = ApiError::internal_error().into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // --- Convenience constructor correctness ---
+
+    #[test]
+    fn test_rate_limited_has_params() {
+        let err = ApiError::rate_limited(120);
+        assert!(err.params.is_some());
+        let params = err.params.unwrap();
+        assert_eq!(params["seconds"], 120);
+    }
+
+    #[test]
+    fn test_field_required_has_params() {
+        let err = ApiError::field_required("email");
+        let params = err.params.unwrap();
+        assert_eq!(params["field"], "email");
+    }
+
+    #[test]
+    fn test_invalid_pattern_has_params() {
+        let err = ApiError::invalid_pattern(2, "***", "too many wildcards");
+        let params = err.params.unwrap();
+        assert_eq!(params["index"], 2);
+        assert_eq!(params["pattern"], "***");
+        assert_eq!(params["reason"], "too many wildcards");
+    }
+
+    #[test]
+    fn test_source_dirs_duplicate_basenames_has_params() {
+        let err = ApiError::source_dirs_duplicate_basenames(vec!["docs".to_string(), "photos".to_string()]);
+        let params = err.params.unwrap();
+        let dupes = params["duplicates"].as_array().unwrap();
+        assert_eq!(dupes.len(), 2);
+        assert_eq!(dupes[0], "docs");
+        assert_eq!(dupes[1], "photos");
+    }
+
+    #[test]
+    fn test_file_too_large_has_params() {
+        let err = ApiError::file_too_large(1_073_741_824);
+        let params = err.params.unwrap();
+        assert_eq!(params["max_bytes"], 1_073_741_824u64);
+    }
 }

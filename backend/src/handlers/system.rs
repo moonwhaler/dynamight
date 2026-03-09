@@ -893,3 +893,97 @@ pub async fn delete_status(
         "verified": false
     })).into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // ── is_valid_uuid ──
+
+    #[test]
+    fn uuid_valid() {
+        assert!(is_valid_uuid("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn uuid_wrong_length() {
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716"));
+    }
+
+    #[test]
+    fn uuid_missing_dashes() {
+        assert!(!is_valid_uuid("550e8400e29b41d4a716446655440000"));
+    }
+
+    #[test]
+    fn uuid_non_hex_chars() {
+        assert!(!is_valid_uuid("550e8400-e29b-41d4-a716-44665544zzzz"));
+    }
+
+    #[test]
+    fn uuid_with_whitespace_trimmed() {
+        // The function trims whitespace, so this should be valid
+        assert!(is_valid_uuid("  550e8400-e29b-41d4-a716-446655440000  "));
+    }
+
+    // ── is_mount_point_allowed ──
+
+    #[test]
+    fn mount_point_under_mnt_ok() {
+        let allowed: Vec<String> = vec![];
+        assert!(is_mount_point_allowed("/mnt/data", &allowed));
+    }
+
+    #[test]
+    fn mount_point_root_denied() {
+        let allowed: Vec<String> = vec![];
+        assert!(!is_mount_point_allowed("/", &allowed));
+    }
+
+    #[test]
+    fn mount_point_system_prefix_denied() {
+        let allowed: Vec<String> = vec![];
+        assert!(!is_mount_point_allowed("/etc", &allowed));
+        assert!(!is_mount_point_allowed("/usr", &allowed));
+        assert!(!is_mount_point_allowed("/var", &allowed));
+    }
+
+    #[test]
+    fn mount_point_path_traversal_rejected() {
+        let allowed: Vec<String> = vec![];
+        assert!(!is_mount_point_allowed("/mnt/../etc", &allowed));
+    }
+
+    #[test]
+    fn mount_point_relative_path_rejected() {
+        let allowed: Vec<String> = vec![];
+        assert!(!is_mount_point_allowed("relative/path", &allowed));
+    }
+
+    #[test]
+    fn mount_point_under_allowed_browse_path() {
+        let allowed = vec!["/custom/storage".to_string()];
+        assert!(is_mount_point_allowed("/custom/storage/disk1", &allowed));
+    }
+
+    // ── is_path_allowed ──
+
+    #[test]
+    fn path_allowed_under_allowed_dir() {
+        let allowed = vec!["/mnt/data".to_string()];
+        assert!(is_path_allowed(Path::new("/mnt/data/subdir"), &allowed));
+    }
+
+    #[test]
+    fn path_not_allowed_outside() {
+        let allowed = vec!["/mnt/data".to_string()];
+        assert!(!is_path_allowed(Path::new("/other/place"), &allowed));
+    }
+
+    #[test]
+    fn path_allowed_exact_match() {
+        let allowed = vec!["/mnt/data".to_string()];
+        assert!(is_path_allowed(Path::new("/mnt/data"), &allowed));
+    }
+}

@@ -301,3 +301,148 @@ impl JobResponse {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    /// Helper to create a minimal Job with sensible defaults for testing.
+    fn make_test_job() -> Job {
+        let now = Utc::now();
+        Job {
+            id: 1,
+            name: "test-job".to_string(),
+            description: None,
+            enabled: true,
+            usb_uuid: Some("usb-uuid-1".to_string()),
+            mount_point: "/mnt/usb".to_string(),
+            auto_mount: true,
+            auto_unmount: false,
+            source_dirs: r#"["/home/user/docs", "/home/user/photos"]"#.to_string(),
+            backup_subdir: "backups".to_string(),
+            sync_deletes: true,
+            rsync_excludes: Some(r#"["*.tmp", ".cache"]"#.to_string()),
+            checksum_mode: true,
+            compress: false,
+            dry_run: false,
+            bandwidth_limit: Some(500),
+            verbosity: "normal".to_string(),
+            destination_type: None,
+            destination_config: None,
+            sync_options: None,
+            credential_id: None,
+            dest_storage_free: None,
+            dest_storage_total: None,
+            dest_storage_updated_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn test_source_dirs_vec() {
+        let job = make_test_job();
+        let dirs = job.source_dirs_vec();
+        assert_eq!(dirs, vec!["/home/user/docs", "/home/user/photos"]);
+    }
+
+    #[test]
+    fn test_source_dirs_vec_invalid_json() {
+        let mut job = make_test_job();
+        job.source_dirs = "not-json".to_string();
+        assert_eq!(job.source_dirs_vec(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_excludes_vec() {
+        let job = make_test_job();
+        assert_eq!(job.excludes_vec(), vec!["*.tmp", ".cache"]);
+    }
+
+    #[test]
+    fn test_excludes_vec_none() {
+        let mut job = make_test_job();
+        job.rsync_excludes = None;
+        assert_eq!(job.excludes_vec(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_destination_config_legacy() {
+        let job = make_test_job();
+        let config = job.get_destination_config();
+        assert_eq!(config.destination_type(), "local");
+        if let DestinationConfig::Local { mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount } = &config {
+            assert_eq!(mount_point, "/mnt/usb");
+            assert_eq!(backup_subdir, "backups");
+            assert_eq!(usb_uuid.as_deref(), Some("usb-uuid-1"));
+            assert!(*auto_mount);
+            assert!(!*auto_unmount);
+        } else {
+            panic!("Expected Local from legacy fields");
+        }
+    }
+
+    #[test]
+    fn test_get_destination_config_json() {
+        let mut job = make_test_job();
+        let s3_config = DestinationConfig::S3 {
+            bucket: "my-bucket".to_string(),
+            prefix: "pfx".to_string(),
+            region: "eu-west-1".to_string(),
+            endpoint: None,
+            storage_class: None,
+        };
+        job.destination_config = Some(serde_json::to_string(&s3_config).unwrap());
+        let config = job.get_destination_config();
+        assert_eq!(config.destination_type(), "s3");
+    }
+
+    #[test]
+    fn test_get_sync_options_legacy() {
+        let job = make_test_job();
+        let opts = job.get_sync_options();
+        assert!(opts.delete_extraneous);
+        assert_eq!(opts.exclude_patterns, vec!["*.tmp", ".cache"]);
+        assert!(opts.checksum_mode());
+        assert!(!opts.compress());
+        assert!(!opts.dry_run);
+        assert_eq!(opts.bandwidth_limit_kbps, Some(500));
+        assert_eq!(opts.verbosity, "normal");
+    }
+
+    #[test]
+    fn test_get_sync_options_json() {
+        let mut job = make_test_job();
+        let sync_opts = SyncOptions {
+            delete_extraneous: false,
+            exclude_patterns: vec!["*.bak".to_string()],
+            exclude_dirs: vec![],
+            bandwidth_limit_kbps: None,
+            dry_run: true,
+            verbosity: "quiet".to_string(),
+            provider_options: None,
+            space_check: "fail".to_string(),
+            compress_dirs: None,
+        };
+        job.sync_options = Some(serde_json::to_string(&sync_opts).unwrap());
+        let opts = job.get_sync_options();
+        assert!(!opts.delete_extraneous);
+        assert_eq!(opts.exclude_patterns, vec!["*.bak"]);
+        assert!(opts.dry_run);
+        assert_eq!(opts.space_check_mode(), "fail");
+    }
+
+    #[test]
+    fn test_get_destination_type_default() {
+        let job = make_test_job();
+        assert_eq!(job.get_destination_type(), "local");
+    }
+
+    #[test]
+    fn test_get_destination_type_explicit() {
+        let mut job = make_test_job();
+        job.destination_type = Some("s3".to_string());
+        assert_eq!(job.get_destination_type(), "s3");
+    }
+}

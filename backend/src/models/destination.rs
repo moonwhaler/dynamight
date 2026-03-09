@@ -304,3 +304,302 @@ impl SyncOptions {
         self.compress_dirs.as_ref().map(|c| c.enabled).unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- DestinationConfig round-trip serialization tests ---
+
+    #[test]
+    fn test_local_roundtrip() {
+        let config = DestinationConfig::Local {
+            mount_point: "/mnt/usb".to_string(),
+            backup_subdir: "data".to_string(),
+            usb_uuid: Some("abcd-1234".to_string()),
+            auto_mount: true,
+            auto_unmount: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "local");
+        if let DestinationConfig::Local { mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount } = &parsed {
+            assert_eq!(mount_point, "/mnt/usb");
+            assert_eq!(backup_subdir, "data");
+            assert_eq!(usb_uuid.as_deref(), Some("abcd-1234"));
+            assert!(*auto_mount);
+            assert!(!*auto_unmount);
+        } else {
+            panic!("Expected Local variant");
+        }
+    }
+
+    #[test]
+    fn test_google_drive_roundtrip() {
+        let config = DestinationConfig::GoogleDrive {
+            folder_id: "abc123".to_string(),
+            shared_drive_id: Some("shared-1".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "google_drive");
+        if let DestinationConfig::GoogleDrive { folder_id, shared_drive_id } = &parsed {
+            assert_eq!(folder_id, "abc123");
+            assert_eq!(shared_drive_id.as_deref(), Some("shared-1"));
+        } else {
+            panic!("Expected GoogleDrive variant");
+        }
+    }
+
+    #[test]
+    fn test_onedrive_roundtrip() {
+        let config = DestinationConfig::OneDrive {
+            folder_path: "/Documents/Backup".to_string(),
+            drive_id: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "onedrive");
+        if let DestinationConfig::OneDrive { folder_path, drive_id } = &parsed {
+            assert_eq!(folder_path, "/Documents/Backup");
+            assert!(drive_id.is_none());
+        } else {
+            panic!("Expected OneDrive variant");
+        }
+    }
+
+    #[test]
+    fn test_s3_roundtrip() {
+        let config = DestinationConfig::S3 {
+            bucket: "my-bucket".to_string(),
+            prefix: "backups/".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint: Some("https://s3.custom.com".to_string()),
+            storage_class: Some("GLACIER".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "s3");
+        if let DestinationConfig::S3 { bucket, prefix, region, endpoint, storage_class } = &parsed {
+            assert_eq!(bucket, "my-bucket");
+            assert_eq!(prefix, "backups/");
+            assert_eq!(region, "us-east-1");
+            assert_eq!(endpoint.as_deref(), Some("https://s3.custom.com"));
+            assert_eq!(storage_class.as_deref(), Some("GLACIER"));
+        } else {
+            panic!("Expected S3 variant");
+        }
+    }
+
+    #[test]
+    fn test_sftp_roundtrip() {
+        let config = DestinationConfig::Sftp {
+            host: "backup.example.com".to_string(),
+            port: 2222,
+            username: "admin".to_string(),
+            remote_path: "/srv/backup".to_string(),
+            key_based_auth: true,
+            host_key_fingerprint: Some("SHA256:abc123".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "sftp");
+        if let DestinationConfig::Sftp { host, port, username, remote_path, key_based_auth, host_key_fingerprint } = &parsed {
+            assert_eq!(host, "backup.example.com");
+            assert_eq!(*port, 2222);
+            assert_eq!(username, "admin");
+            assert_eq!(remote_path, "/srv/backup");
+            assert!(*key_based_auth);
+            assert_eq!(host_key_fingerprint.as_deref(), Some("SHA256:abc123"));
+        } else {
+            panic!("Expected Sftp variant");
+        }
+    }
+
+    #[test]
+    fn test_webdav_roundtrip() {
+        let config = DestinationConfig::WebDav {
+            url: "https://nextcloud.example.com/remote.php/dav".to_string(),
+            remote_path: "/backups".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: DestinationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.destination_type(), "webdav");
+        if let DestinationConfig::WebDav { url, remote_path } = &parsed {
+            assert_eq!(url, "https://nextcloud.example.com/remote.php/dav");
+            assert_eq!(remote_path, "/backups");
+        } else {
+            panic!("Expected WebDav variant");
+        }
+    }
+
+    // --- destination_type tests ---
+
+    #[test]
+    fn test_destination_type_all_variants() {
+        let cases: Vec<(DestinationConfig, &str)> = vec![
+            (DestinationConfig::Local { mount_point: "".into(), backup_subdir: "".into(), usb_uuid: None, auto_mount: false, auto_unmount: false }, "local"),
+            (DestinationConfig::GoogleDrive { folder_id: "".into(), shared_drive_id: None }, "google_drive"),
+            (DestinationConfig::OneDrive { folder_path: "".into(), drive_id: None }, "onedrive"),
+            (DestinationConfig::S3 { bucket: "".into(), prefix: "".into(), region: "".into(), endpoint: None, storage_class: None }, "s3"),
+            (DestinationConfig::Sftp { host: "".into(), port: 22, username: "".into(), remote_path: "".into(), key_based_auth: false, host_key_fingerprint: None }, "sftp"),
+            (DestinationConfig::WebDav { url: "".into(), remote_path: "".into() }, "webdav"),
+        ];
+        for (config, expected) in cases {
+            assert_eq!(config.destination_type(), expected);
+        }
+    }
+
+    // --- requires_credentials tests ---
+
+    #[test]
+    fn test_requires_credentials() {
+        let local = DestinationConfig::default();
+        assert!(!local.requires_credentials());
+
+        let gdrive = DestinationConfig::GoogleDrive { folder_id: "x".into(), shared_drive_id: None };
+        assert!(gdrive.requires_credentials());
+
+        let onedrive = DestinationConfig::OneDrive { folder_path: "/".into(), drive_id: None };
+        assert!(onedrive.requires_credentials());
+
+        let s3 = DestinationConfig::S3 { bucket: "b".into(), prefix: "".into(), region: "r".into(), endpoint: None, storage_class: None };
+        assert!(s3.requires_credentials());
+
+        let sftp = DestinationConfig::Sftp { host: "h".into(), port: 22, username: "u".into(), remote_path: "/".into(), key_based_auth: false, host_key_fingerprint: None };
+        assert!(sftp.requires_credentials());
+
+        let webdav = DestinationConfig::WebDav { url: "http://x".into(), remote_path: "/".into() };
+        assert!(webdav.requires_credentials());
+    }
+
+    // --- Default tests ---
+
+    #[test]
+    fn test_default_is_local() {
+        let config = DestinationConfig::default();
+        assert_eq!(config.destination_type(), "local");
+        if let DestinationConfig::Local { mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount } = &config {
+            assert_eq!(mount_point, "/mnt/backup");
+            assert_eq!(backup_subdir, "backups");
+            assert!(usb_uuid.is_none());
+            assert!(*auto_mount);
+            assert!(*auto_unmount);
+        } else {
+            panic!("Default should be Local");
+        }
+    }
+
+    // --- from_legacy tests ---
+
+    #[test]
+    fn test_from_legacy() {
+        let config = DestinationConfig::from_legacy(
+            "/mnt/usb".to_string(),
+            "mybackup".to_string(),
+            Some("uuid-123".to_string()),
+            false,
+            true,
+        );
+        if let DestinationConfig::Local { mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount } = &config {
+            assert_eq!(mount_point, "/mnt/usb");
+            assert_eq!(backup_subdir, "mybackup");
+            assert_eq!(usb_uuid.as_deref(), Some("uuid-123"));
+            assert!(!*auto_mount);
+            assert!(*auto_unmount);
+        } else {
+            panic!("from_legacy should create Local");
+        }
+    }
+
+    // --- SyncOptions tests ---
+
+    #[test]
+    fn test_sync_options_from_legacy() {
+        let opts = SyncOptions::from_legacy(
+            true,
+            vec!["*.tmp".to_string(), ".cache".to_string()],
+            true,
+            true,
+            false,
+            Some(1000),
+            "verbose".to_string(),
+        );
+        assert!(opts.delete_extraneous);
+        assert_eq!(opts.exclude_patterns, vec!["*.tmp", ".cache"]);
+        assert!(opts.checksum_mode());
+        assert!(opts.compress());
+        assert!(!opts.dry_run);
+        assert_eq!(opts.bandwidth_limit_kbps, Some(1000));
+        assert_eq!(opts.verbosity, "verbose");
+        assert_eq!(opts.space_check_mode(), "warn");
+    }
+
+    #[test]
+    fn test_sync_options_checksum_and_compress_defaults() {
+        let opts = SyncOptions::default();
+        assert!(!opts.checksum_mode());
+        assert!(!opts.compress());
+        assert!(!opts.ignore_times());
+        assert!(!opts.delete_extraneous);
+        assert!(!opts.dry_run);
+        assert!(!opts.compress_dirs_enabled());
+    }
+
+    #[test]
+    fn test_sync_options_space_check_mode_default_when_empty() {
+        let mut opts = SyncOptions::default();
+        opts.space_check = "".to_string();
+        assert_eq!(opts.space_check_mode(), "warn");
+    }
+
+    #[test]
+    fn test_sync_options_space_check_mode_explicit() {
+        let mut opts = SyncOptions::default();
+        opts.space_check = "fail".to_string();
+        assert_eq!(opts.space_check_mode(), "fail");
+    }
+
+    #[test]
+    fn test_sync_options_compress_dirs_enabled() {
+        let mut opts = SyncOptions::default();
+        assert!(!opts.compress_dirs_enabled());
+
+        opts.compress_dirs = Some(CompressDirsOptions {
+            enabled: false,
+            format: CompressFormat::TarGz,
+            add_timestamp: false,
+            custom_name: None,
+            max_archives_per_dir: None,
+            staging_path: "/tmp/staging".to_string(),
+            password: None,
+            store_only: false,
+        });
+        assert!(!opts.compress_dirs_enabled());
+
+        opts.compress_dirs.as_mut().unwrap().enabled = true;
+        assert!(opts.compress_dirs_enabled());
+    }
+
+    #[test]
+    fn test_sync_options_roundtrip() {
+        let opts = SyncOptions::from_legacy(
+            true,
+            vec!["*.log".to_string()],
+            false,
+            true,
+            true,
+            None,
+            "quiet".to_string(),
+        );
+        let json = serde_json::to_string(&opts).unwrap();
+        let parsed: SyncOptions = serde_json::from_str(&json).unwrap();
+        assert!(parsed.delete_extraneous);
+        assert_eq!(parsed.exclude_patterns, vec!["*.log"]);
+        assert!(!parsed.checksum_mode());
+        assert!(parsed.compress());
+        assert!(parsed.dry_run);
+        assert!(parsed.bandwidth_limit_kbps.is_none());
+        assert_eq!(parsed.verbosity, "quiet");
+    }
+}

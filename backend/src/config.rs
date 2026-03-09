@@ -350,3 +350,178 @@ impl Config {
             .and_then(|p| p.parent())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::path::Path;
+
+    /// Helper: construct a Config directly for pure unit tests that don't need Config::load().
+    fn make_config(database_url: &str) -> Config {
+        Config {
+            database_url: database_url.to_string(),
+            logs_database_url: "sqlite:data/logs.db".to_string(),
+            jwt_secret: "test-secret".to_string(),
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            static_files_dir: "static".to_string(),
+            allowed_browse_paths: vec!["/mnt".to_string()],
+            cors_origins: None,
+            rate_limit_max_attempts: 5,
+            rate_limit_window_secs: 60,
+            rate_limit_lockout_secs: 60,
+            rate_limit_max_lockout_secs: 3600,
+            secure_cookies: true,
+            max_download_size: 2_147_483_648,
+            trusted_proxies: vec![],
+            max_request_body_size: 10 * 1024 * 1024,
+            timezone: chrono_tz::Tz::UTC,
+        }
+    }
+
+    /// Helper: set required env vars for Config::load() and point away from real config.
+    /// Also removes env vars that might be inherited from the shell environment.
+    fn set_test_env() {
+        unsafe {
+            // Remove any inherited env vars that could interfere with defaults
+            env::remove_var("DATABASE_URL");
+            env::remove_var("LOGS_DATABASE_URL");
+            env::remove_var("HOST");
+            env::remove_var("PORT");
+            env::remove_var("SECURE_COOKIES");
+            env::remove_var("CORS_ORIGINS");
+            env::remove_var("ALLOWED_BROWSE_PATHS");
+            env::remove_var("TZ");
+            env::remove_var("STATIC_FILES_DIR");
+            env::remove_var("RATE_LIMIT_MAX_ATTEMPTS");
+            env::remove_var("RATE_LIMIT_WINDOW_SECS");
+            env::remove_var("RATE_LIMIT_LOCKOUT_SECS");
+            env::remove_var("RATE_LIMIT_MAX_LOCKOUT_SECS");
+            env::remove_var("MAX_DOWNLOAD_SIZE");
+            env::remove_var("MAX_REQUEST_BODY_SIZE");
+            env::remove_var("TRUSTED_PROXIES");
+            // Set required vars
+            env::set_var("JWT_SECRET", "test-secret-for-unit-tests");
+            env::set_var("DYNAMIGHT_CONFIG", "/tmp/nonexistent-dynamight-test.toml");
+        }
+    }
+
+    /// Helper: clean up env vars set during tests.
+    fn unset_test_env() {
+        unsafe {
+            env::remove_var("JWT_SECRET");
+            env::remove_var("DYNAMIGHT_CONFIG");
+            env::remove_var("DATABASE_URL");
+            env::remove_var("LOGS_DATABASE_URL");
+            env::remove_var("HOST");
+            env::remove_var("PORT");
+            env::remove_var("SECURE_COOKIES");
+            env::remove_var("CORS_ORIGINS");
+            env::remove_var("ALLOWED_BROWSE_PATHS");
+            env::remove_var("TZ");
+        }
+    }
+
+    #[test]
+    fn test_database_dir_sqlite_url() {
+        let config = make_config("sqlite:data/dynamight.db");
+        assert_eq!(config.database_dir(), Some(Path::new("data")));
+    }
+
+    #[test]
+    fn test_database_dir_custom_path() {
+        let config = make_config("sqlite:/var/lib/dynamight/app.db");
+        assert_eq!(config.database_dir(), Some(Path::new("/var/lib/dynamight")));
+    }
+
+    #[test]
+    fn test_database_dir_non_sqlite() {
+        let config = make_config("postgres://localhost/mydb");
+        assert_eq!(config.database_dir(), None);
+    }
+
+    #[test]
+    fn test_database_dir_sqlite_root() {
+        let config = make_config("sqlite:app.db");
+        assert_eq!(config.database_dir(), Some(Path::new("")));
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_jwt_secret_from_env() {
+        unset_test_env();
+        set_test_env();
+        // Also set DATABASE_URL since TomlConfig::default() (no file) yields empty strings
+        unsafe { env::set_var("DATABASE_URL", "sqlite:data/dynamight.db"); }
+        let config = Config::load();
+        // JWT_SECRET from env should take priority
+        assert_eq!(config.jwt_secret, "test-secret-for-unit-tests");
+        assert_eq!(config.database_url, "sqlite:data/dynamight.db");
+        // Logs DB should be derived from the main DB path
+        assert_eq!(config.logs_database_url, "sqlite:data/logs.db");
+        unset_test_env();
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_from_toml_file() {
+        unset_test_env();
+        // Write a minimal TOML config to a temp path
+        let toml_path = "/tmp/dynamight-test-config.toml";
+        std::fs::write(toml_path, r#"
+[security]
+jwt_secret = "toml-secret-value"
+
+[database]
+url = "sqlite:/tmp/test.db"
+
+[server]
+host = "192.168.1.1"
+port = 9999
+"#).unwrap();
+        unsafe { env::set_var("DYNAMIGHT_CONFIG", toml_path); }
+        let config = Config::load();
+        assert_eq!(config.jwt_secret, "toml-secret-value");
+        assert_eq!(config.database_url, "sqlite:/tmp/test.db");
+        assert_eq!(config.host, "192.168.1.1");
+        assert_eq!(config.port, 9999);
+        std::fs::remove_file(toml_path).ok();
+        unset_test_env();
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_overrides() {
+        unset_test_env();
+        set_test_env();
+        unsafe {
+            env::set_var("DATABASE_URL", "sqlite:data/dynamight.db");
+            env::set_var("HOST", "127.0.0.1");
+            env::set_var("PORT", "9090");
+            env::set_var("SECURE_COOKIES", "false");
+            env::set_var("CORS_ORIGINS", "http://localhost:3000, https://example.com");
+            env::set_var("ALLOWED_BROWSE_PATHS", "/data,/srv");
+        }
+        let config = Config::load();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 9090);
+        assert!(!config.secure_cookies);
+        let cors = config.cors_origins.unwrap();
+        assert_eq!(cors, vec!["http://localhost:3000", "https://example.com"]);
+        assert_eq!(config.allowed_browse_paths, vec!["/data", "/srv"]);
+        unset_test_env();
+    }
+
+    #[test]
+    #[serial]
+    fn test_logs_database_url_derived() {
+        unset_test_env();
+        set_test_env();
+        unsafe { env::set_var("DATABASE_URL", "sqlite:data/dynamight.db"); }
+        let config = Config::load();
+        // sqlite:data/dynamight.db -> sqlite:data/logs.db
+        assert_eq!(config.logs_database_url, "sqlite:data/logs.db");
+        unset_test_env();
+    }
+}

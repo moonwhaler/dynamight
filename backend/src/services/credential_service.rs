@@ -506,3 +506,128 @@ pub struct CredentialUsage {
     pub jobs: Vec<JobSummary>,
     pub count: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn make_service(secret: &str) -> CredentialService {
+        let db = crate::test_helpers::test_db().await;
+        CredentialService::new(secret, db)
+    }
+
+    fn s3_creds() -> CredentialData {
+        CredentialData::S3 {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        }
+    }
+
+    fn webdav_creds() -> CredentialData {
+        CredentialData::WebDav {
+            username: "admin".to_string(),
+            password: "hunter2".to_string(),
+        }
+    }
+
+    fn oauth_creds() -> CredentialData {
+        CredentialData::OAuth {
+            access_token: "ya29.a0AfH6SMA".to_string(),
+            refresh_token: "1//0eXyz789".to_string(),
+            expires_at: 1700000000,
+        }
+    }
+
+    #[tokio::test]
+    async fn encrypt_decrypt_roundtrip_s3() {
+        let service = make_service("test_secret").await;
+        let data = s3_creds();
+        let encrypted = service.encrypt_for_import(&data).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+
+        match decrypted {
+            CredentialData::S3 { access_key_id, secret_access_key } => {
+                assert_eq!(access_key_id, "AKIAIOSFODNN7EXAMPLE");
+                assert_eq!(secret_access_key, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+            }
+            other => panic!("Expected S3, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn encrypt_decrypt_roundtrip_webdav() {
+        let service = make_service("test_secret").await;
+        let data = webdav_creds();
+        let encrypted = service.encrypt_for_import(&data).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+
+        match decrypted {
+            CredentialData::WebDav { username, password } => {
+                assert_eq!(username, "admin");
+                assert_eq!(password, "hunter2");
+            }
+            other => panic!("Expected WebDav, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn encrypt_decrypt_roundtrip_oauth() {
+        let service = make_service("test_secret").await;
+        let data = oauth_creds();
+        let encrypted = service.encrypt_for_import(&data).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+
+        match decrypted {
+            CredentialData::OAuth { access_token, refresh_token, expires_at } => {
+                assert_eq!(access_token, "ya29.a0AfH6SMA");
+                assert_eq!(refresh_token, "1//0eXyz789");
+                assert_eq!(expires_at, 1700000000);
+            }
+            other => panic!("Expected OAuth, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn v1_format_detected_correctly() {
+        let service = make_service("test_secret").await;
+        let encrypted = service.encrypt_for_import(&s3_creds()).unwrap();
+
+        // v1 format starts with magic bytes
+        assert!(CredentialService::is_v1_format(&encrypted));
+        assert_eq!(&encrypted[..4], &ENCRYPTION_MAGIC);
+    }
+
+    #[test]
+    fn random_data_not_v1_format() {
+        assert!(!CredentialService::is_v1_format(&[0x00, 0x01, 0x02, 0x03, 0x04]));
+        assert!(!CredentialService::is_v1_format(&[0xFF, 0xFE, 0xFD]));
+    }
+
+    #[test]
+    fn empty_data_not_v1_format() {
+        assert!(!CredentialService::is_v1_format(&[]));
+    }
+
+    #[tokio::test]
+    async fn wrong_key_fails_decrypt() {
+        let service1 = make_service("secret_one").await;
+        let service2 = make_service("secret_two").await;
+
+        let encrypted = service1.encrypt_for_import(&s3_creds()).unwrap();
+        let result = service2.decrypt(&encrypted);
+        assert!(result.is_err(), "Decrypting with wrong key should fail");
+    }
+
+    #[tokio::test]
+    async fn too_short_data_fails_decrypt() {
+        let service = make_service("test_secret").await;
+
+        // Too short for v1 (needs magic + salt + nonce + tag minimum)
+        let short_v1 = [ENCRYPTION_MAGIC.as_slice(), &[0u8; 10]].concat();
+        assert!(service.decrypt(&short_v1).is_err());
+
+        // Too short for legacy (needs at least nonce)
+        let short_legacy = vec![0u8; 5];
+        assert!(service.decrypt(&short_legacy).is_err());
+    }
+}

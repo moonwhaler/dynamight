@@ -7,6 +7,9 @@ mod middleware;
 mod models;
 mod services;
 
+#[cfg(test)]
+mod test_helpers;
+
 use axum::{
     middleware as axum_middleware,
     routing::{delete, get, post, put},

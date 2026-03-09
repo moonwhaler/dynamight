@@ -480,3 +480,173 @@ pub fn cleanup_old_archives(
 
     Ok(deleted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CompressDirsOptions, CompressFormat};
+
+    fn default_opts() -> CompressDirsOptions {
+        CompressDirsOptions {
+            enabled: true,
+            format: CompressFormat::TarGz,
+            add_timestamp: false,
+            custom_name: None,
+            max_archives_per_dir: None,
+            staging_path: "/tmp/staging".to_string(),
+            password: None,
+            store_only: false,
+        }
+    }
+
+    // --- sanitize_dir_name tests ---
+
+    #[test]
+    fn sanitize_alphanumeric_passes_through() {
+        assert_eq!(sanitize_dir_name("myDir123"), "myDir123");
+    }
+
+    #[test]
+    fn sanitize_hyphens_and_underscores_preserved() {
+        assert_eq!(sanitize_dir_name("my-dir_name"), "my-dir_name");
+    }
+
+    #[test]
+    fn sanitize_spaces_become_underscore() {
+        assert_eq!(sanitize_dir_name("my dir name"), "my_dir_name");
+    }
+
+    #[test]
+    fn sanitize_dots_become_underscore() {
+        assert_eq!(sanitize_dir_name("file.name.ext"), "file_name_ext");
+    }
+
+    #[test]
+    fn sanitize_leading_trailing_underscores_trimmed() {
+        assert_eq!(sanitize_dir_name("__hello__"), "hello");
+    }
+
+    #[test]
+    fn sanitize_dotnet_becomes_dotnet() {
+        assert_eq!(sanitize_dir_name(".dotnet"), "dotnet");
+    }
+
+    #[test]
+    fn sanitize_empty_string() {
+        assert_eq!(sanitize_dir_name(""), "");
+    }
+
+    #[test]
+    fn sanitize_special_characters() {
+        assert_eq!(sanitize_dir_name("a@b#c$d"), "a_b_c_d");
+    }
+
+    // --- format_extension tests ---
+
+    #[test]
+    fn format_extension_tar_gz() {
+        assert_eq!(format_extension(&CompressFormat::TarGz, false, false), "tar.gz");
+    }
+
+    #[test]
+    fn format_extension_tar_gz_encrypted() {
+        assert_eq!(format_extension(&CompressFormat::TarGz, false, true), "tar.gz.enc");
+    }
+
+    #[test]
+    fn format_extension_tar_store_only() {
+        assert_eq!(format_extension(&CompressFormat::TarGz, true, false), "tar");
+    }
+
+    #[test]
+    fn format_extension_tar_store_only_encrypted() {
+        assert_eq!(format_extension(&CompressFormat::TarGz, true, true), "tar.enc");
+    }
+
+    #[test]
+    fn format_extension_zip_always_zip() {
+        // Zip ignores store_only and encrypted flags for the extension
+        assert_eq!(format_extension(&CompressFormat::Zip, false, false), "zip");
+        assert_eq!(format_extension(&CompressFormat::Zip, true, false), "zip");
+        assert_eq!(format_extension(&CompressFormat::Zip, false, true), "zip");
+        assert_eq!(format_extension(&CompressFormat::Zip, true, true), "zip");
+    }
+
+    // --- generate_archive_name tests ---
+
+    #[test]
+    fn archive_name_basic_no_timestamp_no_custom() {
+        let opts = default_opts();
+        let name = generate_archive_name("photos", &opts, 42);
+        assert_eq!(name, "photos_42.tar.gz");
+    }
+
+    #[test]
+    fn archive_name_with_custom_name() {
+        let mut opts = default_opts();
+        opts.custom_name = Some("mybackup".to_string());
+        let name = generate_archive_name("photos", &opts, 7);
+        assert_eq!(name, "mybackup_photos_7.tar.gz");
+    }
+
+    #[test]
+    fn archive_name_with_password_changes_extension() {
+        let mut opts = default_opts();
+        opts.password = Some("secret123".to_string());
+        let name = generate_archive_name("docs", &opts, 1);
+        assert_eq!(name, "docs_1.tar.gz.enc");
+    }
+
+    #[test]
+    fn archive_name_with_timestamp_contains_date_pattern() {
+        let mut opts = default_opts();
+        opts.add_timestamp = true;
+        let name = generate_archive_name("data", &opts, 5);
+        // Should match pattern: YYYY-MM-DDTHH-MM-SS_data_5.tar.gz
+        assert!(name.ends_with("_data_5.tar.gz"), "Got: {}", name);
+        assert!(name.contains("T"), "Timestamp should contain 'T' separator: {}", name);
+        // Verify it starts with a date-like pattern (4 digits)
+        assert!(name.chars().next().unwrap().is_ascii_digit(), "Should start with timestamp: {}", name);
+    }
+
+    #[test]
+    fn archive_name_zip_format() {
+        let mut opts = default_opts();
+        opts.format = CompressFormat::Zip;
+        let name = generate_archive_name("files", &opts, 99);
+        assert_eq!(name, "files_99.zip");
+    }
+
+    #[test]
+    fn archive_name_store_only_tar() {
+        let mut opts = default_opts();
+        opts.store_only = true;
+        let name = generate_archive_name("logs", &opts, 3);
+        assert_eq!(name, "logs_3.tar");
+    }
+
+    #[test]
+    fn archive_name_sanitizes_dir_name() {
+        let opts = default_opts();
+        let name = generate_archive_name(".dotnet", &opts, 1);
+        assert_eq!(name, "dotnet_1.tar.gz");
+    }
+
+    #[test]
+    fn archive_name_empty_custom_name_ignored() {
+        let mut opts = default_opts();
+        opts.custom_name = Some("".to_string());
+        let name = generate_archive_name("photos", &opts, 1);
+        // Empty custom name should be ignored
+        assert_eq!(name, "photos_1.tar.gz");
+    }
+
+    #[test]
+    fn archive_name_empty_password_not_encrypted() {
+        let mut opts = default_opts();
+        opts.password = Some("".to_string());
+        let name = generate_archive_name("docs", &opts, 1);
+        // Empty password should not add .enc
+        assert_eq!(name, "docs_1.tar.gz");
+    }
+}
