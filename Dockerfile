@@ -70,12 +70,19 @@ ENV STATIC_FILES_DIR=/app/static
 ENV RUST_LOG=info,dynamight=debug
 ENV DYNAMIGHT_CONFIG=/app/config/dynamight.toml
 
-# Expose port
+# Expose default port
 EXPOSE 8080
 
-# Health check
+# Health check script (reads port from config file, falls back to 8080)
+COPY <<'EOF' /app/healthcheck.sh
+#!/bin/sh
+PORT=$(grep -E '^[[:space:]]*port[[:space:]]*=' /app/config/dynamight.toml 2>/dev/null | head -1 | tr -dc '0-9')
+wget -qO /dev/null "http://127.0.0.1:${PORT:-8080}/api/system/health"
+EOF
+RUN chmod +x /app/healthcheck.sh
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-    CMD wget -q --spider http://localhost:8080/api/system/health || exit 1
+    CMD /app/healthcheck.sh
 
 # Run as root (required for mount operations)
 ENTRYPOINT ["./dynamight"]
