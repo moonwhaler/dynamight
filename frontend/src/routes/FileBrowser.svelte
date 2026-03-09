@@ -330,7 +330,7 @@
       <button
         type="button"
         onclick={toggleViewMode}
-        class="py-2.5 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+        class="py-2 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
         title={browserState.viewMode === 'list' ? 'Grid view' : 'List view'}
       >
         {#if browserState.viewMode === 'list'}
@@ -349,7 +349,7 @@
         <button
           type="button"
           onclick={() => isSearchOpen ? closeSearch() : openSearch()}
-          class="py-2.5 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300
+          class="py-2 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300
             {isSearchOpen ? 'bg-primary-50 dark:bg-primary-900/20 !text-primary-600 dark:!text-primary-400 border-primary-200 dark:border-primary-800' : ''}"
           title={m.filebrowser_search_toggle()}
         >

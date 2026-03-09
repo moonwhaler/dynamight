@@ -72,7 +72,7 @@
   <button
     bind:this={buttonEl}
     onclick={() => open = !open}
-    class="btn btn-secondary px-2 py-2.5 relative"
+    class="btn btn-secondary px-2 relative"
     title={label}
     aria-label={label}
   >
