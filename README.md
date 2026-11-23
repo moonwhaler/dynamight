@@ -276,8 +276,6 @@ cd frontend
 npm test
 ```
 
-The same suites run in CI on every push (`.github/workflows/test.yml`).
-
 ## Building for Production
 
 ### Using Build Script
