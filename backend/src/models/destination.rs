@@ -26,6 +26,11 @@ pub enum DestinationConfig {
     },
 
     /// Microsoft OneDrive destination
+    ///
+    /// Tagged as "onedrive" to match `destination_type()`, the frontend and
+    /// credential provider types; "one_drive" (the snake_case default) is
+    /// still accepted.
+    #[serde(rename = "onedrive", alias = "one_drive")]
     OneDrive {
         folder_path: String,
         #[serde(default)]
@@ -60,6 +65,11 @@ pub enum DestinationConfig {
     },
 
     /// WebDAV destination (Nextcloud, ownCloud, etc.)
+    ///
+    /// Tagged as "webdav" to match `destination_type()`, the frontend and
+    /// credential provider types; "web_dav" (the snake_case default) is
+    /// still accepted.
+    #[serde(rename = "webdav", alias = "web_dav")]
     WebDav {
         url: String,
         remote_path: String,
@@ -431,6 +441,50 @@ mod tests {
         } else {
             panic!("Expected WebDav variant");
         }
+    }
+
+    // --- serde tag tests (must match frontend DestinationType) ---
+
+    #[test]
+    fn test_serde_tag_matches_destination_type() {
+        let cases: Vec<DestinationConfig> = vec![
+            DestinationConfig::Local { mount_point: "".into(), backup_subdir: "".into(), usb_uuid: None, auto_mount: false, auto_unmount: false },
+            DestinationConfig::GoogleDrive { folder_id: "".into(), shared_drive_id: None },
+            DestinationConfig::OneDrive { folder_path: "".into(), drive_id: None },
+            DestinationConfig::S3 { bucket: "".into(), prefix: "".into(), region: "".into(), endpoint: None, storage_class: None },
+            DestinationConfig::Sftp { host: "".into(), port: 22, username: "".into(), remote_path: "".into(), key_based_auth: false, host_key_fingerprint: None },
+            DestinationConfig::WebDav { url: "".into(), remote_path: "".into() },
+        ];
+        for config in cases {
+            let value = serde_json::to_value(&config).unwrap();
+            assert_eq!(value["type"], config.destination_type());
+        }
+    }
+
+    #[test]
+    fn test_frontend_webdav_and_onedrive_tags_parse() {
+        let webdav: DestinationConfig = serde_json::from_str(
+            r#"{"type":"webdav","url":"https://cloud.example.com","remote_path":"/b"}"#,
+        ).unwrap();
+        assert!(matches!(webdav, DestinationConfig::WebDav { .. }));
+
+        let onedrive: DestinationConfig = serde_json::from_str(
+            r#"{"type":"onedrive","folder_path":"/b","drive_id":null}"#,
+        ).unwrap();
+        assert!(matches!(onedrive, DestinationConfig::OneDrive { .. }));
+    }
+
+    #[test]
+    fn test_legacy_snake_case_tags_still_parse() {
+        let webdav: DestinationConfig = serde_json::from_str(
+            r#"{"type":"web_dav","url":"https://cloud.example.com","remote_path":"/b"}"#,
+        ).unwrap();
+        assert!(matches!(webdav, DestinationConfig::WebDav { .. }));
+
+        let onedrive: DestinationConfig = serde_json::from_str(
+            r#"{"type":"one_drive","folder_path":"/b"}"#,
+        ).unwrap();
+        assert!(matches!(onedrive, DestinationConfig::OneDrive { .. }));
     }
 
     // --- destination_type tests ---
