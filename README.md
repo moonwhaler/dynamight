@@ -7,6 +7,8 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)
 
+![Dynamight dashboard](docs/screenshots/dashboard.png)
+
 ## Features
 
 - **Multiple Backup Destinations**
@@ -37,6 +39,28 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Human-readable schedule display ("Daily at 14:30")
   - Preferences persisted per browser
 
+- **Monitoring & History**
+  - Dashboard with job cards, run statistics, and free-space indicators for local destinations
+  - Searchable run history with status, job, and date-range filters
+  - Full log viewer for every run (live while running, stored afterwards)
+  - Configurable history retention
+
+- **File Browser**
+  - Browse allowed local paths and USB drives directly in the UI
+  - Grid and list views, search, sortable columns, file type column
+  - Lazy-loaded directory sizes
+  - Create folders; deleting requires password re-verification
+
+- **Configuration Backup & Restore**
+  - Export jobs, credentials, schedules, and settings as an encrypted `.dmbackup` file
+  - Import with **Merge** or **Replace All** strategy, with a preview before applying
+  - Restore directly from the initial setup screen when moving to a new server
+
+- **Personalization**
+  - Light and dark mode
+  - Three base tones (Paper, Cloud, Slate) and six accent colors
+  - English and German UI
+
 - **Security**
   - Two-factor authentication (TOTP)
   - AES-256-GCM encrypted credential storage
@@ -48,6 +72,20 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Single binary + SQLite
   - Runs in ~50MB RAM
   - ~80MB Docker image
+  - Graceful shutdown on `SIGTERM`/`SIGINT`
+
+## Screenshots
+
+| | |
+|---|---|
+| **Dashboard (dark mode)** — job overview with last-run status and free space | **Job list** — table view with configurable columns |
+| ![Dashboard in dark mode](docs/screenshots/dashboard-dark.png) | ![Job list](docs/screenshots/jobs-list.png) |
+| **Job editor** — pick a destination and configure sources, sync options, and schedules | **Run history** — filter by status, job, and date |
+| ![Job editor](docs/screenshots/job-detail.png) | ![Run history](docs/screenshots/history.png) |
+| **Run logs** — full rsync output for every run | **File browser** — browse allowed paths and USB drives |
+| ![Run log viewer](docs/screenshots/run-log.png) | ![File browser](docs/screenshots/files.png) |
+| **Theme picker** — light/dark, base tone, and accent color | **Settings** — preferences, account, 2FA, credentials, history |
+| ![Theme picker](docs/screenshots/theme-picker.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## Supported Providers
 
@@ -227,6 +265,19 @@ npm install
 npm run dev
 ```
 
+### Running Tests
+
+```bash
+# Backend (Rust)
+cargo test --lib --tests
+
+# Frontend (Vitest)
+cd frontend
+npm test
+```
+
+The same suites run in CI on every push (`.github/workflows/test.yml`).
+
 ## Building for Production
 
 ### Using Build Script
@@ -331,7 +382,7 @@ sudo ./scripts/install.sh uninstall
 
 Credentials for cloud providers are stored encrypted. Manage them in Settings:
 
-1. Click **Settings** (gear icon) in the navbar
+1. Click the **gear icon** in the navbar and choose **Settings**
 2. Go to **Credentials** tab
 3. Add, edit, or delete credentials
 4. View which jobs use each credential
@@ -353,7 +404,7 @@ Add schedules in the job detail page:
 
 Enable 2FA for additional security:
 
-1. Open Settings (gear icon)
+1. Open **Settings** (gear icon → Settings)
 2. Go to **Security** tab
 3. Click **Enable 2FA**
 4. Scan QR code with authenticator app
@@ -369,6 +420,29 @@ Customise which columns appear in the job list:
 3. Use the up/down arrows to reorder optional columns
 4. Drag column borders in the table to resize them
 5. Preferences are saved automatically in your browser
+
+### Backing Up and Restoring the Configuration
+
+Move your setup to another server, or keep a safe copy of it:
+
+1. Click the **gear icon** in the navbar and choose **Backup & Restore**
+2. **Export**: set an encryption password (min. 8 characters) and download the `.dmbackup` file
+3. **Import**: select a `.dmbackup` file, enter its password, choose **Merge** (keep existing items, add new ones) or **Replace All**, and review the preview before applying
+
+On a fresh installation, the setup screen also offers to restore from a backup. OAuth credentials (Google Drive, OneDrive) may need to be re-authenticated after a restore.
+
+The file can also be decrypted manually:
+
+```bash
+openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 -in backup.dmbackup
+```
+
+### Appearance and Language
+
+- Click the **theme icon** (next to the gear) in the navbar to switch between light and dark mode, pick a base tone (Paper, Cloud, Slate), and an accent color
+- Change the UI language (English, German) in **Settings → General**
+
+Both are stored per browser.
 
 ### Scheduling with Timezones
 
@@ -399,7 +473,7 @@ Schedules run according to the server's configured timezone (`server.timezone` i
 - **Communication**: REST API + WebSocket for live logs
 - **Providers**: Trait-based abstraction for multiple destinations
 
-See [project-description.md](project-description.md) for detailed architecture documentation.
+See [docs/project-description.md](docs/project-description.md) for detailed architecture documentation.
 
 For complete API documentation, see [docs/API.md](docs/API.md).
 

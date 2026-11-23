@@ -386,7 +386,8 @@ GET /jobs
     "enabled": true,
     "source_dirs": ["/home/user/documents", "/home/user/photos"],
     "destination_type": "local",
-    "destination_config": {
+    "destination": {
+      "type": "local",
       "mount_point": "/mnt/backup",
       "backup_subdir": "daily",
       "usb_uuid": "1234-5678",
@@ -396,30 +397,43 @@ GET /jobs
     "sync_options": {
       "delete_extraneous": false,
       "exclude_patterns": ["*.tmp", ".cache"],
+      "exclude_dirs": [],
       "bandwidth_limit_kbps": null,
       "dry_run": false,
-      "verbosity": "normal"
+      "verbosity": "normal",
+      "provider_options": null,
+      "space_check": "warn",
+      "compress_dirs": null
     },
     "credential_id": null,
     "created_at": "2026-01-01T00:00:00Z",
     "updated_at": "2026-01-01T00:00:00Z",
-    "last_run": {
-      "id": 5,
-      "status": "completed",
-      "started_at": "2026-01-05T02:00:00Z",
-      "completed_at": "2026-01-05T02:15:00Z"
-    },
+    "last_run_status": "completed",
+    "last_run_at": "2026-01-05T02:00:00Z",
+    "dest_storage_free": 64944992256,
+    "dest_storage_total": 500107862016,
+    "dest_storage_updated_at": "2026-01-05T02:15:00Z",
     "schedules": [
       {
         "id": 1,
+        "job_id": 1,
+        "enabled": true,
+        "cron_expression": "00 02 * * *",
         "schedule_type": "daily",
-        "hour": 2,
-        "minute": 0
+        "time_of_day": "02:00",
+        "day_of_week": null,
+        "day_of_month": null,
+        "last_run_at": "2026-01-05T02:00:00Z",
+        "next_run_at": "2026-01-06T02:00:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
       }
     ]
   }
 ]
 ```
+
+`last_run_*` and `dest_storage_*` are omitted when unknown. The response also contains legacy top-level fields (`mount_point`, `usb_uuid`, `auto_mount`, `auto_unmount`, `backup_subdir`, `sync_deletes`, `rsync_excludes`, `checksum_mode`, `compress`, `dry_run`, `bandwidth_limit`, `verbosity`) kept for backwards compatibility; use `destination` and `sync_options` instead.
 
 ---
 
@@ -455,7 +469,8 @@ POST /jobs
   "enabled": true,
   "source_dirs": ["/home/user/documents"],
   "destination_type": "s3",
-  "destination_config": {
+  "destination": {
+    "type": "s3",
     "bucket": "my-backup-bucket",
     "prefix": "backups/server1/",
     "region": "us-east-1",
@@ -472,9 +487,11 @@ POST /jobs
 }
 ```
 
+`destination` is tagged by its `type` field. `destination_type` is optional and defaults to `destination.type`.
+
 **Destination Types:**
 
-| Type | Required Config Fields |
+| `type` | Fields |
 |------|----------------------|
 | `local` | `mount_point`, `backup_subdir`, `usb_uuid?`, `auto_mount`, `auto_unmount` |
 | `s3` | `bucket`, `prefix`, `region`, `endpoint?`, `storage_class?` |
@@ -608,14 +625,15 @@ GET /jobs/:id/schedules
     "id": 1,
     "job_id": 1,
     "enabled": true,
+    "cron_expression": "00 02 * * *",
     "schedule_type": "daily",
-    "hour": 2,
-    "minute": 0,
+    "time_of_day": "02:00",
     "day_of_week": null,
     "day_of_month": null,
-    "cron_expression": null,
-    "next_run": "2026-01-06T02:00:00Z",
-    "created_at": "2026-01-01T00:00:00Z"
+    "last_run_at": null,
+    "next_run_at": "2026-01-06T02:00:00Z",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
   }
 ]
 ```
@@ -636,8 +654,7 @@ POST /jobs/:id/schedules
 ```json
 {
   "schedule_type": "daily",
-  "hour": 2,
-  "minute": 0
+  "time_of_day": "02:00"
 }
 ```
 
@@ -645,9 +662,8 @@ POST /jobs/:id/schedules
 ```json
 {
   "schedule_type": "weekly",
-  "hour": 2,
-  "minute": 0,
-  "day_of_week": 0
+  "time_of_day": "02:00",
+  "day_of_week": 1
 }
 ```
 *day_of_week: 0 = Sunday, 6 = Saturday*
@@ -656,8 +672,7 @@ POST /jobs/:id/schedules
 ```json
 {
   "schedule_type": "monthly",
-  "hour": 2,
-  "minute": 0,
+  "time_of_day": "02:00",
   "day_of_month": 1
 }
 ```
@@ -669,6 +684,8 @@ POST /jobs/:id/schedules
   "cron_expression": "0 2 * * 1-5"
 }
 ```
+
+If `cron_expression` is given it is used as-is and the other fields are ignored. Otherwise it is built from `schedule_type`, `time_of_day` (`"HH:MM"`, default `"00:00"`), `day_of_week`, and `day_of_month`. All fields are optional; `enabled` defaults to `true`. Invalid expressions return `400` with code `INVALID_CRON`.
 
 **Response:** Created schedule object.
 
@@ -936,6 +953,7 @@ POST /credentials
   "name": "AWS Production",
   "provider_type": "s3",
   "data": {
+    "type": "s3",
     "access_key_id": "AKIAIOSFODNN7EXAMPLE",
     "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
   }
@@ -948,6 +966,7 @@ POST /credentials
   "name": "Backup Server",
   "provider_type": "sftp",
   "data": {
+    "type": "sftp",
     "password": "secretpassword"
   }
 }
@@ -959,6 +978,7 @@ POST /credentials
   "name": "Backup Server",
   "provider_type": "sftp",
   "data": {
+    "type": "sftp",
     "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n...",
     "passphrase": "keypassphrase"
   }
@@ -971,6 +991,7 @@ POST /credentials
   "name": "Nextcloud",
   "provider_type": "webdav",
   "data": {
+    "type": "webdav",
     "username": "user",
     "password": "password"
   }
@@ -983,6 +1004,7 @@ POST /credentials
   "name": "Google Account",
   "provider_type": "google_drive",
   "data": {
+    "type": "oauth",
     "access_token": "ya29.a0AfH6...",
     "refresh_token": "1//0eXx...",
     "expires_at": 1704499200
@@ -1018,6 +1040,7 @@ PUT /credentials/:id
 {
   "name": "AWS Production (Updated)",
   "data": {
+    "type": "s3",
     "access_key_id": "AKIAIOSFODNN7NEWKEY",
     "secret_access_key": "newSecretKey..."
   }
@@ -1185,8 +1208,8 @@ POST /providers/test
 **Request Body (with saved credential):**
 ```json
 {
-  "destination_type": "s3",
-  "destination_config": {
+  "destination": {
+    "type": "s3",
     "bucket": "my-bucket",
     "prefix": "backups/",
     "region": "us-east-1"
@@ -1198,8 +1221,8 @@ POST /providers/test
 **Request Body (with inline credential):**
 ```json
 {
-  "destination_type": "sftp",
-  "destination_config": {
+  "destination": {
+    "type": "sftp",
     "host": "backup.example.com",
     "port": 22,
     "username": "backup",
@@ -1207,6 +1230,7 @@ POST /providers/test
     "key_based_auth": false
   },
   "credential_data": {
+    "type": "sftp",
     "password": "testpassword"
   }
 }
