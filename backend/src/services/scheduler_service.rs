@@ -2,9 +2,8 @@ use crate::models::JobRunStatus;
 use crate::services::BackupService;
 use chrono::Utc;
 use chrono_tz::Tz;
-use cron::Schedule;
+use crate::models::parse_cron;
 use sqlx::SqlitePool;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 
@@ -181,15 +180,8 @@ struct ScheduleWithJob {
 }
 
 fn calculate_next_run(cron_expr: &str, timezone: Tz) -> anyhow::Result<chrono::DateTime<Utc>> {
-    // Cron crate expects 6-field format (with seconds)
-    // If 5-field format, prepend "0 " for seconds
-    let expr = if cron_expr.split_whitespace().count() == 5 {
-        format!("0 {}", cron_expr)
-    } else {
-        cron_expr.to_string()
-    };
-
-    let schedule = Schedule::from_str(&expr)?;
+    // Translates standard 5-field cron (seconds field, day-of-week numbering)
+    let schedule = parse_cron(cron_expr)?;
     schedule
         .upcoming(timezone)
         .next()

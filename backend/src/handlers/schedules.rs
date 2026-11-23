@@ -5,13 +5,11 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use cron::Schedule as CronSchedule;
 use serde_json::json;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
-use crate::models::{CreateScheduleRequest, Schedule, UpdateScheduleRequest};
+use crate::models::{parse_cron, CreateScheduleRequest, Schedule, UpdateScheduleRequest};
 use crate::AppState;
 
 pub async fn list_schedules(
@@ -47,21 +45,15 @@ pub async fn create_schedule(
     let cron_expression = req.to_cron_expression();
 
     // Validate cron expression
-    let cron_with_seconds = if cron_expression.split_whitespace().count() == 5 {
-        format!("0 {}", cron_expression)
-    } else {
-        cron_expression.clone()
-    };
-
-    if CronSchedule::from_str(&cron_with_seconds).is_err() {
+    let Ok(cron_schedule) = parse_cron(&cron_expression) else {
         return ApiError::invalid_cron().into_response();
-    }
+    };
 
     // Calculate next run
     let tz = state.config.timezone;
-    let next_run = CronSchedule::from_str(&cron_with_seconds)
-        .ok()
-        .and_then(|s| s.upcoming(tz).next())
+    let next_run = cron_schedule
+        .upcoming(tz)
+        .next()
         .map(|dt| dt.with_timezone(&Utc));
 
     let result = sqlx::query(
@@ -154,22 +146,16 @@ pub async fn update_schedule(
     };
 
     // Validate cron expression
-    let cron_with_seconds = if cron_expression.split_whitespace().count() == 5 {
-        format!("0 {}", cron_expression)
-    } else {
-        cron_expression.clone()
-    };
-
-    if CronSchedule::from_str(&cron_with_seconds).is_err() {
+    let Ok(cron_schedule) = parse_cron(&cron_expression) else {
         return ApiError::invalid_cron().into_response();
-    }
+    };
 
     // Calculate next run
     let tz = state.config.timezone;
     let next_run = if enabled {
-        CronSchedule::from_str(&cron_with_seconds)
-            .ok()
-            .and_then(|s| s.upcoming(tz).next())
+        cron_schedule
+            .upcoming(tz)
+            .next()
             .map(|dt| dt.with_timezone(&Utc))
     } else {
         None

@@ -808,9 +808,6 @@ async fn clone_job_schedules(
     new_job_id: i64,
     timezone: chrono_tz::Tz,
 ) -> Result<(), sqlx::Error> {
-    use cron::Schedule as CronSchedule;
-    use std::str::FromStr;
-
     let schedules: Vec<crate::models::Schedule> =
         sqlx::query_as("SELECT * FROM schedules WHERE job_id = ?")
             .bind(original_job_id)
@@ -821,12 +818,7 @@ async fn clone_job_schedules(
         // Recalculate next_run_at using the server's configured timezone.
         // Using Utc here would produce wrong values on non-UTC servers.
         let next_run = if schedule.enabled {
-            let cron_with_seconds = if schedule.cron_expression.split_whitespace().count() == 5 {
-                format!("0 {}", schedule.cron_expression)
-            } else {
-                schedule.cron_expression.clone()
-            };
-            CronSchedule::from_str(&cron_with_seconds)
+            crate::models::parse_cron(&schedule.cron_expression)
                 .ok()
                 .and_then(|s| s.upcoming(timezone).next())
                 .map(|dt| dt.with_timezone(&Utc))
