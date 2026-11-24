@@ -1,14 +1,23 @@
 //! Live tests for the remote sync providers against real servers.
 //!
-//! Ignored by default. Start test servers (for example with rclone) and run:
+//! Ignored by default. Start test servers and run:
 //!
 //! ```sh
+//! # WebDAV and SFTP with rclone
 //! podman run -d --rm --name dm-webdav -p 18080:8080 -v /tmp/dav:/data rclone/rclone serve webdav /data --addr :8080 --user u --pass p
 //! podman run -d --rm --name dm-sftp -p 12222:2222 -v /tmp/sftp:/data rclone/rclone serve sftp /data --addr :2222 --user u --pass p
-//! podman run -d --rm --name dm-s3 -p 19000:9000 -v /tmp/s3:/data rclone/rclone serve s3 /data --addr :9000 --auth-key AKID,SECRETKEY
-//! mkdir -p /tmp/s3/testbucket
+//!
+//! # S3 with SeaweedFS (rclone's S3 server can fail on the multipart upload
+//! # this test makes). Without an S3 config it accepts any access key.
+//! podman run -d --rm --name dm-s3 -p 19000:8333 docker.io/chrislusf/seaweedfs server -s3 -dir=/data
+//! podman exec dm-s3 sh -c 'echo "s3.bucket.create -name testbucket" | weed shell'
+//!
 //! cargo test --test providers_live -- --ignored --test-threads=1
 //! ```
+//!
+//! `DM_WEBDAV_ROOT` / `DM_SFTP_ROOT` / `DM_S3_ROOT` (the host directory the
+//! server stores files in, e.g. `/tmp/dav`) add checks of the files on disk.
+//! Leave `DM_S3_ROOT` unset for SeaweedFS: it does not store objects as plain files.
 
 use dynamight::models::{CredentialData, DestinationConfig, SyncOptions};
 use dynamight::services::providers::{create_provider, SyncContext, SyncResult};

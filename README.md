@@ -276,7 +276,7 @@ cd frontend
 npm test
 ```
 
-The remote providers (S3, SFTP, WebDAV) also have live tests that run against real servers. They are ignored by default; `backend/tests/providers_live.rs` explains how to start local test servers with rclone and run them with `cargo test --test providers_live -- --ignored`.
+The remote providers (S3, SFTP, WebDAV) also have live tests that run against real servers. They are ignored by default; `backend/tests/providers_live.rs` explains how to start local test servers (rclone for WebDAV and SFTP, SeaweedFS for S3) and run them with `cargo test --test providers_live -- --ignored`.
 
 ## Building for Production
 
