@@ -52,7 +52,7 @@
     follow = $preferencesStore.autoShowLastPage;
     await loadRun();
     if (running) {
-      connect();
+      await connect();
       await loadTail();
     } else {
       await loadLastPage();
@@ -83,13 +83,27 @@
     }
   }
 
-  function connect() {
+  /**
+   * Open the live socket. Resolves once the server listens for this run's
+   * lines (or the socket failed), so a log load after it misses nothing.
+   */
+  function connect(): Promise<void> {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/logs/${runId}`);
-    ws.onmessage = (event) => {
-      if (filtered) return;
+    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/logs/${runId}`);
+    ws = socket;
+    let ready: () => void = () => {};
+    const subscribed = new Promise<void>((resolve) => {
+      ready = resolve;
+      setTimeout(resolve, 3000);
+    });
+    socket.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === 'ready') {
+          ready();
+          return;
+        }
+        if (filtered) return;
         const entry: LogEntry = {
           id: -Date.now() - Math.random(),
           job_run_id: msg.run_id,
@@ -105,8 +119,12 @@
         // Not a log line
       }
     };
-    ws.onclose = () => (ws = null);
-    ws.onerror = () => ws?.close();
+    socket.onclose = () => {
+      if (ws === socket) ws = null;
+      ready();
+    };
+    socket.onerror = () => socket.close();
+    return subscribed;
   }
 
   function disconnect() {

@@ -192,6 +192,9 @@ pub async fn get_logs(
         .collect();
     let q = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
+    // Lines still waiting in the writer's batch count as logged
+    state.backup_service.flush_logs().await;
+
     let mut count = QueryBuilder::new("SELECT COUNT(*) FROM log_entries WHERE job_run_id = ");
     count.push_bind(run_id);
     push_log_filters(&mut count, &levels, q);

@@ -1584,7 +1584,7 @@ WebSocket /ws/logs/:run_id
 
 **Authentication:** Session cookie (`token`), sent by the browser with the handshake
 
-**Server Messages:** one per log line
+**Server Messages:** first `{"type": "ready"}` once the socket listens for the run's lines. Load earlier lines with `GET /runs/:id/logs` after it, so nothing falls between the two. Then one message per log line:
 ```json
 {
   "run_id": 10,

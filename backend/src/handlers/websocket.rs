@@ -49,8 +49,12 @@ pub async fn ws_logs_handler(
 async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
 
-    // Subscribe to log broadcasts
+    // Subscribe to log broadcasts, then tell the client: lines logged from
+    // now on arrive here, earlier ones are in the database (GET .../logs).
     let mut log_rx = state.log_tx.subscribe();
+    if sender.send(Message::Text(r#"{"type":"ready"}"#.into())).await.is_err() {
+        return;
+    }
 
     // Spawn task to forward logs to client
     let mut send_task = tokio::spawn(async move {
