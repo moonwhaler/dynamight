@@ -132,6 +132,7 @@
       type="button"
       onclick={onClose}
       class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0"
+      aria-label={m.filebrowser_search_clear()}
       title={m.filebrowser_search_clear()}
     >
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1,6 +1,8 @@
 <script lang="ts">
+  import Dialog from '../ui/Dialog.svelte';
   import type { SyncOptions, ProviderCapabilities, DestinationType, DirectoryEntry } from '../../lib/types';
   import HelpTooltip from '../ui/HelpTooltip.svelte';
+  import Toggle from '../ui/Toggle.svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { api } from '../../lib/api';
 
@@ -9,12 +11,17 @@
     destinationType = 'local',
     capabilities = null,
     sourceDirs = [],
+    part = 'all',
   }: {
     options: SyncOptions;
     destinationType: DestinationType;
     capabilities: ProviderCapabilities | null;
     sourceDirs: string[];
+    /** Which group of options to show: the editor places them in different sections */
+    part?: 'all' | 'basic' | 'advanced' | 'excludes';
   } = $props();
+
+  const show = (p: 'basic' | 'advanced' | 'excludes') => part === 'all' || part === p;
 
   let newExclude = $state('');
 
@@ -225,243 +232,130 @@
   });
 </script>
 
-<div class="space-y-4">
-  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{m.sync_options_title()}</h2>
+<div class="space-y-6">
+  {#if show('basic')}
+    <!-- Mirror mode: deletes in the backup what was deleted at the source -->
+    {#if effectiveCapabilities.supports_delete}
+      <div class="space-y-2">
+        <Toggle label={m.sync_mirror_mode()} description={m.sync_mirror_desc()} bind:checked={options.delete_extraneous}>
+          {#snippet extra()}<HelpTooltip text={m.sync_mirror_mode_description()} />{/snippet}
+        </Toggle>
+        {#if options.delete_extraneous}
+          <p class="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-sm text-red-700 dark:text-red-300" role="note">
+            {m.sync_mirror_warning_long()}
+          </p>
+        {/if}
+      </div>
+    {/if}
 
-  <!-- Delete Mode (Mirror) -->
-  {#if effectiveCapabilities.supports_delete}
-    <label
-      class="flex items-start gap-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-xl cursor-pointer hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input type="checkbox" bind:checked={options.delete_extraneous} class="peer sr-only" />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-red-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.sync_mirror_mode()}
-          <HelpTooltip
-            text={m.sync_mirror_mode_description()}
-          />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.sync_mirror_desc()}
-          <span class="text-amber-600 dark:text-amber-500 font-medium">{m.sync_mirror_warning()}</span>
-        </p>
-      </div>
-    </label>
-  {/if}
-
-  <!-- Rsync-specific: Checksum Mode -->
-  {#if effectiveCapabilities.supports_checksum && destinationType === 'local'}
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl transition-colors {ignoreTimes ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70'}"
-    >
-      <div class="relative flex items-center">
-        <input
-          type="checkbox"
-          checked={checksumMode && !ignoreTimes}
-          onchange={(e) => setProviderOption('checksum_mode', e.currentTarget.checked)}
-          disabled={ignoreTimes}
-          class="peer sr-only"
-        />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.sync_checksum_title()}
-          <HelpTooltip
-            text={m.sync_checksum_help()}
-          />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {#if ignoreTimes}
-            {m.sync_checksum_disabled_by_force()}
+    {#if destinationType === 'local'}
+      <div>
+        <label for="space_check" class="label">
+          {m.space_check_title()}
+          <HelpTooltip text={m.space_check_help()} />
+        </label>
+        <select id="space_check" bind:value={options.space_check} class="input sm:w-72">
+          <option value="warn">{m.space_check_warn()}</option>
+          <option value="fail">{m.space_check_fail()}</option>
+          <option value="none">{m.space_check_none()}</option>
+        </select>
+        <p class="hint">
+          {#if options.space_check === 'fail'}
+            {m.space_check_fail_desc()}
+          {:else if options.space_check === 'none'}
+            {m.space_check_none_desc()}
           {:else}
-            {m.sync_checksum_desc()}
+            {m.space_check_warn_desc()}
           {/if}
         </p>
       </div>
-    </label>
+    {/if}
   {/if}
 
-  <!-- Rsync-specific: Compression -->
-  {#if effectiveCapabilities.supports_compression && destinationType === 'local'}
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input
-          type="checkbox"
-          checked={compress}
-          onchange={(e) => setProviderOption('compress', e.currentTarget.checked)}
-          class="peer sr-only"
-        />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.sync_compression_title()}
-          <HelpTooltip
-            text={m.sync_compression_help()}
-          />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.sync_compression_desc()}
-        </p>
-      </div>
-    </label>
-  {/if}
+  {#if show('advanced')}
+    {#if effectiveCapabilities.supports_dry_run}
+      <Toggle label={m.sync_dry_run_title()} description={m.sync_dry_run_desc()} bind:checked={options.dry_run}>
+        {#snippet extra()}<HelpTooltip text={m.sync_dry_run_help()} />{/snippet}
+      </Toggle>
+    {/if}
 
-  <!-- Rsync-specific: Force Sync (Ignore Times) -->
-  {#if destinationType === 'local'}
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input
-          type="checkbox"
-          checked={ignoreTimes}
-          onchange={(e) => setProviderOption('ignore_times', e.currentTarget.checked)}
-          class="peer sr-only"
-        />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.sync_ignore_times_title()}
-          <HelpTooltip
-            text={m.sync_ignore_times_help()}
-          />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.sync_ignore_times_desc()}
-        </p>
-      </div>
-    </label>
-  {/if}
-
-  <!-- Dry Run -->
-  {#if effectiveCapabilities.supports_dry_run}
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input type="checkbox" bind:checked={options.dry_run} class="peer sr-only" />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.sync_dry_run_title()}
-          <HelpTooltip
-            text={m.sync_dry_run_help()}
-          />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.sync_dry_run_desc()}
-        </p>
-      </div>
-    </label>
-  {/if}
-
-  <!-- Space Check Mode (local only) -->
-  {#if destinationType === 'local'}
-    <div>
-      <label for="space_check" class="block font-medium text-gray-700 dark:text-gray-300">
-        {m.space_check_title()}
-        <HelpTooltip text={m.space_check_help()} />
-      </label>
-      <select
-        id="space_check"
-        bind:value={options.space_check}
-        class="input mt-1 w-64"
+    {#if effectiveCapabilities.supports_checksum && destinationType === 'local'}
+      <Toggle
+        label={m.sync_checksum_title()}
+        description={ignoreTimes ? m.sync_checksum_disabled_by_force() : m.sync_checksum_desc()}
+        checked={checksumMode && !ignoreTimes}
+        disabled={ignoreTimes}
+        onchange={(v) => setProviderOption('checksum_mode', v)}
       >
-        <option value="warn">{m.space_check_warn()}</option>
-        <option value="fail">{m.space_check_fail()}</option>
-        <option value="none">{m.space_check_none()}</option>
-      </select>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-        {#if options.space_check === 'fail'}
-          {m.space_check_fail_desc()}
-        {:else if options.space_check === 'none'}
-          {m.space_check_none_desc()}
-        {:else}
-          {m.space_check_warn_desc()}
-        {/if}
-      </p>
-    </div>
-  {/if}
+        {#snippet extra()}<HelpTooltip text={m.sync_checksum_help()} />{/snippet}
+      </Toggle>
+    {/if}
 
-  <!-- Verbosity -->
-  <div>
-    <label for="verbosity" class="block font-medium text-gray-700 dark:text-gray-300">
-      {m.sync_verbosity_title()}
-      <HelpTooltip
-        text={m.sync_verbosity_help()}
-      />
-    </label>
-    <select id="verbosity" bind:value={options.verbosity} class="input mt-1 w-64">
-      <option value="quiet">{m.sync_verbosity_quiet_option()}</option>
-      <option value="normal">{m.sync_verbosity_normal_option()}</option>
-      <option value="verbose">{m.sync_verbosity_verbose_option()}</option>
-    </select>
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      {#if options.verbosity === 'quiet'}
-        {m.sync_verbosity_quiet_desc()}
-      {:else if options.verbosity === 'normal'}
-        {m.sync_verbosity_normal_desc()}
-      {:else}
-        {m.sync_verbosity_verbose_desc()}
+    {#if destinationType === 'local'}
+      <Toggle
+        label={m.sync_ignore_times_title()}
+        description={m.sync_ignore_times_desc()}
+        checked={ignoreTimes}
+        onchange={(v) => setProviderOption('ignore_times', v)}
+      >
+        {#snippet extra()}<HelpTooltip text={m.sync_ignore_times_help()} />{/snippet}
+      </Toggle>
+    {/if}
+
+    {#if effectiveCapabilities.supports_compression && destinationType === 'local'}
+      <Toggle
+        label={m.sync_compression_title()}
+        description={m.sync_compression_desc()}
+        checked={compress}
+        onchange={(v) => setProviderOption('compress', v)}
+      >
+        {#snippet extra()}<HelpTooltip text={m.sync_compression_help()} />{/snippet}
+      </Toggle>
+    {/if}
+
+    <div class="grid gap-6 sm:grid-cols-2">
+      <div>
+        <label for="verbosity" class="label">
+          {m.sync_verbosity_title()}
+          <HelpTooltip text={m.sync_verbosity_help()} />
+        </label>
+        <select id="verbosity" bind:value={options.verbosity} class="input">
+          <option value="quiet">{m.sync_verbosity_quiet_option()}</option>
+          <option value="normal">{m.sync_verbosity_normal_option()}</option>
+          <option value="verbose">{m.sync_verbosity_verbose_option()}</option>
+        </select>
+        <p class="hint">
+          {#if options.verbosity === 'quiet'}
+            {m.sync_verbosity_quiet_desc()}
+          {:else if options.verbosity === 'normal'}
+            {m.sync_verbosity_normal_desc()}
+          {:else}
+            {m.sync_verbosity_verbose_desc()}
+          {/if}
+        </p>
+      </div>
+
+      {#if effectiveCapabilities.supports_bandwidth_limit}
+        <div>
+          <label for="bandwidth" class="label">
+            {m.sync_bandwidth_title()}
+            <HelpTooltip text={m.sync_bandwidth_help()} />
+          </label>
+          <input
+            type="number"
+            id="bandwidth"
+            bind:value={options.bandwidth_limit_kbps}
+            placeholder={m.sync_bandwidth_unlimited()}
+            min="0"
+            class="input"
+          />
+          <p class="hint">{m.sync_bandwidth_leave_empty()}</p>
+        </div>
       {/if}
-    </p>
-  </div>
-
-  <!-- Bandwidth Limit -->
-  {#if effectiveCapabilities.supports_bandwidth_limit}
-    <div>
-      <label for="bandwidth" class="block font-medium text-gray-700 dark:text-gray-300">
-        {m.sync_bandwidth_title()}
-        <HelpTooltip
-          text={m.sync_bandwidth_help()}
-        />
-      </label>
-      <input
-        type="number"
-        id="bandwidth"
-        bind:value={options.bandwidth_limit_kbps}
-        placeholder={m.sync_bandwidth_unlimited()}
-        min="0"
-        class="input mt-1 w-40"
-      />
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{m.sync_bandwidth_leave_empty()}</p>
     </div>
   {/if}
 
+  {#if show('excludes')}
   <!-- Excludes -->
   {#if effectiveCapabilities.supports_exclude_patterns}
     <div>
@@ -673,37 +567,20 @@
       {/if}
     </div>
   {/if}
+  {/if}
 </div>
 
 <!-- Exclude Directory Browser Modal -->
-{#if showExcludeBrowser}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-0 sm:p-4"
-    onclick={(e) => e.target === e.currentTarget && closeExcludeBrowser()}
-    onkeydown={(e) => e.key === 'Escape' && closeExcludeBrowser()}
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-  >
-    <div class="bg-white dark:bg-gray-800 sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl h-full sm:h-[80vh] sm:max-h-[700px] flex flex-col overflow-hidden">
-      <!-- Header -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-        <div class="min-w-0 flex-1">
-          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.exclude_dirs_select()}</h3>
-          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{excludeCurrentPath}</p>
-        </div>
-        <button type="button"
-          onclick={closeExcludeBrowser}
-          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
-          aria-label={m.common_close()}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
+<Dialog
+  bind:open={() => showExcludeBrowser, (v) => { if (!v) closeExcludeBrowser(); }}
+  title={m.exclude_dirs_select()}
+  size="lg"
+  closeOnBackdrop={false}
+  bodyClass="p-0 flex flex-col h-[70dvh] sm:h-[34rem]"
+>
+  {#snippet header()}
+    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={excludeCurrentPath}>{excludeCurrentPath}</span>
+  {/snippet}
       <!-- Navigation & Quick Actions -->
       <div class="px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex-shrink-0">
         <div class="flex flex-wrap gap-1.5 sm:gap-2 items-center">
@@ -807,34 +684,21 @@
         {/if}
       </div>
 
-      <!-- Footer with action buttons -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-col xs:flex-row items-stretch xs:items-center justify-between gap-2 sm:gap-4 flex-shrink-0">
-        <div class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-center xs:text-left">
-          {#if selectedExcludes.size > 0}
-            {selectedExcludes.size === 1 ? m.exclude_dirs_one_selected() : m.exclude_dirs_n_selected({ count: selectedExcludes.size })}
-          {:else}
-            <span class="text-gray-500 dark:text-gray-500">{m.exclude_dirs_select_to_add()}</span>
-          {/if}
-        </div>
-        <div class="flex gap-2 sm:gap-3 justify-end">
-          <button type="button" onclick={closeExcludeBrowser} class="btn btn-secondary text-sm py-2 px-3 sm:px-4">
-            {m.common_cancel()}
-          </button>
-          <button
-            type="button"
-            onclick={addSelectedExcludes}
-            disabled={selectedExcludes.size === 0}
-            class="btn btn-primary text-sm py-2 px-3 sm:px-4"
-          >
-            {#if selectedExcludes.size > 0}
-              <span class="hidden xs:inline">{selectedExcludes.size === 1 ? m.exclude_dirs_add_one() : m.exclude_dirs_add_n({ count: selectedExcludes.size })}</span>
-              <span class="xs:hidden">{m.common_add()} ({selectedExcludes.size})</span>
-            {:else}
-              {m.path_selector_add_selected()}
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+  {#snippet footer()}
+    <p class="text-sm text-gray-600 dark:text-gray-400 self-center text-center sm:text-left sm:mr-auto">
+      {#if selectedExcludes.size > 0}
+        {selectedExcludes.size === 1 ? m.exclude_dirs_one_selected() : m.exclude_dirs_n_selected({ count: selectedExcludes.size })}
+      {:else}
+        {m.exclude_dirs_select_to_add()}
+      {/if}
+    </p>
+    <button type="button" onclick={closeExcludeBrowser} class="btn btn-secondary">{m.common_cancel()}</button>
+    <button type="button" onclick={addSelectedExcludes} disabled={selectedExcludes.size === 0} class="btn btn-primary">
+      {#if selectedExcludes.size > 0}
+        {selectedExcludes.size === 1 ? m.exclude_dirs_add_one() : m.exclude_dirs_add_n({ count: selectedExcludes.size })}
+      {:else}
+        {m.path_selector_add_selected()}
+      {/if}
+    </button>
+  {/snippet}
+</Dialog>

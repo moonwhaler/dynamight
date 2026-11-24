@@ -391,8 +391,13 @@ export const api = {
       return request<JobRun[]>(`/runs?${params}`);
     },
     get: (id: number) => request<JobRun>(`/runs/${id}`),
-    logs: (id: number, limit = 500, offset = 0) =>
-      request<PaginatedLogsResponse>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),
+    /** Log lines of a run; `levels` and `q` filter on the server */
+    logs: (id: number, limit = 500, offset = 0, filter: { levels?: string[]; q?: string } = {}) => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      if (filter.levels?.length) params.set('level', filter.levels.join(','));
+      if (filter.q?.trim()) params.set('q', filter.q.trim());
+      return request<PaginatedLogsResponse>(`/runs/${id}/logs?${params}`);
+    },
     delete: (id: number) =>
       request<{ success: boolean }>(`/runs/${id}`, { method: 'DELETE' }),
     deleteForJob: (jobId: number) =>

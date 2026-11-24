@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toggle from '../ui/Toggle.svelte';
   import type { SyncOptions, DestinationType, CompressDirsOptions } from '../../lib/types';
   import SinglePathSelector from './SinglePathSelector.svelte';
   import HelpTooltip from '../ui/HelpTooltip.svelte';
@@ -88,45 +89,20 @@
 </script>
 
 <div class="space-y-3">
-  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-    {m.compress_dirs_title()}
-  </h2>
-
   <!-- Master toggle -->
-  <label
-    class="flex items-start gap-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50 rounded-xl cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+  <Toggle
+    label={m.compress_dirs_title()}
+    description={m.compress_dirs_description()}
+    checked={compressEnabled}
+    onchange={(v) => toggleCompression(v)}
   >
-    <div class="relative flex items-center mt-0.5">
-      <input
-        type="checkbox"
-        checked={compressEnabled}
-        onchange={(e) => toggleCompression(e.currentTarget.checked)}
-        class="peer sr-only"
-      />
-      <div
-        class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-indigo-600 transition-colors"
-      ></div>
-      <div
-        class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-      ></div>
-    </div>
-    <div class="flex-1 min-w-0">
-      <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-        {m.compress_dirs_title()}
-        <HelpTooltip text={m.compress_dirs_help()} />
-      </div>
-      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-        {m.compress_dirs_description()}
-      </p>
-    </div>
-  </label>
+    {#snippet extra()}<HelpTooltip text={m.compress_dirs_help()} />{/snippet}
+  </Toggle>
 
   <!-- Options panel (shown when enabled) -->
   {#if compressEnabled && options.compress_dirs != null}
     {@const cd = options.compress_dirs}
-    <div
-      class="bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-5"
-    >
+    <div class="mt-4 pl-0 sm:pl-4 sm:border-l-2 border-gray-200 dark:border-gray-700 space-y-5">
 
       <!-- Excluded directories carry-over notice -->
       {#if excludedDirCount > 0}

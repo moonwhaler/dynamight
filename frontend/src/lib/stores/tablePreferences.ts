@@ -1,23 +1,5 @@
 import { writable } from 'svelte/store';
-import { createTableSortStore } from './tableSortStore';
 export type { SortOrder } from './tableSortStore';
-
-export type ColumnKey = 'job' | 'status' | 'sources' | 'destination' | 'last_run' | 'schedule' | 'options' | 'actions';
-
-export const FIXED_COLUMNS: ColumnKey[] = ['job', 'actions'];
-export const ALL_COLUMNS: ColumnKey[] = ['job', 'status', 'sources', 'destination', 'last_run', 'schedule', 'options', 'actions'];
-
-const DEFAULT_VISIBLE: ColumnKey[] = ['job', 'status', 'sources', 'destination', 'last_run', 'options', 'actions'];
-const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
-  job: 200,
-  status: 90,
-  sources: 90,
-  destination: 200,
-  last_run: 150,
-  schedule: 180,
-  options: 140,
-  actions: 80,
-};
 
 interface TablePreferences<T extends string> {
   visibleColumns: T[];
@@ -144,19 +126,3 @@ export function createTablePreferencesStore<T extends string>(config: {
     },
   };
 }
-
-export const tablePreferencesStore = createTablePreferencesStore<ColumnKey>({
-  storageKey: 'dynamight-job-table-prefs',
-  allColumns: ALL_COLUMNS,
-  fixedColumns: FIXED_COLUMNS,
-  defaultVisible: DEFAULT_VISIBLE,
-  defaultWidths: DEFAULT_WIDTHS,
-});
-export { DEFAULT_VISIBLE, DEFAULT_WIDTHS };
-
-export type JobsSortColumn = 'job' | 'status' | 'sources' | 'destination' | 'last_run';
-export const jobsSortStore = createTableSortStore<JobsSortColumn>({
-  storageKey: 'dynamight-job-sort',
-  defaultSortBy: 'job',
-  defaultSortOrder: 'asc',
-});

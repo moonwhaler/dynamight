@@ -2,6 +2,9 @@
   import { api } from '$lib/api';
   import type { DirectoryEntry } from '$lib/types';
   import BreadcrumbNav from './BreadcrumbNav.svelte';
+  import Dialog from '../ui/Dialog.svelte';
+  import EmptyState from '../ui/EmptyState.svelte';
+  import Spinner from '../ui/Spinner.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
@@ -87,8 +90,7 @@
     handleClose();
   }
 
-  function handleClose() {
-    open = false;
+  function reset() {
     currentPath = '';
     entries = [];
     pathHistory = [];
@@ -96,130 +98,72 @@
     onClose();
   }
 
-  function handleBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) {
-      handleClose();
-    }
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      handleClose();
-    }
+  function handleClose() {
+    open = false;
+    reset();
   }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/50"
-    onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
-    role="presentation"
-  >
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div
-      class="bg-white dark:bg-gray-800 sm:rounded-2xl shadow-2xl w-full sm:max-w-3xl h-full sm:h-[80vh] sm:max-h-[700px] flex flex-col overflow-hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="browse-modal-title"
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <!-- Header -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-        <div class="min-w-0 flex-1">
-          <h3 id="browse-modal-title" class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">
-            {m.filebrowser_select_folder()}
-          </h3>
-          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">
-            {currentPath || rootPath}
-          </p>
-        </div>
-        <button type="button"
-          onclick={handleClose}
-          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
-          aria-label={m.common_close()}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+<Dialog bind:open title={m.filebrowser_select_folder()} size="lg" onclose={reset} bodyClass="p-0 flex flex-col h-[60dvh] sm:h-[32rem]">
+  {#snippet header()}
+    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath || rootPath}>
+      {currentPath || rootPath}
+    </span>
+  {/snippet}
 
-      <!-- Error Message -->
-      {#if error}
-        <div class="mx-2 sm:mx-4 mt-2 sm:mt-3 px-3 sm:px-4 py-2 sm:py-2.5 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-xs sm:text-sm rounded-xl flex-shrink-0">
-          {error}
-        </div>
-      {/if}
+  {#if error}
+    <div class="mx-4 mt-3 px-3 py-2 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm rounded-lg">{error}</div>
+  {/if}
 
-      <!-- Breadcrumb Navigation -->
-      <div class="px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex-shrink-0">
-        <BreadcrumbNav
-          path={currentPath}
-          {allowedPaths}
-          onNavigate={handleNavigate}
-          onGoUp={handleGoUp}
-          onGoBack={handleGoBack}
-          canGoBack={pathHistory.length > 0}
-        />
-      </div>
-
-      <!-- Directory Listing -->
-      <div class="flex-1 min-h-0 overflow-y-auto p-2 sm:p-3">
-        {#if loading}
-          <div class="flex items-center justify-center h-full">
-            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-          </div>
-        {:else if entries.length === 0}
-          <div class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <svg class="w-10 h-10 sm:w-12 sm:h-12 mb-2 sm:mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-            </svg>
-            <p class="text-sm sm:text-base">{m.filebrowser_empty()}</p>
-          </div>
-        {:else}
-          <div class="space-y-0.5">
-            {#each entries as entry}
-              {#if entry.is_dir}
-                <button type="button"
-                  onclick={() => handleEntryClick(entry)}
-                  class="w-full flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 sm:py-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-left transition-colors active:bg-gray-200 dark:active:bg-gray-700"
-                >
-                  <svg class="w-5 h-5 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                  </svg>
-                  <span class="text-sm sm:text-base text-gray-900 dark:text-gray-100 truncate font-medium">{entry.name}</span>
-                </button>
-              {:else}
-                <div class="flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 text-gray-400 dark:text-gray-500">
-                  <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <span class="text-sm sm:text-base truncate">{entry.name}</span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Footer -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center justify-end gap-2 sm:gap-3 flex-shrink-0">
-        <button type="button" onclick={handleClose} class="btn btn-secondary text-sm sm:text-base py-2 sm:py-2 px-3 sm:px-4">
-          {m.common_cancel()}
-        </button>
-        <button
-          type="button"
-          onclick={handleSelect}
-          disabled={!currentPath}
-          class="btn btn-primary text-sm sm:text-base py-2 sm:py-2 px-3 sm:px-4"
-        >
-          {m.filebrowser_select_folder()}
-        </button>
-      </div>
-    </div>
+  <div class="px-3 sm:px-4 py-2 border-b border-gray-200 dark:border-gray-700 shrink-0">
+    <BreadcrumbNav
+      path={currentPath}
+      {allowedPaths}
+      onNavigate={handleNavigate}
+      onGoUp={handleGoUp}
+      onGoBack={handleGoBack}
+      canGoBack={pathHistory.length > 0}
+    />
   </div>
-{/if}
+
+  <div class="flex-1 min-h-0 overflow-y-auto p-2">
+    {#if loading}
+      <div class="flex items-center justify-center h-full"><Spinner size="w-7 h-7" /></div>
+    {:else if entries.length === 0}
+      <EmptyState icon="folder" title={m.filebrowser_empty()} compact />
+    {:else}
+      <ul class="space-y-0.5">
+        {#each entries as entry (entry.path)}
+          <li>
+            {#if entry.is_dir}
+              <button
+                type="button"
+                onclick={() => handleEntryClick(entry)}
+                class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left hover:bg-gray-100 dark:hover:bg-gray-700/50 active:bg-gray-200 dark:active:bg-gray-700"
+              >
+                <svg class="w-5 h-5 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                </svg>
+                <span class="text-sm text-gray-900 dark:text-gray-100 truncate font-medium">{entry.name}</span>
+              </button>
+            {:else}
+              <div class="flex items-center gap-2.5 px-3 py-2.5 text-gray-400 dark:text-gray-500">
+                <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span class="text-sm truncate">{entry.name}</span>
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <button type="button" onclick={handleClose} class="btn btn-secondary">{m.common_cancel()}</button>
+    <button type="button" onclick={handleSelect} disabled={!currentPath} class="btn btn-primary">
+      {m.filebrowser_select_folder()}
+    </button>
+  {/snippet}
+</Dialog>

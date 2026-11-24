@@ -112,6 +112,7 @@
         onclick={onRefresh}
         disabled={loadingDrives}
         class="p-1.5 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50 transition-colors"
+        aria-label={m.filebrowser_refresh_drives()}
         title={m.filebrowser_refresh_drives()}
       >
         <svg class="w-4 h-4 {loadingDrives ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">

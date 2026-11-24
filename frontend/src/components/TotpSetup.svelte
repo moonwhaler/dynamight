@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Dialog from './ui/Dialog.svelte';
   import { api } from '../lib/api';
   import { showToast } from './ui/Toast.svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -244,58 +245,9 @@
   {/if}
 </div>
 
-<!-- Enlarged QR Code Modal -->
-{#if showEnlargedQr}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-4"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Enlarged QR Code"
-  >
-    <!-- Backdrop -->
-    <button
-      type="button"
-      class="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
-      onclick={() => showEnlargedQr = false}
-      aria-label="Close enlarged QR code"
-    ></button>
-
-    <!-- QR Code Container -->
-    <div class="relative animate-scale-in">
-      <button
-        type="button"
-        onclick={() => showEnlargedQr = false}
-        class="bg-white p-4 sm:p-6 rounded-2xl shadow-2xl cursor-pointer transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-primary-500/50"
-      >
-        <img src={qrCode} alt="2FA QR Code" class="w-64 h-64 sm:w-80 sm:h-80" />
-      </button>
-      <p class="text-center text-white/80 text-sm mt-3">{m.totp_tap_to_close()}</p>
-    </div>
+<!-- Enlarged QR code -->
+<Dialog bind:open={showEnlargedQr} title={m.totp_qr_title()} size="sm">
+  <div class="bg-white p-4 rounded-xl mx-auto w-fit">
+    <img src={qrCode} alt={m.totp_qr_title()} class="w-64 h-64 sm:w-72 sm:h-72" />
   </div>
-{/if}
-
-<style>
-  @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  @keyframes scale-in {
-    from {
-      opacity: 0;
-      transform: scale(0.9);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-
-  .animate-fade-in {
-    animation: fade-in 0.2s ease-out forwards;
-  }
-
-  .animate-scale-in {
-    animation: scale-in 0.25s ease-out forwards;
-  }
-</style>
+</Dialog>

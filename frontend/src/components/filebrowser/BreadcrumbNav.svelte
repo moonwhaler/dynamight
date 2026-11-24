@@ -44,6 +44,7 @@
       type="button"
       onclick={onGoBack}
       class="p-1 sm:p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0 active:bg-gray-200 dark:active:bg-gray-600"
+      aria-label={m.filebrowser_go_back()}
       title={m.filebrowser_go_back()}
     >
       <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -58,6 +59,7 @@
       type="button"
       onclick={onGoUp}
       class="p-1 sm:p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0 active:bg-gray-200 dark:active:bg-gray-600"
+      aria-label={m.filebrowser_go_up()}
       title={m.filebrowser_go_up()}
     >
       <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

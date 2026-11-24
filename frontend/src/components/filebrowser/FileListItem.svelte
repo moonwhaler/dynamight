@@ -177,6 +177,7 @@
             onclick={handleDownload}
             disabled={isDownloading || isDeleting}
             class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 disabled:opacity-50"
+            aria-label={m.filebrowser_download()}
             title={m.filebrowser_download()}
           >
             {#if isDownloading}
@@ -197,6 +198,7 @@
             onclick={handleDelete}
             disabled={isDownloading || isDeleting}
             class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+            aria-label={m.filebrowser_delete()}
             title={m.filebrowser_delete()}
           >
             {#if isDeleting}

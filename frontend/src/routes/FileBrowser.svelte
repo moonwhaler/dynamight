@@ -11,6 +11,10 @@
   import DriveSelector from '../components/filebrowser/DriveSelector.svelte';
   import DeleteConfirmDialog from '../components/filebrowser/DeleteConfirmDialog.svelte';
   import ColumnSelector from '../components/ui/ColumnSelector.svelte';
+  import PageHeader from '../components/ui/PageHeader.svelte';
+  import Dialog from '../components/ui/Dialog.svelte';
+  import EmptyState from '../components/ui/EmptyState.svelte';
+  import Icon from '../components/ui/Icon.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   // Subscribe to store
@@ -107,6 +111,18 @@
   let pendingDeletePath = $state('');
   let pendingDeleteName = $state('');
   let pendingDeleteIsDir = $state(false);
+
+  // With a single place to browse, open it right away instead of asking
+  let autoOpened = false;
+  $effect(() => {
+    if (autoOpened || browserState.currentPath || browserState.loadingDrives || browserState.loadingAllowedPaths) return;
+    const places = [
+      ...browserState.allowedPaths,
+      ...browserState.drives.filter((d) => d.mountpoint).map((d) => d.mountpoint as string),
+    ];
+    autoOpened = true;
+    if (places.length === 1) handleNavigate(places[0]);
+  });
 
   onMount(() => {
     // Load drives and allowed paths
@@ -321,73 +337,50 @@
   }
 </script>
 
-<div class="space-y-6">
-  <!-- Header -->
-  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{m.filebrowser_title()}</h1>
-    <div class="flex items-center gap-2">
-      <!-- View mode toggle -->
+<PageHeader title={m.nav_files()} subtitle={m.files_subtitle()}>
+  {#snippet actions()}
+    {#if browserState.currentPath}
       <button
         type="button"
-        onclick={toggleViewMode}
-        class="py-2 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-        title={browserState.viewMode === 'list' ? m.jobs_grid_view() : m.jobs_list_view()}
+        onclick={() => (isSearchOpen ? closeSearch() : openSearch())}
+        class="btn btn-icon {isSearchOpen ? 'btn-secondary ring-2 ring-primary-500/40' : 'btn-secondary'}"
+        aria-pressed={isSearchOpen}
+        aria-label={m.filebrowser_search_toggle()}
+        title={m.filebrowser_search_toggle()}
       >
-        {#if browserState.viewMode === 'list'}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-          </svg>
-        {:else}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-          </svg>
-        {/if}
+        <Icon name="search" />
       </button>
+    {/if}
+    <button
+      type="button"
+      onclick={toggleViewMode}
+      class="btn btn-secondary btn-icon"
+      aria-label={browserState.viewMode === 'list' ? m.jobs_view_grid() : m.jobs_view_list()}
+      title={browserState.viewMode === 'list' ? m.jobs_view_grid() : m.jobs_view_list()}
+    >
+      <Icon name={browserState.viewMode === 'list' ? 'grid' : 'list'} />
+    </button>
+    {#if browserState.viewMode === 'list' && browserState.currentPath}
+      <ColumnSelector
+        visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
+        allColumns={FB_ALL}
+        fixedColumns={FB_FIXED}
+        defaultVisible={FB_DEFAULT_VISIBLE}
+        {columnLabel}
+        onToggle={handleColumnToggle}
+        onReset={() => fileBrowserTablePreferencesStore.reset()}
+      />
+    {/if}
+    {#if browserState.currentPath}
+      <button type="button" onclick={openNewFolderDialog} class="btn btn-secondary">
+        <Icon name="plus" class="w-4 h-4" />
+        <span class="hidden sm:inline">{m.filebrowser_new_folder()}</span>
+      </button>
+    {/if}
+  {/snippet}
+</PageHeader>
 
-      <!-- Search toggle (only when browsing) -->
-      {#if browserState.currentPath}
-        <button
-          type="button"
-          onclick={() => isSearchOpen ? closeSearch() : openSearch()}
-          class="py-2 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300
-            {isSearchOpen ? 'bg-primary-50 dark:bg-primary-900/20 !text-primary-600 dark:!text-primary-400 border-primary-200 dark:border-primary-800' : ''}"
-          title={m.filebrowser_search_toggle()}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </button>
-      {/if}
-
-      <!-- Column selector (only in list mode when browsing) -->
-      {#if browserState.viewMode === 'list' && browserState.currentPath}
-        <ColumnSelector
-          visibleColumns={$fileBrowserTablePreferencesStore.visibleColumns}
-          allColumns={FB_ALL}
-          fixedColumns={FB_FIXED}
-          defaultVisible={FB_DEFAULT_VISIBLE}
-          {columnLabel}
-          onToggle={handleColumnToggle}
-          onReset={() => fileBrowserTablePreferencesStore.reset()}
-        />
-      {/if}
-
-      <!-- New folder button (only when browsing a path) -->
-      {#if browserState.currentPath}
-        <button
-          type="button"
-          onclick={openNewFolderDialog}
-          class="btn btn-secondary flex items-center gap-2"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-          </svg>
-          <span class="hidden sm:inline">{m.filebrowser_new_folder()}</span>
-        </button>
-      {/if}
-    </div>
-  </div>
-
+<div class="space-y-4">
   <!-- Drive & Path Selector -->
   <div class="card p-4">
     <DriveSelector
@@ -458,70 +451,35 @@
       />
     </div>
   {:else}
-    <!-- Empty state when no path selected -->
-    <div class="card p-12 text-center">
-      <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
-        <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-      </div>
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">{m.filebrowser_select_location()}</h3>
-      <p class="text-gray-500 dark:text-gray-400">{m.filebrowser_select_location_desc()}</p>
+    <div class="card">
+      <EmptyState icon="folder-open" title={m.filebrowser_select_location()} text={m.filebrowser_select_location_desc()} />
     </div>
   {/if}
 </div>
 
 <!-- New Folder Dialog -->
-{#if showNewFolderDialog}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-    onclick={closeNewFolderDialog}
-    onkeydown={(e) => e.key === 'Escape' && closeNewFolderDialog()}
-    role="presentation"
+<Dialog
+  bind:open={() => showNewFolderDialog, (v) => { if (!v) closeNewFolderDialog(); }}
+  title={m.filebrowser_new_folder()}
+  description={browserState.currentPath}
+  size="sm"
+>
+  <form
+    id="new-folder-form"
+    onsubmit={(e) => {
+      e.preventDefault();
+      createNewFolder();
+    }}
   >
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div
-      class="card p-6 w-full max-w-md"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="new-folder-title"
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h3 id="new-folder-title" class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{m.filebrowser_new_folder()}</h3>
-
-      <div class="space-y-4">
-        <div>
-          <label for="folder-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {m.filebrowser_folder_name()}
-          </label>
-          <input
-            type="text"
-            id="folder-name"
-            bind:value={newFolderName}
-            class="input"
-            placeholder={m.filebrowser_new_folder()}
-            onkeydown={(e) => e.key === 'Enter' && createNewFolder()}
-          />
-          {#if newFolderError}
-            <p class="mt-1 text-sm text-red-500">{newFolderError}</p>
-          {/if}
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <button type="button" class="btn btn-secondary" onclick={closeNewFolderDialog}>
-            {m.common_cancel()}
-          </button>
-          <button type="button" class="btn btn-primary" onclick={createNewFolder}>
-            {m.common_create()}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+    <label for="folder-name" class="label">{m.filebrowser_folder_name()}</label>
+    <input type="text" id="folder-name" bind:value={newFolderName} class="input" autocomplete="off" />
+    {#if newFolderError}<p class="mt-1.5 text-sm text-red-600 dark:text-red-400" role="alert">{newFolderError}</p>{/if}
+  </form>
+  {#snippet footer()}
+    <button type="button" class="btn btn-secondary" onclick={closeNewFolderDialog}>{m.common_cancel()}</button>
+    <button type="submit" form="new-folder-form" class="btn btn-primary">{m.common_create()}</button>
+  {/snippet}
+</Dialog>
 
 <!-- Delete Confirmation Dialog -->
 <DeleteConfirmDialog

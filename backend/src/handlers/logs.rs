@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::{QueryBuilder, Sqlite};
 use std::sync::Arc;
 
 use crate::errors::ApiError;
@@ -130,7 +131,10 @@ pub async fn get_run(
 pub struct GetLogsQuery {
     pub limit: Option<i32>,
     pub offset: Option<i32>,
+    /// One level or a comma-separated list ("warning,error")
     pub level: Option<String>,
+    /// Only lines whose message contains this text (case-insensitive)
+    pub q: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -142,57 +146,58 @@ pub struct PaginatedLogsResponse {
     pub has_more: bool,
 }
 
+/// Append the filters of a log query to a statement that already selects one run
+fn push_log_filters<'a>(qb: &mut QueryBuilder<'a, Sqlite>, levels: &'a [String], q: Option<&'a str>) {
+    if !levels.is_empty() {
+        qb.push(" AND level IN (");
+        let mut sep = qb.separated(", ");
+        for level in levels {
+            sep.push_bind(level);
+        }
+        qb.push(")");
+    }
+    if let Some(q) = q {
+        // LIKE with the wildcards in the search text escaped
+        let pattern = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        qb.push(" AND message LIKE ").push_bind(pattern).push(" ESCAPE '\\'");
+    }
+}
+
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<i64>,
     Query(query): Query<GetLogsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(500);
-    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(500).clamp(1, 5000);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let levels: Vec<String> = query
+        .level
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let q = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-    // Get total count first
-    let total: i64 = if let Some(level) = &query.level {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM log_entries WHERE job_run_id = ? AND level = ?",
-        )
-        .bind(run_id)
-        .bind(level)
+    let mut count = QueryBuilder::new("SELECT COUNT(*) FROM log_entries WHERE job_run_id = ");
+    count.push_bind(run_id);
+    push_log_filters(&mut count, &levels, q);
+    let total: i64 = count
+        .build_query_scalar()
         .fetch_one(&state.logs_db)
         .await
-        .unwrap_or(0)
-    } else {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM log_entries WHERE job_run_id = ?",
-        )
-        .bind(run_id)
-        .fetch_one(&state.logs_db)
-        .await
-        .unwrap_or(0)
-    };
+        .unwrap_or(0);
 
-    // Get log entries from the separate logs database
-    let logs: Vec<LogEntryRow> = if let Some(level) = &query.level {
-        sqlx::query_as(
-            "SELECT * FROM log_entries WHERE job_run_id = ? AND level = ? ORDER BY id LIMIT ? OFFSET ?",
-        )
-        .bind(run_id)
-        .bind(level)
-        .bind(limit)
-        .bind(offset)
+    let mut select = QueryBuilder::new("SELECT * FROM log_entries WHERE job_run_id = ");
+    select.push_bind(run_id);
+    push_log_filters(&mut select, &levels, q);
+    select.push(" ORDER BY id LIMIT ").push_bind(limit).push(" OFFSET ").push_bind(offset);
+    let logs: Vec<LogEntryRow> = select
+        .build_query_as()
         .fetch_all(&state.logs_db)
         .await
-        .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT * FROM log_entries WHERE job_run_id = ? ORDER BY id LIMIT ? OFFSET ?",
-        )
-        .bind(run_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&state.logs_db)
-        .await
-        .unwrap_or_default()
-    };
+        .unwrap_or_default();
 
     let entries: Vec<LogEntry> = logs.into_iter().map(LogEntry::from).collect();
     let fetched = entries.len() as i32;

@@ -17,6 +17,11 @@ use tokio::sync::{broadcast, RwLock};
 /// A self-contained test application with an in-memory database and HTTP server.
 pub struct TestApp {
     pub server: TestServer,
+    /// Direct access for seeding rows the API cannot create (runs, log lines)
+    #[allow(dead_code)]
+    pub db: SqlitePool,
+    #[allow(dead_code)]
+    pub logs_db: SqlitePool,
 }
 
 /// Create an in-memory SQLite pool with all migrations applied.
@@ -110,8 +115,8 @@ impl TestApp {
         let rate_limit_service = RateLimitService::new(rate_limit_config);
 
         let state = Arc::new(AppState {
-            db,
-            logs_db,
+            db: db.clone(),
+            logs_db: logs_db.clone(),
             config,
             auth_service,
             backup_service,
@@ -129,7 +134,7 @@ impl TestApp {
 
         let server = TestServer::new(router).expect("Failed to create test server");
 
-        Self { server }
+        Self { server, db, logs_db }
     }
 
     // ── Auth convenience helpers ────────────────────────────────────────

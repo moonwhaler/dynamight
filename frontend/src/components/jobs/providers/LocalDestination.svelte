@@ -5,6 +5,8 @@
   import SinglePathSelector from '../SinglePathSelector.svelte';
   import HelpTooltip from '../../ui/HelpTooltip.svelte';
   import BrowseModal from '../../filebrowser/BrowseModal.svelte';
+  import Toggle from '../../ui/Toggle.svelte';
+  import Spinner from '../../ui/Spinner.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   let {
@@ -93,7 +95,16 @@
       />
     </label>
     <div class="flex gap-2">
-      <select id="usb" bind:value={config.usb_uuid} class="input flex-1">
+      <select
+        id="usb"
+        bind:value={config.usb_uuid}
+        onchange={() => {
+          // Mounting only applies to a USB drive: on when one is chosen, off without
+          config.auto_mount = !!config.usb_uuid;
+          config.auto_unmount = !!config.usb_uuid;
+        }}
+        class="input flex-1"
+      >
         <option value={null}>{m.local_no_usb_mount()}</option>
         {#each drives as drive}
           <option value={drive.uuid}>
@@ -111,10 +122,7 @@
           title={m.filebrowser_browse()}
         >
           {#if browseLoading}
-            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
+            <Spinner />
           {:else}
             {m.filebrowser_browse()}
           {/if}
@@ -136,52 +144,16 @@
     <SinglePathSelector bind:path={config.mount_point} placeholder="/mnt/backup" />
   </div>
 
-  <div class="space-y-3">
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input type="checkbox" bind:checked={config.auto_mount} class="peer sr-only" />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.local_auto_mount()}
-          <HelpTooltip text={m.local_auto_mount_help()} />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.local_auto_mount_desc()}
-        </p>
-      </div>
-    </label>
-    <label
-      class="flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900/70 transition-colors"
-    >
-      <div class="relative flex items-center">
-        <input type="checkbox" bind:checked={config.auto_unmount} class="peer sr-only" />
-        <div
-          class="w-11 h-6 bg-gray-300 dark:bg-gray-600 rounded-full peer-checked:bg-primary-600 transition-colors"
-        ></div>
-        <div
-          class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
-        ></div>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-1">
-          {m.local_auto_unmount()}
-          <HelpTooltip text={m.local_auto_unmount_help()} />
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {m.local_auto_unmount_desc()}
-        </p>
-      </div>
-    </label>
-  </div>
+  {#if config.usb_uuid}
+    <div class="space-y-4 pl-0 sm:pl-4 sm:border-l-2 border-gray-200 dark:border-gray-700">
+      <Toggle label={m.local_auto_mount()} description={m.local_auto_mount_desc()} bind:checked={config.auto_mount}>
+        {#snippet extra()}<HelpTooltip text={m.local_auto_mount_help()} />{/snippet}
+      </Toggle>
+      <Toggle label={m.local_auto_unmount()} description={m.local_auto_unmount_desc()} bind:checked={config.auto_unmount}>
+        {#snippet extra()}<HelpTooltip text={m.local_auto_unmount_help()} />{/snippet}
+      </Toggle>
+    </div>
+  {/if}
 
   <div>
     <label for="subdir" class="label">
@@ -189,7 +161,7 @@
       <HelpTooltip text={m.local_backup_subdir_help()} />
     </label>
     <input type="text" id="subdir" bind:value={config.backup_subdir} class="input" />
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+    <p class="hint font-mono break-all">
       {m.local_preview({ path: `${config.mount_point}/${config.backup_subdir}/` })}
     </p>
   </div>

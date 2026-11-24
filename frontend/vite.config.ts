@@ -28,6 +28,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // Fonts stay separate files: the CSP (font-src 'self') blocks data: URLs
+    assetsInlineLimit: (file: string) => (file.endsWith('.woff2') ? false : undefined),
     rollupOptions: {
       onwarn(warning, warn) {
         // Suppress node:* externalization warnings emitted by paraglide's

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Dialog from '../ui/Dialog.svelte';
   import { api } from '../../lib/api';
   import type { DirectoryEntry } from '../../lib/types';
   import * as m from '$lib/paraglide/messages.js';
@@ -297,34 +298,16 @@
 </div>
 
 <!-- File Browser Modal -->
-{#if showBrowser}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-0 sm:p-4"
-    onclick={(e) => e.target === e.currentTarget && closeBrowser()}
-    onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-  >
-    <div class="bg-white dark:bg-gray-800 sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl h-full sm:h-[80vh] sm:max-h-[700px] flex flex-col overflow-hidden">
-      <!-- Header -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-        <div class="min-w-0 flex-1">
-          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directories()}</h3>
-          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
-        </div>
-        <button type="button"
-          onclick={closeBrowser}
-          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
-          aria-label={m.common_close()}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
+<Dialog
+  bind:open={() => showBrowser, (v) => { if (!v) closeBrowser(); }}
+  title={m.path_selector_select_directories()}
+  size="lg"
+  closeOnBackdrop={false}
+  bodyClass="p-0 flex flex-col h-[70dvh] sm:h-[34rem]"
+>
+  {#snippet header()}
+    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath}>{currentPath}</span>
+  {/snippet}
       <!-- Navigation & Quick Actions -->
       <div class="px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex-shrink-0">
         <!-- Main action buttons - responsive layout -->
@@ -458,34 +441,21 @@
         {/if}
       </div>
 
-      <!-- Footer with action buttons -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-col xs:flex-row items-stretch xs:items-center justify-between gap-2 sm:gap-4 flex-shrink-0">
-        <div class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 text-center xs:text-left">
-          {#if newSelectionCount > 0}
-            {newSelectionCount === 1 ? m.path_selector_directory_selected({ count: newSelectionCount }) : m.path_selector_directories_selected({ count: newSelectionCount })}
-          {:else}
-            <span class="text-gray-500 dark:text-gray-500">{m.path_selector_select_to_add()}</span>
-          {/if}
-        </div>
-        <div class="flex gap-2 sm:gap-3 justify-end">
-          <button type="button" onclick={closeBrowser} class="btn btn-secondary text-sm py-2 px-3 sm:px-4">
-            {m.common_cancel()}
-          </button>
-          <button
-            type="button"
-            onclick={addSelectedPaths}
-            disabled={newSelectionCount === 0}
-            class="btn btn-primary text-sm py-2 px-3 sm:px-4"
-          >
-            {#if newSelectionCount > 0}
-              <span class="hidden xs:inline">{newSelectionCount === 1 ? m.path_selector_add_directory({ count: newSelectionCount }) : m.path_selector_add_directories({ count: newSelectionCount })}</span>
-              <span class="xs:hidden">Add ({newSelectionCount})</span>
-            {:else}
-              {m.path_selector_add_selected()}
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+  {#snippet footer()}
+    <p class="text-sm text-gray-600 dark:text-gray-400 self-center text-center sm:text-left sm:mr-auto">
+      {#if newSelectionCount > 0}
+        {newSelectionCount === 1 ? m.path_selector_directory_selected({ count: newSelectionCount }) : m.path_selector_directories_selected({ count: newSelectionCount })}
+      {:else}
+        {m.path_selector_select_to_add()}
+      {/if}
+    </p>
+    <button type="button" onclick={closeBrowser} class="btn btn-secondary">{m.common_cancel()}</button>
+    <button type="button" onclick={addSelectedPaths} disabled={newSelectionCount === 0} class="btn btn-primary">
+      {#if newSelectionCount > 0}
+        {newSelectionCount === 1 ? m.path_selector_add_directory({ count: newSelectionCount }) : m.path_selector_add_directories({ count: newSelectionCount })}
+      {:else}
+        {m.path_selector_add_selected()}
+      {/if}
+    </button>
+  {/snippet}
+</Dialog>

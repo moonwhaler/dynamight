@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Dialog from '../ui/Dialog.svelte';
   import { api } from '../../lib/api';
   import type { Credential, CredentialProviderType, CredentialData } from '../../lib/types';
   import { showToast } from '../ui/Toast.svelte';
@@ -209,23 +210,13 @@
 </div>
 
 <!-- Add Credential Modal -->
-{#if showAddModal}
-  <div
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-    onclick={(e) => e.target === e.currentTarget && (showAddModal = false)}
-    onkeydown={(e) => e.key === 'Escape' && (showAddModal = false)}
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-  >
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md">
-      <div class="p-6 border-b border-gray-200 dark:border-gray-700">
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-          {m.credentials_add_title({ provider: getProviderLabel(providerType) })}
-        </h3>
-      </div>
-
-      <div class="p-6 space-y-4">
+<Dialog
+  bind:open={showAddModal}
+  title={m.credentials_add_title({ provider: getProviderLabel(providerType) })}
+  closeOnBackdrop={false}
+  onclose={resetForm}
+  bodyClass="px-5 sm:px-6 py-4 space-y-4"
+>
         <div>
           <label for="cred-name" class="label">{m.credentials_name_label()}</label>
           <input
@@ -375,23 +366,19 @@
             </p>
           </div>
         {/if}
-      </div>
-
-      <div class="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-        <button
-          type="button"
-          class="btn btn-secondary"
-          onclick={() => {
-            showAddModal = false;
-            resetForm();
-          }}
-        >
-          {m.common_cancel()}
-        </button>
-        <button type="button" class="btn btn-primary" disabled={saving} onclick={handleSave}>
-          {saving ? m.credentials_saving() : m.credentials_save()}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+  {#snippet footer()}
+    <button
+      type="button"
+      class="btn btn-secondary"
+      onclick={() => {
+        showAddModal = false;
+        resetForm();
+      }}
+    >
+      {m.common_cancel()}
+    </button>
+    <button type="button" class="btn btn-primary" disabled={saving} onclick={handleSave}>
+      {saving ? m.credentials_saving() : m.credentials_save()}
+    </button>
+  {/snippet}
+</Dialog>

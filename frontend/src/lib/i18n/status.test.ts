@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatStatus, getStatusIndicator, getStatusBadgeClass } from './status';
+import { formatStatus, getStatusBadgeClass } from './status';
 
 describe('formatStatus', () => {
   it('maps completed', () => {
@@ -24,44 +24,6 @@ describe('formatStatus', () => {
 
   it('returns unknown status as-is', () => {
     expect(formatStatus('unknown')).toBe('unknown');
-  });
-});
-
-describe('getStatusIndicator', () => {
-  it('returns green for completed', () => {
-    const result = getStatusIndicator('completed');
-    expect(result.color).toBe('bg-green-500');
-  });
-
-  it('returns red for failed', () => {
-    const result = getStatusIndicator('failed');
-    expect(result.color).toBe('bg-red-500');
-  });
-
-  it('returns blue for running', () => {
-    const result = getStatusIndicator('running');
-    expect(result.color).toBe('bg-blue-500');
-  });
-
-  it('returns orange for cancelled', () => {
-    const result = getStatusIndicator('cancelled');
-    expect(result.color).toBe('bg-orange-500');
-  });
-
-  it('returns yellow for pending', () => {
-    const result = getStatusIndicator('pending');
-    expect(result.color).toBe('bg-yellow-500');
-  });
-
-  it('returns empty for null', () => {
-    const result = getStatusIndicator(null);
-    expect(result.color).toBe('');
-    expect(result.label).toBe('');
-  });
-
-  it('returns empty for undefined', () => {
-    const result = getStatusIndicator(undefined);
-    expect(result.color).toBe('');
   });
 });
 

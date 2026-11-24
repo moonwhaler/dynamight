@@ -67,9 +67,13 @@
 </script>
 
 <script lang="ts">
+  import Icon from './Icon.svelte';
+  import * as m from '$lib/paraglide/messages.js';
+
   let visible = $state(false);
   let message = $state('');
   let variant = $state<ToastVariant>('info');
+  let el = $state<HTMLDivElement | null>(null);
 
   toastStore.subscribe((s) => {
     visible = s.visible;
@@ -77,99 +81,85 @@
     variant = s.variant;
   });
 
-  const variantStyles: Record<ToastVariant, { bg: string; icon: string; border: string }> = {
-    error: {
-      bg: 'bg-red-100 dark:bg-red-900',
-      icon: 'text-red-600 dark:text-red-400',
-      border: 'border-red-300 dark:border-red-700',
-    },
-    success: {
-      bg: 'bg-green-100 dark:bg-green-900',
-      icon: 'text-green-600 dark:text-green-400',
-      border: 'border-green-300 dark:border-green-700',
-    },
-    warning: {
-      bg: 'bg-amber-100 dark:bg-amber-900',
-      icon: 'text-amber-600 dark:text-amber-400',
-      border: 'border-amber-300 dark:border-amber-700',
-    },
-    info: {
-      bg: 'bg-blue-100 dark:bg-blue-900',
-      icon: 'text-blue-600 dark:text-blue-400',
-      border: 'border-blue-300 dark:border-blue-700',
-    },
-  };
+  // The toast lives in the browser's top layer (popover) so it shows above
+  // open modal dialogs; showing it again moves it above a newer dialog.
+  function raise() {
+    if (!el?.showPopover) return;
+    if (el.matches(':popover-open')) el.hidePopover();
+    el.showPopover();
+  }
 
-  const textStyles: Record<ToastVariant, string> = {
-    error: 'text-red-800 dark:text-red-200',
-    success: 'text-green-800 dark:text-green-200',
-    warning: 'text-amber-800 dark:text-amber-200',
-    info: 'text-blue-800 dark:text-blue-200',
+  $effect(() => {
+    if (!el?.showPopover) return;
+    if (visible && message) raise();
+    else if (el.matches(':popover-open')) el.hidePopover();
+  });
+
+  $effect(() => {
+    const onDialog = () => {
+      if (visible) raise();
+    };
+    window.addEventListener('dm:dialog-open', onDialog);
+    return () => window.removeEventListener('dm:dialog-open', onDialog);
+  });
+
+  const styles: Record<ToastVariant, { icon: 'x-circle' | 'check-circle' | 'warning' | 'info'; tone: string }> = {
+    error: { icon: 'x-circle', tone: 'text-red-600 dark:text-red-400' },
+    success: { icon: 'check-circle', tone: 'text-green-600 dark:text-green-400' },
+    warning: { icon: 'warning', tone: 'text-amber-600 dark:text-amber-400' },
+    info: { icon: 'info', tone: 'text-primary-600 dark:text-primary-400' },
   };
 </script>
 
-{#if visible}
-  <div
-    class="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-toast-in max-w-md w-[calc(100%-2rem)]"
-    role="alert"
-    aria-live="assertive"
-  >
+<div
+  bind:this={el}
+  popover="manual"
+  class="dm-toast"
+  role={variant === 'error' ? 'alert' : 'status'}
+  aria-live={variant === 'error' ? 'assertive' : 'polite'}
+>
+  {#if visible}
     <div
-      class="flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border {variantStyles[variant].bg} {variantStyles[variant].border}"
+      class="flex items-start gap-3 pl-4 pr-2 py-3 rounded-xl shadow-xl border bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
     >
-      <!-- Icon -->
-      <div class="flex-shrink-0 mt-0.5 {variantStyles[variant].icon}">
-        {#if variant === 'error'}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        {:else if variant === 'success'}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        {:else if variant === 'warning'}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-        {:else}
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        {/if}
-      </div>
-
-      <!-- Message -->
-      <p class="flex-1 text-sm font-medium {textStyles[variant]}">
-        {message}
-      </p>
-
-      <!-- Dismiss button -->
-      <button
-        onclick={dismissToast}
-        class="flex-shrink-0 p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors {variantStyles[variant].icon}"
-        aria-label="Dismiss"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
+      <span class="shrink-0 mt-0.5 {styles[variant].tone}"><Icon name={styles[variant].icon} /></span>
+      <p class="flex-1 text-sm text-gray-800 dark:text-gray-100 pt-0.5">{message}</p>
+      <button type="button" onclick={dismissToast} class="btn btn-ghost btn-icon btn-sm shrink-0" aria-label={m.common_close()}>
+        <Icon name="x" class="w-4 h-4" />
       </button>
     </div>
-  </div>
-{/if}
+  {/if}
+</div>
 
 <style>
+  .dm-toast {
+    position: fixed;
+    inset: auto 1rem calc(5rem + env(safe-area-inset-bottom)) 1rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+    max-width: 28rem;
+    margin-inline: auto;
+  }
+  @media (min-width: 768px) {
+    .dm-toast {
+      inset: auto 1.5rem 1.5rem auto;
+      width: 24rem;
+    }
+  }
+  .dm-toast:popover-open {
+    animation: toast-in 0.18s ease-out;
+  }
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translate(-50%, -1rem);
+      transform: translateY(0.5rem);
     }
     to {
       opacity: 1;
-      transform: translate(-50%, 0);
+      transform: none;
     }
-  }
-
-  .animate-toast-in {
-    animation: toast-in 0.2s ease-out;
   }
 </style>

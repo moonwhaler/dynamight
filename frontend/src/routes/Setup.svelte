@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Logo from '../components/shell/Logo.svelte';
   import { authStore } from '../lib/stores/auth';
   import PasswordStrength from '../components/PasswordStrength.svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -92,23 +93,12 @@
   }
 </script>
 
-<div class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+<div class="min-h-[100dvh] flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 pt-safe pb-safe">
   <div class="max-w-md w-full space-y-8">
-    <div class="text-center">
-      <div
-        class="mx-auto w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center mb-4"
-      >
-        <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-          />
-        </svg>
-      </div>
-      <h2 class="text-3xl font-bold text-gray-900 dark:text-white">{m.setup_title()}</h2>
-      <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{m.setup_description()}</p>
+    <div>
+      <div class="flex justify-center mb-10"><Logo large /></div>
+      <h1 class="font-display text-[1.9rem] leading-tight text-gray-900 dark:text-white">{m.setup_title()}</h1>
+      <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-400">{m.setup_description()}</p>
     </div>
 
     <!-- Mode toggle -->

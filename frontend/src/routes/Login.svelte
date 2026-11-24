@@ -1,6 +1,8 @@
 <script lang="ts">
   import { authStore } from '../lib/stores/auth';
   import TotpVerification from '../components/TotpVerification.svelte';
+  import Logo from '../components/shell/Logo.svelte';
+  import Spinner from '../components/ui/Spinner.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
   let username = $state('');
@@ -18,26 +20,13 @@
 {#if $authStore.pendingTotpSession}
   <TotpVerification />
 {:else}
-  <div class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-md w-full space-y-8">
-      <div class="text-center">
-        <div
-          class="mx-auto w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center mb-4"
-        >
-          <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-            />
-          </svg>
-        </div>
-        <h2 class="text-3xl font-bold text-gray-900 dark:text-white">{m.auth_app_name()}</h2>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{m.auth_sign_in_description()}</p>
-      </div>
+  <div class="min-h-[100dvh] flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 py-12 pt-safe pb-safe">
+    <div class="w-full max-w-sm">
+      <div class="flex justify-center mb-10"><Logo large /></div>
+      <h1 class="font-display text-[1.9rem] leading-tight text-gray-900 dark:text-white">{m.auth_sign_in()}</h1>
+      <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-400">{m.auth_sign_in_description()}</p>
 
-      <form class="mt-8 space-y-6" onsubmit={handleSubmit}>
+      <form class="mt-8 space-y-5" onsubmit={handleSubmit}>
         {#if $authStore.error}
           <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg text-sm">
             {$authStore.error}
@@ -51,10 +40,11 @@
               id="username"
               name="username"
               type="text"
+              autocomplete="username"
+              autocapitalize="none"
               required
               bind:value={username}
               class="input"
-              placeholder={m.auth_username_placeholder()}
             />
           </div>
 
@@ -64,35 +54,17 @@
               id="password"
               name="password"
               type="password"
+              autocomplete="current-password"
               required
               bind:value={password}
               class="input"
-              placeholder={m.auth_password_placeholder()}
             />
           </div>
         </div>
 
         <button type="submit" disabled={loading} class="w-full btn btn-lg btn-primary">
           {#if loading}
-            <span class="flex items-center justify-center gap-2">
-              <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                  fill="none"
-                />
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              {m.auth_signing_in()}
-            </span>
+            <Spinner size="w-5 h-5" />{m.auth_signing_in()}
           {:else}
             {m.auth_sign_in()}
           {/if}

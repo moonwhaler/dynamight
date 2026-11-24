@@ -5,6 +5,8 @@ interface Preferences {
   autoShowLastPage: boolean;
   logRefreshInterval: number; // seconds
   confirmKillProcess: boolean;
+  /** New jobs are created step by step instead of with the full form */
+  guidedJobSetup: boolean;
 }
 
 const STORAGE_KEY = 'dynamight-preferences';
@@ -14,6 +16,7 @@ const defaultPreferences: Preferences = {
   autoShowLastPage: true,
   logRefreshInterval: 2,
   confirmKillProcess: true,
+  guidedJobSetup: true,
 };
 
 function loadPreferences(): Preferences {
@@ -59,6 +62,13 @@ function createPreferencesStore() {
     setLogRefreshInterval: (value: number) => {
       update(prefs => {
         const updated = { ...prefs, logRefreshInterval: value };
+        savePreferences(updated);
+        return updated;
+      });
+    },
+    setGuidedJobSetup: (value: boolean) => {
+      update(prefs => {
+        const updated = { ...prefs, guidedJobSetup: value };
         savePreferences(updated);
         return updated;
       });

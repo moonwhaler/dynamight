@@ -5,7 +5,7 @@
   import './lib/stores/theme'; // Initialize theme store early to apply persisted theme
   import Login from './routes/Login.svelte';
   import Setup from './routes/Setup.svelte';
-  import Layout from './components/layout/Layout.svelte';
+  import AppShell from './components/shell/AppShell.svelte';
   import ConfirmDialog from './components/ui/ConfirmDialog.svelte';
   import Toast from './components/ui/Toast.svelte';
 
@@ -15,15 +15,20 @@
   const lazy = (fn: () => Promise<unknown>) => wrap({ asyncComponent: fn as any });
 
   const routes = {
-    '/': lazy(() => import('./routes/Dashboard.svelte')),
+    '/': lazy(() => import('./routes/Overview.svelte')),
     '/jobs': lazy(() => import('./routes/Jobs.svelte')),
-    '/jobs/new': lazy(() => import('./routes/JobDetail.svelte')),
-    '/jobs/:id': lazy(() => import('./routes/JobDetail.svelte')),
-    '/history': lazy(() => import('./routes/History.svelte')),
+    '/jobs/new': lazy(() => import('./routes/JobNew.svelte')),
+    '/jobs/:id': lazy(() => import('./routes/JobView.svelte')),
+    '/jobs/:id/runs': lazy(() => import('./routes/JobView.svelte')),
+    '/jobs/:id/settings': lazy(() => import('./routes/JobView.svelte')),
+    '/activity': lazy(() => import('./routes/Activity.svelte')),
     '/files': lazy(() => import('./routes/FileBrowser.svelte')),
-    '/about': lazy(() => import('./routes/About.svelte')),
+    '/settings': lazy(() => import('./routes/Settings.svelte')),
+    '/settings/:section': lazy(() => import('./routes/Settings.svelte')),
+    '/history': lazy(() => import('./routes/Redirect.svelte')),
+    '/about': lazy(() => import('./routes/Redirect.svelte')),
     // Unknown routes (old bookmarks, typos) show the dashboard instead of an empty page
-    '*': lazy(() => import('./routes/Dashboard.svelte')),
+    '*': lazy(() => import('./routes/Overview.svelte')),
   };
 
   // Check authentication on load
@@ -31,9 +36,9 @@
 </script>
 
 {#if $authStore.isAuthenticated}
-  <Layout>
+  <AppShell>
     <Router {routes} />
-  </Layout>
+  </AppShell>
 {:else if $authStore.loading}
   <div class="min-h-screen flex items-center justify-center">
     <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>

@@ -7,7 +7,7 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)
 
-![Dynamight dashboard](docs/screenshots/dashboard.png)
+![Dynamight overview](docs/screenshots/overview.png)
 
 ## Features
 
@@ -21,6 +21,8 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 
 - **Job Management**
   - Create, edit, clone, and delete backup jobs
+  - Guided step-by-step setup for new jobs (can be turned off for the full form)
+  - A page per job with a summary sentence, recent runs, schedules, sources and destination
   - Multiple source directories per job
   - Cron-based scheduling (daily, weekly, monthly, custom) with timezone support
   - Manual and scheduled execution
@@ -33,18 +35,17 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Custom archive name prefixes
   - Store-only mode (archive without compression)
 
-- **Customizable Job List**
-  - Show, hide, and reorder table columns
-  - Drag-to-resize column widths
+- **Job List**
+  - Table or card view, sortable, with filters by state (needs attention, running, OK, disabled)
+  - Recent runs of each job at a glance
   - Human-readable schedule display ("Daily at 14:30")
-  - Preferences persisted per browser
 
 - **Monitoring & History**
-  - Dashboard showing jobs that need attention (last run failed, or no successful backup for twice the schedule interval), the oldest backup and the next scheduled run
+  - Overview showing jobs that need attention (last run failed, or no successful backup for twice the schedule interval) with the reason, the oldest backup and the next scheduled runs
   - Notifications via [ntfy](https://ntfy.sh) and a generic JSON webhook for failed, overdue, recovered and (optionally) every successful run
   - Free-space indicators for local destinations
-  - Searchable run history with status, job, and date-range filters
-  - Full log viewer for every run (live while running, stored afterwards)
+  - Activity list of all runs, grouped by day, with the error line of failed runs and status, job, and date-range filters
+  - Log viewer for every run (live while running, stored afterwards) with search, level filter, copy and download
   - Configurable history retention
 
 - **File Browser**
@@ -59,6 +60,7 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Restore directly from the initial setup screen when moving to a new server
 
 - **Personalization**
+  - Works on phones (bottom tab bar), tablets and desktops
   - Light and dark mode
   - Three base tones (Paper, Cloud, Slate) and six accent colors
   - English and German UI
@@ -80,14 +82,16 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 
 | | |
 |---|---|
-| **Dashboard (dark mode)** — job overview with last-run status and free space | **Job list** — table view with configurable columns |
-| ![Dashboard in dark mode](docs/screenshots/dashboard-dark.png) | ![Job list](docs/screenshots/jobs-list.png) |
-| **Job editor** — pick a destination and configure sources, sync options, and schedules | **Run history** — filter by status, job, and date |
-| ![Job editor](docs/screenshots/job-detail.png) | ![Run history](docs/screenshots/history.png) |
-| **Run logs** — full rsync output for every run | **File browser** — browse allowed paths and USB drives |
+| **Overview (dark mode)** — what needs attention, every job with its recent runs | **Job list** — sortable table with filters by state |
+| ![Overview in dark mode](docs/screenshots/overview-dark.png) | ![Job list](docs/screenshots/jobs-list.png) |
+| **Job page** — summary, run history, schedules, sources and destination | **Job settings** — all options in sections, with a save bar |
+| ![Job page](docs/screenshots/job-detail.png) | ![Job settings](docs/screenshots/job-editor.png) |
+| **Guided setup** — new jobs step by step | **Activity** — every run, grouped by day |
+| ![Guided setup](docs/screenshots/wizard.png) | ![Activity](docs/screenshots/activity.png) |
+| **Run logs** — search, level filter, copy and download | **File browser** — browse allowed paths and USB drives |
 | ![Run log viewer](docs/screenshots/run-log.png) | ![File browser](docs/screenshots/files.png) |
-| **Theme picker** — light/dark, base tone, and accent color | **Settings** — preferences, account, 2FA, credentials, history |
-| ![Theme picker](docs/screenshots/theme-picker.png) | ![Settings](docs/screenshots/settings.png) |
+| **Settings** — notifications, credentials, account, appearance, data | |
+| ![Settings](docs/screenshots/settings.png) | |
 
 ## Supported Providers
 
@@ -421,7 +425,7 @@ sudo ./scripts/install.sh uninstall
 
 ### Creating a Backup Job
 
-1. Click **"New Job"** on the Dashboard or Jobs page
+1. Click **"New Job"** on the Overview or Jobs page. New jobs are set up step by step; to see all options on one page instead, click **Show all options** or turn off **Settings → General → Guided job setup**
 2. Enter a name and optional description
 3. **Select Provider**: Choose your backup destination type
 4. **Configure Destination**:
@@ -450,10 +454,9 @@ sudo ./scripts/install.sh uninstall
 
 Credentials for cloud providers are stored encrypted. Manage them in Settings:
 
-1. Click the **gear icon** in the navbar and choose **Settings**
-2. Go to **Credentials** tab
-3. Add, edit, or delete credentials
-4. View which jobs use each credential
+1. Open **Settings → Credentials**
+2. Add, edit, or delete credentials
+3. View which jobs use each credential
 
 When editing an OAuth credential, fields left empty keep their stored values.
 
@@ -505,28 +508,27 @@ Add schedules in the job detail page:
 
 Enable 2FA for additional security:
 
-1. Open **Settings** (gear icon → Settings)
-2. Go to **Security** tab
-3. Click **Enable 2FA**
-4. Scan QR code with authenticator app
-5. Enter verification code
-6. Save recovery codes
+1. Open **Settings → Security**
+2. Click **Enable 2FA**
+3. Scan QR code with authenticator app
+4. Enter verification code
+5. Save recovery codes
 
-### Managing Job List Columns
+### Finding Your Way Around
 
-Customise which columns appear in the job list:
+- **Overview**: what needs attention, all jobs with their recent runs (each bar is one run; click it for its log), and what runs next
+- **Jobs**: all jobs as a table or cards; filter by state and sort by name, status, last good copy or next run. Each job has its own page with **Overview**, **Runs** and **Settings** tabs
+- **Activity**: every run of every job, newest first, grouped by day
+- **Files**: browse allowed paths and USB drives
+- **Settings**: general behaviour, appearance, notifications, credentials, account, two-factor authentication, data (run history retention, configuration backup) and version information
 
-1. Click the **Columns** button in the job list header
-2. Check or uncheck columns to show/hide them (Name and Actions are always visible)
-3. Use the up/down arrows to reorder optional columns
-4. Drag column borders in the table to resize them
-5. Preferences are saved automatically in your browser
+Unsaved changes to a job are kept until you save or discard them; leaving the page asks first.
 
 ### Backing Up and Restoring the Configuration
 
 Move your setup to another server, or keep a safe copy of it:
 
-1. Click the **gear icon** in the navbar and choose **Backup & Restore**
+1. Open **Settings → Data**
 2. **Export**: set an encryption password (min. 8 characters) and download the `.dmbackup` file
 3. **Import**: select a `.dmbackup` file, enter its password, choose **Merge** (keep existing items, add new ones) or **Replace All**, and review the preview before applying
 
@@ -540,8 +542,8 @@ openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 -in backup.dmb
 
 ### Appearance and Language
 
-- Click the **theme icon** (next to the gear) in the navbar to switch between light and dark mode, pick a base tone (Paper, Cloud, Slate), and an accent color
-- Change the UI language (English, German) in **Settings → General**
+- Open **Settings → Appearance** to switch between light and dark mode, pick a base tone (Paper, Cloud, Slate) and an accent color, and change the UI language (English, German)
+- The menu next to your user name at the bottom of the sidebar switches between light and dark mode in one click
 
 Both are stored per browser.
 
@@ -631,7 +633,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | `/api/jobs/:id/runs` | GET | List job runs |
 | `/api/runs/:id` | GET | Get run details |
 | `/api/runs/:id` | DELETE | Delete run |
-| `/api/runs/:id/logs` | GET | Get run logs |
+| `/api/runs/:id/logs` | GET | Get run logs (`limit`, `offset`, `level` as a comma list, `q` to search) |
 | `/api/ws/logs/:runId` | WS | Stream live logs |
 | `/api/ws/status` | WS | Global status updates |
 

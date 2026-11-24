@@ -323,7 +323,8 @@ export interface JobRun {
   bytes_transferred: number | null;
   total_size: number | null;
   error_count: number;
-  summary: Record<string, unknown> | null;
+  /** Why the run ended as it did (failure reason, cancel note) */
+  summary: string | null;
 }
 
 export interface LogEntry {
@@ -410,8 +411,9 @@ export function createDefaultDestination(type: DestinationType): DestinationConf
         mount_point: '/mnt/backup',
         backup_subdir: 'backups',
         usb_uuid: null,
-        auto_mount: true,
-        auto_unmount: true,
+        // Mounting only applies once a USB drive is chosen
+        auto_mount: false,
+        auto_unmount: false,
       };
     case 'google_drive':
       return {

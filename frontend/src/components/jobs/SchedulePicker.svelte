@@ -6,9 +6,12 @@
   import { describeCron } from '$lib/utils/cron';
   import { serverTimezone, differingTimezone, formatScheduleTime } from '$lib/stores/serverTimezone';
   import * as m from '$lib/paraglide/messages.js';
+  import { formatCron } from '$lib/i18n/schedule';
+  import Toggle from '../ui/Toggle.svelte';
+  import Icon from '../ui/Icon.svelte';
 
   // Schedule changes are a draft: they are applied when the job is saved
-  // (see JobDetail), so cancelling the form also discards them.
+  // (see JobDraft), so discarding the form also discards them.
   let {
     schedules = $bindable<Schedule[]>([]),
     pendingSchedules = $bindable<string[]>([]),
@@ -80,7 +83,12 @@
   async function addSchedule() {
     saving = true;
     try {
-      const cron = buildCronExpression();
+      const cron = buildCronExpression().trim().replace(/\s+/g, ' ');
+      const existing = [...schedules.map((s) => s.cron_expression), ...pendingSchedules].map((c) => c.trim().replace(/\s+/g, ' '));
+      if (existing.includes(cron)) {
+        showToast({ message: m.schedule_duplicate({ when: formatCron(cron) }), variant: 'error' });
+        return;
+      }
       // The other types are built from valid parts; a typed expression is
       // checked by the server's parser before it joins the draft
       if (scheduleType === 'custom') {
@@ -122,24 +130,6 @@
     return formatCron(schedule.cron_expression);
   }
 
-  function formatCron(cron: string): string {
-    const d = describeCron(cron);
-    switch (d.kind) {
-      case 'every_minutes':
-        return m.schedule_every_minutes({ count: d.count });
-      case 'every_hours':
-        return m.schedule_every_hours({ count: d.count });
-      case 'daily':
-        return m.schedule_daily_at({ time: d.time });
-      case 'days':
-        return m.schedule_days_at({ days: d.days.map(getDayName).join(', '), time: d.time });
-      case 'monthly':
-        return m.schedule_monthly_on({ day: d.day, time: d.time });
-      default:
-        return cron;
-    }
-  }
-
   function formatNextRun(date: string | null): string {
     if (!date) return m.schedule_not_scheduled();
     // In the server's zone when it differs, so it matches "Daily at 02:00"
@@ -153,88 +143,59 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-      {m.schedule_title()}
-      <HelpTooltip text={m.schedule_help()} />
-    </h2>
-    {#if !showAdd}
-      <button type="button" onclick={() => (showAdd = true)} class="btn btn-secondary text-sm">
-        {m.schedule_add()}
-      </button>
-    {/if}
-  </div>
-
-  {#if schedules.length === 0 && pendingSchedules.length === 0 && !showAdd}
-    <p class="text-gray-500 dark:text-gray-400 text-sm">{m.schedule_no_schedules()}</p>
-  {/if}
-
   {#if otherZone}
     <p class="text-sm text-gray-500 dark:text-gray-400">{m.schedule_timezone_hint({ tz: otherZone })}</p>
   {/if}
 
-  {#if dirty}
-    <p class="text-sm text-amber-600 dark:text-amber-400">{m.schedule_changes_unsaved()}</p>
+  {#if schedules.length === 0 && pendingSchedules.length === 0 && !showAdd}
+    <p class="text-sm text-gray-500 dark:text-gray-400">{m.schedule_no_schedules()}</p>
   {/if}
 
-  <!-- Pending Schedules (for new jobs) -->
-  {#each pendingSchedules as cron, index (index)}
-    <div class="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-      <div class="flex items-center gap-3">
-        <div class="w-5 h-5 flex items-center justify-center">
-          <svg class="w-4 h-4 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <div>
-          <div class="font-medium text-gray-900 dark:text-white">{formatCron(cron)}</div>
-          <div class="text-sm text-amber-600 dark:text-amber-400">{m.schedule_pending()}</div>
-        </div>
-      </div>
-      <button
-        type="button"
-        onclick={() => removePendingSchedule(index)}
-        class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-        aria-label={m.common_delete()}
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-      </button>
-    </div>
-  {/each}
+  {#if schedules.length > 0 || pendingSchedules.length > 0}
+    <ul class="rows rounded-lg border border-gray-200 dark:border-gray-700">
+      {#each schedules as schedule (schedule.id)}
+        <li class="flex items-center gap-3 px-4 py-3">
+          <div class="flex-1 min-w-0">
+            <Toggle
+              size="sm"
+              label={formatSchedule(schedule)}
+              description={schedule.enabled ? m.schedule_next({ time: formatNextRun(schedule.next_run_at) }) : m.jobview_paused()}
+              checked={schedule.enabled}
+              onchange={() => toggleSchedule(schedule)}
+            />
+          </div>
+          <button type="button" onclick={() => deleteSchedule(schedule.id)} class="btn btn-ghost btn-icon btn-sm shrink-0" aria-label={m.schedule_remove()} title={m.schedule_remove()}>
+            <Icon name="trash" class="w-4 h-4" />
+          </button>
+        </li>
+      {/each}
+      {#each pendingSchedules as cron, index (index)}
+        <li class="flex items-center gap-3 px-4 py-3">
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{formatCron(cron)}</p>
+            <p class="text-xs text-primary-700 dark:text-primary-400 mt-0.5">{m.schedule_pending()}</p>
+          </div>
+          <button type="button" onclick={() => removePendingSchedule(index)} class="btn btn-ghost btn-icon btn-sm shrink-0" aria-label={m.schedule_remove()} title={m.schedule_remove()}>
+            <Icon name="trash" class="w-4 h-4" />
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
-  <!-- Existing Schedules -->
-  {#each schedules as schedule (schedule.id)}
-    <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-      <div class="flex items-center gap-3">
-        <input
-          type="checkbox"
-          checked={schedule.enabled}
-          onchange={() => toggleSchedule(schedule)}
-          class="rounded text-primary-600"
-        />
-        <div>
-          <div class="font-medium text-gray-900 dark:text-white">{formatSchedule(schedule)}</div>
-          <div class="text-sm text-gray-500 dark:text-gray-400">{m.schedule_next({ time: formatNextRun(schedule.next_run_at) })}</div>
-        </div>
-      </div>
-      <button
-        type="button"
-        onclick={() => deleteSchedule(schedule.id)}
-        class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-        aria-label={m.common_delete()}
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-      </button>
-    </div>
-  {/each}
+  {#if dirty}
+    <p class="text-sm text-amber-700 dark:text-amber-400">{m.schedule_changes_unsaved()}</p>
+  {/if}
+
+  {#if !showAdd}
+    <button type="button" onclick={() => (showAdd = true)} class="btn btn-secondary">
+      <Icon name="plus" class="w-4 h-4" />{m.schedule_add()}
+    </button>
+  {/if}
 
   <!-- Add Schedule Form -->
   {#if showAdd}
-    <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
+    <div class="rounded-lg bg-gray-100/70 dark:bg-gray-900/50 p-4 space-y-4">
       <div>
         <label for="scheduleType" class="label">{m.schedule_type()}</label>
         <select id="scheduleType" bind:value={scheduleType} class="input">
@@ -341,7 +302,7 @@
 
       <!-- Cron Preview -->
       {#if scheduleType !== 'custom'}
-        <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+        <div>
           <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">{m.schedule_cron()}</div>
           <code class="text-sm text-gray-800 dark:text-gray-200 font-mono">{cronPreview}</code>
         </div>

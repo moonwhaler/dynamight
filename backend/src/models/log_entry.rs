@@ -141,7 +141,8 @@ pub struct JobRun {
     pub bytes_transferred: Option<i64>,
     pub total_size: Option<i64>,
     pub error_count: i32,
-    pub summary: Option<serde_json::Value>,
+    /// Why a run ended the way it did (failure reason, cancel note), as text
+    pub summary: Option<String>,
 }
 
 impl From<JobRunRow> for JobRun {
@@ -158,10 +159,7 @@ impl From<JobRunRow> for JobRun {
             bytes_transferred: row.bytes_transferred,
             total_size: row.total_size,
             error_count: row.error_count,
-            summary: row
-                .summary
-                .as_ref()
-                .and_then(|s| serde_json::from_str(s).ok()),
+            summary: row.summary.filter(|s| !s.trim().is_empty()),
         }
     }
 }

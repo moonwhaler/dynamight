@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Dialog from '../ui/Dialog.svelte';
   import { api } from '../../lib/api';
   import type { DirectoryEntry } from '../../lib/types';
   import * as m from '$lib/paraglide/messages.js';
@@ -207,25 +208,14 @@
       e.preventDefault();
       createFolder();
     } else if (e.key === 'Escape') {
+      // Only leave the folder name input, not the whole dialog
       e.preventDefault();
+      e.stopPropagation();
       cancelCreatingFolder();
     }
   }
 
-  function handleBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) {
-      closeBrowser();
-    }
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && !creatingFolder) {
-      closeBrowser();
-    }
-  }
 </script>
-
-<svelte:window onkeydown={showBrowser ? handleKeydown : undefined} />
 
 <div class="flex gap-2">
   <input
@@ -238,34 +228,17 @@
 </div>
 
 <!-- File Browser Modal -->
-{#if showBrowser}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-0 sm:p-4"
-    onclick={handleBackdropClick}
-    onkeydown={(e) => e.key === 'Escape' && closeBrowser()}
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-  >
-    <div class="bg-white dark:bg-gray-800 sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl h-full sm:h-[80vh] sm:max-h-[700px] flex flex-col overflow-hidden">
-      <!-- Header -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
-        <div class="min-w-0 flex-1">
-          <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directory()}</h3>
-          <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
-        </div>
-        <button type="button"
-          onclick={closeBrowser}
-          class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
-          aria-label={m.common_close()}
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
+<Dialog
+  bind:open={() => showBrowser, (v) => { if (!v) closeBrowser(); }}
+  title={m.path_selector_select_directory()}
+  size="lg"
+  canClose={() => !creatingFolder}
+  closeOnBackdrop={false}
+  bodyClass="p-0 flex flex-col h-[70dvh] sm:h-[34rem]"
+>
+  {#snippet header()}
+    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath}>{currentPath}</span>
+  {/snippet}
       <!-- Error Message -->
       {#if browseError}
         <div class="mx-2 sm:mx-4 mt-2 sm:mt-3 px-3 sm:px-4 py-2 sm:py-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs sm:text-sm rounded-xl flex-shrink-0">
@@ -378,15 +351,8 @@
         {/if}
       </div>
 
-      <!-- Footer -->
-      <div class="px-3 sm:px-5 py-3 sm:py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex flex-col xs:flex-row items-stretch xs:items-center justify-between gap-2 sm:gap-4 flex-shrink-0">
-        <p class="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 text-center xs:text-left">
-          {m.path_selector_tip()}
-        </p>
-        <button type="button" onclick={closeBrowser} class="btn btn-secondary text-sm py-2 px-3 sm:px-4">
-          {m.common_cancel()}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+  {#snippet footer()}
+    <p class="text-xs text-gray-500 dark:text-gray-400 self-center text-center sm:text-left sm:mr-auto">{m.path_selector_tip()}</p>
+    <button type="button" onclick={closeBrowser} class="btn btn-secondary">{m.common_cancel()}</button>
+  {/snippet}
+</Dialog>

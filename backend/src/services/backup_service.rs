@@ -30,6 +30,8 @@ pub enum StartRunError {
 
 /// Summary of runs cancelled because the server stopped.
 pub const SHUTDOWN_SUMMARY: &str = "Cancelled: server shutting down";
+/// Longest reason kept in a failed run's summary
+const MAX_SUMMARY_CHARS: usize = 500;
 
 #[derive(Debug, Default)]
 pub struct JobResult {
@@ -139,15 +141,7 @@ impl BackupService {
 
         // The log is complete here (finalize_run flushed it)
         let last_error = if kind == EventKind::Failed {
-            sqlx::query_as::<_, (String,)>(
-                "SELECT message FROM log_entries WHERE job_run_id = ? AND level = 'error' ORDER BY id DESC LIMIT 1",
-            )
-            .bind(run_id)
-            .fetch_optional(&self.logs_db)
-            .await
-            .ok()
-            .flatten()
-            .map(|(m,)| m)
+            self.last_error_line(run_id).await
         } else {
             None
         };
@@ -917,6 +911,19 @@ impl BackupService {
         self.log_writer.flush().await;
     }
 
+    /// The last error line of a run's log (call after flushing the log)
+    async fn last_error_line(&self, run_id: i64) -> Option<String> {
+        sqlx::query_as::<_, (String,)>(
+            "SELECT message FROM log_entries WHERE job_run_id = ? AND level = 'error' ORDER BY id DESC LIMIT 1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.logs_db)
+        .await
+        .ok()
+        .flatten()
+        .map(|(m,)| m)
+    }
+
     /// Finalise a completed job run: write status/stats to the DB, update storage info,
     /// and clean up old runs. Preserves the `cancelled` status if already set.
     ///
@@ -981,6 +988,25 @@ impl BackupService {
             .bind(run_id)
             .execute(&self.db)
             .await;
+
+            // A failed run keeps its reason, so lists can show it without the log
+            if status == JobRunStatus::Failed {
+                self.flush_logs().await;
+                let reason = match self.last_error_line(run_id).await {
+                    Some(line) => Some(line),
+                    None => result.as_ref().err().map(|e| e.to_string()),
+                };
+                if let Some(reason) = reason {
+                    let reason: String = reason.chars().take(MAX_SUMMARY_CHARS).collect();
+                    let _ = sqlx::query(
+                        "UPDATE job_runs SET summary = ? WHERE id = ? AND (summary IS NULL OR summary = '')",
+                    )
+                    .bind(reason)
+                    .bind(run_id)
+                    .execute(&self.db)
+                    .await;
+                }
+            }
 
             if status == JobRunStatus::Completed && !job.get_sync_options().dry_run {
                 let _ = sqlx::query("UPDATE jobs SET last_success_at = ? WHERE id = ?")
@@ -1430,6 +1456,37 @@ mod notification_flow_tests {
         // "Every successful run" is off: nothing more
         finish(&db, &service, &job, 0).await;
         assert_eq!(next_event(&mut rx).await, None);
+    }
+
+    #[tokio::test]
+    async fn failed_run_keeps_its_last_error_as_summary() {
+        let (db, service, _rx, job) = setup(false).await;
+        let run_id = sqlx::query("INSERT INTO job_runs (job_id, status, started_at) VALUES (?, 'running', ?)")
+            .bind(job.id)
+            .bind(Utc::now())
+            .execute(&db)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+        service.log(run_id, LogLevel::Error, "first problem", "rsync").await;
+        service.log(run_id, LogLevel::Error, "rsync: connection refused", "rsync").await;
+        let result = JobResult { error_count: 2, exit_code: 1, ..Default::default() };
+        service.finalize_run(run_id, job.id, &job, Ok(result)).await;
+
+        let (summary,): (Option<String>,) = sqlx::query_as("SELECT summary FROM job_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(summary.as_deref(), Some("rsync: connection refused"));
+
+        // A successful run gets none
+        finish(&db, &service, &job, 0).await;
+        let (summary,): (Option<String>,) = sqlx::query_as("SELECT summary FROM job_runs ORDER BY id DESC LIMIT 1")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(summary, None);
     }
 
     #[tokio::test]
