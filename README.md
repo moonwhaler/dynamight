@@ -117,6 +117,9 @@ cp dynamight.toml.example dynamight.toml
 NEW_SECRET=$(openssl rand -base64 32)
 sed -i "s|CHANGE-ME-generate-with-openssl-rand-base64-32|${NEW_SECRET}|" dynamight.toml
 
+# Without HTTPS in front (plain http://server:8080), also set
+# secure_cookies = false in dynamight.toml, or the browser drops the login cookie
+
 # Start the container
 docker compose up -d
 ```
@@ -138,7 +141,12 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./dynamight.toml:/app/config/dynamight.toml:ro
+      - type: bind                      # fails clearly if dynamight.toml is missing
+        source: ./dynamight.toml
+        target: /app/config/dynamight.toml
+        read_only: true
+        bind:
+          create_host_path: false
       - dynamight-data:/app/data
       - dynamight-logs:/app/logs
       - /mnt:/mnt:rshared
@@ -146,15 +154,20 @@ services:
       # - /home:/source/home:ro
       # - /var/www:/source/www:ro
     environment:
-      - TZ=${TZ:-UTC}
       - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
+      # - TZ=Europe/Berlin              # overrides server.timezone from dynamight.toml
     security_opt:
       - no-new-privileges:true
+      # - apparmor=unconfined           # needed where AppArmor blocks mount (Ubuntu, Debian)
 
 volumes:
   dynamight-data:
   dynamight-logs:
 ```
+
+### Podman
+
+The image and `docker-compose.yml` also work with Podman (`podman compose up -d`). Mounting USB drives needs real root, so run the container rootful (`sudo podman compose up -d`); rootless Podman cannot mount block devices. Backups to remote destinations and already-mounted paths work rootless too.
 
 ## Configuration
 
@@ -286,12 +299,14 @@ The remote providers (S3, SFTP, WebDAV) also have live tests that run against re
 ./scripts/build.sh
 ```
 
-Creates `dist/dynamight-<timestamp>.tar.gz` containing:
-- Compiled binary (release mode)
+Creates `dist/dynamight-<version>.tar.gz` (plus a `.sha256` checksum) containing:
+- Compiled binary (release mode) and a `VERSION` file
 - Frontend static files
 - Migrations
-- Configuration templates
-- Installation scripts
+- Configuration template and systemd unit
+- Install and update scripts
+
+The version comes from `backend/Cargo.toml`; bump it with `./scripts/version.sh patch|minor|major`, which also updates `Cargo.lock` and the frontend's `package.json`/`package-lock.json`. Builds use `npm ci` and `cargo build --locked`, so the lockfiles must be current.
 
 ### Building Docker Image
 
@@ -302,9 +317,11 @@ docker build -t dynamight .
 # Or use the build script (builds native package + Docker image)
 ./scripts/build.sh
 
-# Build and push to registry
+# Build and push to registry (:latest and :<version>)
 ./scripts/build.sh --docker-only --push
 ```
+
+The script uses Docker when its daemon is running and Podman otherwise (force one with `CONTAINER_ENGINE=podman`). With Podman it builds in Docker image format, since the OCI format drops the `HEALTHCHECK`. It checks that the image starts and reports the expected version. It refuses to push an image built from uncommitted changes unless `ALLOW_DIRTY=1` is set.
 
 ## Server Deployment
 
@@ -320,11 +337,15 @@ sudo ./scripts/install.sh
 ```
 
 This will:
-- Create `dynamight` system user
+- Check that the binary runs on this system and that `rsync` and `mount` are present (and warn about missing optional tools such as `mkfs.exfat` or `ntfs-3g`)
 - Install binary to `/opt/dynamight`
-- Create config at `/etc/dynamight/dynamight.toml` (with auto-generated JWT secret)
+- Create config at `/etc/dynamight/dynamight.toml` (with auto-generated JWT secret and the system's timezone)
 - Set up data directory at `/var/lib/dynamight`
-- Install and configure systemd service
+- Install the systemd service (it runs as root, which mounting drives requires)
+
+If Dynamight is already installed, the script stops and points to `update.sh`.
+
+If you open the web UI over plain HTTP from another machine, set `secure_cookies = false` in the config, or the browser drops the login cookie.
 
 Then configure and start:
 
@@ -341,6 +362,28 @@ sudo systemctl status dynamight
 
 # View logs
 journalctl -u dynamight -f
+```
+
+### Updating
+
+```bash
+tar -xzf dynamight-<new-version>.tar.gz
+cd dynamight-<new-version>
+sudo ./scripts/update.sh
+```
+
+The update script:
+- Checks that the new binary runs on this system before touching anything
+- Warns if backup runs are still in progress (when `sqlite3` is installed)
+- Stops the service, then backs up the program files and both databases to `/opt/dynamight-backups/<timestamp>` (the last 3 are kept)
+- Installs the new files and waits until `/api/system/health` reports the new version (needs `curl` or `wget`; otherwise it only checks that the service stays up)
+- Restores the previous version and its databases automatically if the new one does not come up, or if anything fails or is interrupted along the way
+
+```bash
+sudo ./scripts/update.sh list                  # Show backups
+sudo ./scripts/update.sh rollback              # Back to the previous version (keeps current data)
+sudo ./scripts/update.sh rollback --with-data  # ...and reset the databases to that backup
+sudo ./scripts/update.sh --force               # Do not ask (e.g. reinstalling the same version)
 ```
 
 ### Uninstalling

@@ -734,7 +734,7 @@ Starts:
 ./scripts/build.sh
 ```
 
-Creates `dist/dynamight-<timestamp>.tar.gz` containing:
+Creates `dist/dynamight-<version>.tar.gz` containing:
 - Compiled release binary
 - Frontend static files
 - Database migrations

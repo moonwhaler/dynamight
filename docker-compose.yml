@@ -17,8 +17,14 @@ services:
       - "8080:8080"
 
     volumes:
-      # Configuration file (create from dynamight.toml.example)
-      - ./dynamight.toml:/app/config/dynamight.toml:ro
+      # Configuration file (create from dynamight.toml.example first; without
+      # create_host_path: false, Docker would create an empty directory instead)
+      - type: bind
+        source: ./dynamight.toml
+        target: /app/config/dynamight.toml
+        read_only: true
+        bind:
+          create_host_path: false
 
       # Persistent data (database)
       - dynamight-data:/app/data
@@ -40,14 +46,19 @@ services:
     environment:
       # These env vars override values in dynamight.toml
       # Useful for secrets or per-deployment overrides
-      - TZ=${TZ:-UTC}
       - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
+      # Schedules use server.timezone from dynamight.toml. TZ overrides it,
+      # so only set it to change the timezone without editing the file:
+      # - TZ=Europe/Berlin
       # Uncomment to override jwt_secret from config file:
       # - JWT_SECRET=${JWT_SECRET}
 
     # Security options
     security_opt:
       - no-new-privileges:true
+      # Hosts with AppArmor (Ubuntu, Debian) block mount in containers by
+      # default. If mounting USB drives fails with "permission denied", add:
+      # - apparmor=unconfined
 
     # Resource limits (adjust as needed)
     deploy:

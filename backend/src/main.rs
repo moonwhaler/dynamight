@@ -177,8 +177,46 @@ fn build_cors_layer(config: &Config) -> CorsLayer {
     }
 }
 
+/// Handle command-line arguments before anything else starts.
+///
+/// The server takes no arguments, so anything given is answered here and the
+/// process exits. Without this, a call like `dynamight --version` from a
+/// script would start a second server against the configured database.
+fn handle_args() {
+    let Some(arg) = std::env::args().nth(1) else {
+        return;
+    };
+    match arg.as_str() {
+        "-V" | "--version" => {
+            println!(
+                "dynamight {} ({}, {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("BUILD_GIT_HASH"),
+                env!("BUILD_DATE")
+            );
+            std::process::exit(0);
+        }
+        "-h" | "--help" => {
+            println!(
+                "Dynamight backup server\n\n\
+                 Usage: dynamight [--version | --help]\n\n\
+                 Without arguments the server starts. Configuration is read from\n\
+                 $DYNAMIGHT_CONFIG, ./dynamight.toml or /etc/dynamight/dynamight.toml;\n\
+                 environment variables override the file (see dynamight.toml.example)."
+            );
+            std::process::exit(0);
+        }
+        other => {
+            eprintln!("dynamight: unknown argument '{other}' (try --help)");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    handle_args();
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(

@@ -4,14 +4,18 @@
 # Creates a production-ready release package
 #
 
-set -e
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/dist"
 
-# Read version from Cargo.toml (single source of truth)
-APP_VERSION="$(grep '^version' "$PROJECT_DIR/backend/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+# Read version from Cargo.toml (single source of truth): the [package] version
+APP_VERSION="$(awk '/^\[/ { in_pkg = ($0 == "[package]") } in_pkg && /^version[[:space:]]*=/ { gsub(/.*=[[:space:]]*"|".*/, ""); print; exit }' "$PROJECT_DIR/backend/Cargo.toml")"
+if [[ -z "$APP_VERSION" ]]; then
+    echo "[ERROR] Could not read the version from backend/Cargo.toml" >&2
+    exit 1
+fi
 VERSION="${VERSION:-${APP_VERSION}}"
 PACKAGE_NAME="dynamight-${VERSION}"
 
@@ -20,6 +24,7 @@ DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-moonwhaler/dynamight}"
 DOCKER_TAG="${DOCKER_TAG:-latest}"
 DOCKER_FULL_IMAGE="${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG}"
+DOCKER_VERSIONED_IMAGE="${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${APP_VERSION}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -31,7 +36,19 @@ NC='\033[0m'
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+trap 'log_error "Build failed (line $LINENO: $BASH_COMMAND)"' ERR
+
+# Short commit hash, marked "-dirty" when the working tree has uncommitted changes
+GIT_HASH="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+if [[ "$GIT_HASH" != "unknown" ]] && [[ -n "$(git -C "$PROJECT_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+    GIT_HASH="${GIT_HASH}-dirty"
+fi
+BUILD_DATE="$(date +%Y-%m-%d)"
+# build.rs picks these up, so native and Docker builds report the same build
+export BUILD_GIT_HASH="$GIT_HASH"
+export BUILD_DATE
 
 check_dependencies() {
     local do_native="$1"
@@ -44,8 +61,8 @@ check_dependencies() {
         command -v npm &>/dev/null || missing+=("npm")
     fi
 
-    if [[ "$do_docker" == true ]]; then
-        command -v docker &>/dev/null || missing+=("docker")
+    if [[ "$do_docker" == true ]] && ! select_engine; then
+        missing+=("docker or podman")
     fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -55,11 +72,43 @@ check_dependencies() {
         done
         exit 1
     fi
+
+    if [[ "$do_docker" == true ]]; then
+        if ! "$ENGINE" info &>/dev/null; then
+            log_error "'$ENGINE info' fails. Is the Docker daemon running, and may this user use it?"
+            exit 1
+        fi
+        log_info "Container engine: $ENGINE"
+    fi
+}
+
+# Container engine: $CONTAINER_ENGINE if set, else docker when its daemon
+# answers, else podman
+ENGINE=""
+ENGINE_BUILD_ARGS=()
+select_engine() {
+    if [[ -n "${CONTAINER_ENGINE:-}" ]]; then
+        ENGINE="$CONTAINER_ENGINE"
+    elif command -v docker &>/dev/null && docker info &>/dev/null; then
+        ENGINE=docker
+    elif command -v podman &>/dev/null; then
+        ENGINE=podman
+    elif command -v docker &>/dev/null; then
+        ENGINE=docker
+    else
+        return 1
+    fi
+    command -v "$ENGINE" &>/dev/null || return 1
+    # Podman builds OCI images by default, and the OCI format has no
+    # HEALTHCHECK; the docker format keeps it
+    if [[ "$("$ENGINE" --version 2>/dev/null)" == podman* ]]; then
+        ENGINE_BUILD_ARGS=(--format docker)
+    fi
 }
 
 clean() {
     log_info "Cleaning previous build..."
-    rm -rf "$BUILD_DIR"
+    rm -rf "${BUILD_DIR:?}/$PACKAGE_NAME" "$BUILD_DIR/${PACKAGE_NAME}.tar.gz"
     mkdir -p "$BUILD_DIR/$PACKAGE_NAME"
 }
 
@@ -67,13 +116,8 @@ build_frontend() {
     log_info "Building frontend..."
     (
         cd "$PROJECT_DIR/frontend"
-
-        # Install dependencies if needed
-        if [[ ! -d "node_modules" ]]; then
-            npm install
-        fi
-
-        # Build for production
+        # Clean install from package-lock.json, so the build never uses stale modules
+        npm ci --no-audit --no-fund
         npm run build
     )
     log_success "Frontend built"
@@ -82,8 +126,8 @@ build_frontend() {
 build_backend() {
     log_info "Building backend (release mode)..."
     (
-        cd "$PROJECT_DIR/backend"
-        cargo build --release
+        cd "$PROJECT_DIR"
+        cargo build --release --locked --package dynamight
     )
     log_success "Backend built"
 }
@@ -93,28 +137,19 @@ create_package() {
 
     log_info "Creating package..."
 
-    # Copy binary
+    # Binary, and its version line for install.sh/update.sh (they never run an
+    # installed binary to ask for its version)
     cp "$PROJECT_DIR/target/release/dynamight" "$pkg_dir/"
+    "$pkg_dir/dynamight" --version | sed 's/^dynamight //' > "$pkg_dir/VERSION"
 
-    # Copy frontend dist
     cp -r "$PROJECT_DIR/frontend/dist" "$pkg_dir/static"
-
-    # Copy migrations
     cp -r "$PROJECT_DIR/migrations" "$pkg_dir/"
-
-    # Create default directories
-    mkdir -p "$pkg_dir/data"
-
-    # Copy example config from project root
     cp "$PROJECT_DIR/dynamight.toml.example" "$pkg_dir/dynamight.toml.example"
+    cp "$PROJECT_DIR/LICENSE" "$pkg_dir/"
 
-    # Copy scripts
     mkdir -p "$pkg_dir/scripts"
-    cp "$SCRIPT_DIR/install.sh" "$pkg_dir/scripts/" 2>/dev/null || true
-    cp "$SCRIPT_DIR/update.sh" "$pkg_dir/scripts/" 2>/dev/null || true
-
-    # Copy systemd service file
-    cp "$SCRIPT_DIR/dynamight.service" "$pkg_dir/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/update.sh" "$pkg_dir/scripts/"
+    cp "$SCRIPT_DIR/dynamight.service" "$pkg_dir/"
 
     # Create run script
     cat > "$pkg_dir/run.sh" << 'EOF'
@@ -139,7 +174,7 @@ fi
 
 # Optional environment variable overrides (these take precedence over config file)
 export RUST_LOG="${RUST_LOG:-info,dynamight=debug}"
-export TZ="${TZ:-UTC}"
+export DYNAMIGHT_CONFIG="$SCRIPT_DIR/dynamight.toml"
 
 echo "Starting Dynamight..."
 echo "Config: dynamight.toml"
@@ -155,13 +190,15 @@ Dynamight - Backup Management System
 Quick Start:
 1. Copy dynamight.toml.example to dynamight.toml
 2. Edit dynamight.toml and set jwt_secret (generate with: openssl rand -base64 32)
+   Without HTTPS, also set secure_cookies = false, or the browser drops the
+   login cookie.
 3. Run: ./run.sh
 4. Open http://localhost:8080 in your browser
 5. Complete the initial setup to create your admin account
 
 System Service Installation:
 1. Run: sudo ./scripts/install.sh
-2. Edit: /etc/dynamight/dynamight.toml (set jwt_secret)
+2. Review: /etc/dynamight/dynamight.toml (jwt_secret is generated for you)
 3. Start: sudo systemctl enable --now dynamight
 4. Open http://your-server:8080 in your browser
 5. Complete the initial setup to create your admin account
@@ -169,8 +206,8 @@ System Service Installation:
 Updating an Existing Installation:
 1. Extract the new release
 2. Run: sudo ./scripts/update.sh
-   - Creates automatic backup before updating
-   - Rolls back automatically if service fails to start
+   - Stops the service and backs up program files and databases
+   - Rolls back automatically if the new version does not come up healthy
 3. To rollback manually: sudo ./scripts/update.sh rollback
 4. To list backups: ./scripts/update.sh list
 
@@ -185,7 +222,7 @@ Configuration:
   Environment variables can override config file settings.
   Useful for Docker or CI/CD deployments.
 
-For more information, visit the project repository.
+For more information, visit https://github.com/moonwhaler/dynamight
 EOF
 
     log_success "Package created at $pkg_dir"
@@ -196,76 +233,97 @@ create_archive() {
     (
         cd "$BUILD_DIR"
         tar -czf "${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
+        sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
     )
-    log_success "Archive created: $BUILD_DIR/${PACKAGE_NAME}.tar.gz"
+    log_success "Archive created: $BUILD_DIR/${PACKAGE_NAME}.tar.gz (+ .sha256)"
 }
 
 build_docker() {
-    local git_hash
-    git_hash=$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    local build_date
-    build_date=$(date +%Y-%m-%d)
-
-    log_info "Building Docker image: ${DOCKER_FULL_IMAGE} (${APP_VERSION}+${git_hash})..."
-    docker build \
-        --build-arg BUILD_GIT_HASH="${git_hash}" \
-        --build-arg BUILD_DATE="${build_date}" \
+    log_info "Building Docker image: ${DOCKER_FULL_IMAGE} (${APP_VERSION}+${GIT_HASH})..."
+    "$ENGINE" build "${ENGINE_BUILD_ARGS[@]}" \
+        --build-arg BUILD_GIT_HASH="${GIT_HASH}" \
+        --build-arg BUILD_DATE="${BUILD_DATE}" \
+        --build-arg APP_VERSION="${APP_VERSION}" \
         -t "${DOCKER_FULL_IMAGE}" "$PROJECT_DIR"
 
     # Always tag with the app version from Cargo.toml
-    local versioned="${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${APP_VERSION}"
-    docker tag "${DOCKER_FULL_IMAGE}" "${versioned}"
-    log_success "Tagged: ${versioned}"
+    if [[ "$DOCKER_VERSIONED_IMAGE" != "$DOCKER_FULL_IMAGE" ]]; then
+        "$ENGINE" tag "${DOCKER_FULL_IMAGE}" "${DOCKER_VERSIONED_IMAGE}"
+        log_success "Tagged: ${DOCKER_VERSIONED_IMAGE}"
+    fi
 
-    log_success "Docker image built: ${DOCKER_FULL_IMAGE}"
+    # The image must start and report the expected version
+    local reported
+    reported="$("$ENGINE" run --rm "${DOCKER_FULL_IMAGE}" --version)"
+    if [[ "$reported" != "dynamight ${APP_VERSION} "* ]]; then
+        log_error "Image reports '${reported}', expected version ${APP_VERSION}"
+        exit 1
+    fi
+    log_success "Docker image built: ${DOCKER_FULL_IMAGE} (${reported})"
 }
 
 push_docker() {
-    log_info "Pushing Docker image: ${DOCKER_FULL_IMAGE}..."
-
-    if ! docker push "${DOCKER_FULL_IMAGE}"; then
-        log_error "Push failed. Are you logged in? Run: docker login ${DOCKER_REGISTRY}"
-        return 1
+    if [[ "$GIT_HASH" == *-dirty ]] && [[ "${ALLOW_DIRTY:-}" != 1 ]]; then
+        log_error "Refusing to push an image built from uncommitted changes."
+        log_error "Commit first, or set ALLOW_DIRTY=1 to push anyway."
+        exit 1
     fi
 
-    # Push the versioned tag too
-    local versioned="${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${APP_VERSION}"
-    docker push "${versioned}"
-    log_success "Pushed: ${versioned}"
+    log_info "Pushing Docker image: ${DOCKER_FULL_IMAGE}..."
+    if ! "$ENGINE" push "${DOCKER_FULL_IMAGE}"; then
+        log_error "Push failed. Are you logged in? Run: $ENGINE login ${DOCKER_REGISTRY}"
+        exit 1
+    fi
+    log_success "Pushed: ${DOCKER_FULL_IMAGE}"
 
-    log_success "Docker image pushed: ${DOCKER_FULL_IMAGE}"
+    if [[ "$DOCKER_VERSIONED_IMAGE" != "$DOCKER_FULL_IMAGE" ]]; then
+        "$ENGINE" push "${DOCKER_VERSIONED_IMAGE}"
+        log_success "Pushed: ${DOCKER_VERSIONED_IMAGE}"
+    fi
+}
+
+docker_size() {
+    "$ENGINE" image inspect "${DOCKER_FULL_IMAGE}" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1fMB", $1/1024/1024}'
 }
 
 show_summary() {
-    local size
-    size=$(du -sh "$BUILD_DIR/${PACKAGE_NAME}.tar.gz" | cut -f1)
-    local docker_size
-    docker_size=$(docker image inspect "${DOCKER_FULL_IMAGE}" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1fMB", $1/1024/1024}')
+    local do_native="$1"
+    local do_docker="$2"
+    local do_push="$3"
 
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║         Build Complete!              ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Package: $BUILD_DIR/${PACKAGE_NAME}.tar.gz"
-    echo "  Size:    $size"
-    echo "  Docker:  ${DOCKER_FULL_IMAGE} (${docker_size})"
+    echo "  Version: ${APP_VERSION} (${GIT_HASH}, ${BUILD_DATE})"
+    if [[ "$do_native" == true ]]; then
+        echo "  Package: $BUILD_DIR/${PACKAGE_NAME}.tar.gz ($(du -sh "$BUILD_DIR/${PACKAGE_NAME}.tar.gz" | cut -f1))"
+    fi
+    if [[ "$do_docker" == true ]]; then
+        echo "  Image:   ${DOCKER_FULL_IMAGE}, ${DOCKER_VERSIONED_IMAGE} ($(docker_size))"
+        [[ "$do_push" == true ]] && echo "           pushed to ${DOCKER_REGISTRY}"
+    fi
     echo ""
-    echo "To deploy (new installation):"
-    echo "  1. Copy ${PACKAGE_NAME}.tar.gz to your server"
-    echo "  2. Extract: tar -xzf ${PACKAGE_NAME}.tar.gz"
-    echo "  3. cd ${PACKAGE_NAME}"
-    echo "  4. Run: sudo ./scripts/install.sh"
-    echo "     or manually: ./run.sh"
-    echo ""
-    echo "To update existing installation:"
-    echo "  1. Copy and extract as above"
-    echo "  2. Run: sudo ./scripts/update.sh"
-    echo ""
-    echo "Docker usage:"
-    echo "  Run locally:  docker compose up -d"
-    echo "  Push to registry: $0 --push"
-    echo ""
+    if [[ "$do_native" == true ]]; then
+        echo "To deploy (new installation):"
+        echo "  1. Copy ${PACKAGE_NAME}.tar.gz to your server"
+        echo "  2. Extract: tar -xzf ${PACKAGE_NAME}.tar.gz"
+        echo "  3. cd ${PACKAGE_NAME}"
+        echo "  4. Run: sudo ./scripts/install.sh"
+        echo "     or manually: ./run.sh"
+        echo ""
+        echo "To update existing installation:"
+        echo "  1. Copy and extract as above"
+        echo "  2. Run: sudo ./scripts/update.sh"
+        echo ""
+    fi
+    if [[ "$do_docker" == true ]]; then
+        echo "Docker usage:"
+        echo "  Run locally:  $ENGINE compose up -d"
+        [[ "$do_push" == true ]] || echo "  Push to registry: $0 --docker-only --push"
+        echo ""
+    fi
 }
 
 usage() {
@@ -284,6 +342,8 @@ usage() {
     echo "  DOCKER_REGISTRY  Registry (default: ghcr.io)"
     echo "  DOCKER_IMAGE     Image name (default: moonwhaler/dynamight)"
     echo "  DOCKER_TAG       Base tag (default: latest)"
+    echo "  CONTAINER_ENGINE docker or podman (default: docker if its daemon runs, else podman)"
+    echo "  ALLOW_DIRTY=1    Allow --push with uncommitted changes"
 }
 
 main() {
@@ -296,10 +356,19 @@ main() {
             --push)       do_push=true; shift ;;
             --docker-only) do_native=false; shift ;;
             --no-docker)  do_docker=false; shift ;;
-            --help)       usage; exit 0 ;;
+            --help|-h)    usage; exit 0 ;;
             *)            log_error "Unknown option: $1"; usage; exit 1 ;;
         esac
     done
+
+    if [[ "$do_docker" == false ]] && [[ "$do_push" == true ]]; then
+        log_error "--push needs the Docker build; drop --no-docker"
+        exit 1
+    fi
+    if [[ "$do_docker" == false ]] && [[ "$do_native" == false ]]; then
+        log_error "--docker-only and --no-docker together leave nothing to build"
+        exit 1
+    fi
 
     echo ""
     echo -e "${BLUE}╔══════════════════════════════════════╗${NC}"
@@ -310,6 +379,9 @@ main() {
     cd "$PROJECT_DIR"
 
     check_dependencies "$do_native" "$do_docker"
+    if [[ "$GIT_HASH" == *-dirty ]]; then
+        log_warn "Working tree has uncommitted changes; the build is marked ${GIT_HASH}"
+    fi
 
     if [[ "$do_native" == true ]]; then
         clean
@@ -326,19 +398,7 @@ main() {
         fi
     fi
 
-    if [[ "$do_native" == true ]]; then
-        show_summary
-    elif [[ "$do_docker" == true ]]; then
-        local docker_size
-        docker_size=$(docker image inspect "${DOCKER_FULL_IMAGE}" --format='{{.Size}}' 2>/dev/null | awk '{printf "%.1fMB", $1/1024/1024}')
-        echo ""
-        echo -e "${GREEN}[OK]${NC} Docker image ready: ${DOCKER_FULL_IMAGE} (${docker_size})"
-        echo -e "${GREEN}[OK]${NC} Tagged: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${APP_VERSION}"
-        if [[ "$do_push" == true ]]; then
-            echo -e "${GREEN}[OK]${NC} Pushed to registry"
-        fi
-        echo ""
-    fi
+    show_summary "$do_native" "$do_docker" "$do_push"
 }
 
 main "$@"

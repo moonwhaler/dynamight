@@ -1,8 +1,12 @@
-# Build artifacts
+# Patterns match from the context root only; "**/" matches at any depth.
+
+# Build artifacts. frontend/node_modules must stay out: COPY frontend/ would
+# otherwise overwrite the modules npm ci installed for Alpine with the host's.
 target/
 dist/
-frontend/dist/
-node_modules/
+**/dist/
+**/node_modules/
+**/coverage/
 
 # Git
 .git/
@@ -11,26 +15,29 @@ node_modules/
 # Data & logs
 data/
 logs/
-*.db*
-*.db-journal
-*.db-wal
-*.log
+**/*.db*
+**/*.log
 
 # Configuration (user-specific)
 dynamight.toml
 
-# IDE & editor
+# IDE, editor and tool caches
 .idea/
 .vscode/
 .claude/
-*.swp
-*.swo
+.codegraph/
+**/*.swp
+**/*.swo
 
 # OS
-.DS_Store
-Thumbs.db
+**/.DS_Store
+**/Thumbs.db
 
-# CI & docs
+# Not needed in the image
 .github/
-*.md
-LICENSE
+docs/
+assets/
+scripts/
+**/*.md
+docker-compose.yml
+Dockerfile
