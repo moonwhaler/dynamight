@@ -529,7 +529,7 @@ DELETE /jobs/:id
 
 ### Run Job
 
-Execute a job immediately.
+Start a run now. Backups run one at a time: when another backup is running, the run waits in a queue (status `pending`) and starts when that one finishes.
 
 ```
 POST /jobs/:id/run
@@ -540,10 +540,12 @@ POST /jobs/:id/run
 **Response:**
 ```json
 {
-  "run_id": 10,
-  "message": "Job started"
+  "runId": 10,
+  "queued": false
 }
 ```
+
+`queued` is `true` when the run waits for another backup. A job that already has a run running or queued answers `409` with `{"code": "JOB_ALREADY_RUNNING"}`.
 
 ---
 
@@ -557,12 +559,18 @@ POST /jobs/:id/cancel
 
 **Authentication:** Required
 
+Stops the job's running run and a queued follow-up run, if any.
+
 **Response:**
 ```json
 {
-  "message": "Job cancelled"
+  "success": true,
+  "processKilled": true,
+  "cancelled": 1
 }
 ```
+
+`cancelled` is the number of runs stopped. Without an active run the answer is `404` with `{"code": "NO_RUNNING_JOB"}`.
 
 ---
 
@@ -740,14 +748,15 @@ GET /jobs/:id/runs
     "bytes_transferred": 52428800,
     "total_size": 1073741824,
     "error_count": 0,
-    "summary": null
+    "summary": null,
+    "log_pruned": false
   }
 ]
 ```
 
-**Status Values:** `pending`, `running`, `completed`, `failed`, `cancelled`
+**Status Values:** `pending` (queued), `running`, `completed`, `failed`, `cancelled`
 
-`schedule_id` is `null` for manual runs.
+`schedule_id` is `null` for manual runs. `summary` holds a failed run's last error line. `log_pruned` is `true` once the log retention removed the run's log lines (the run record stays).
 
 ---
 
@@ -1519,16 +1528,27 @@ GET /settings
 **Response:**
 ```json
 {
-  "max_runs_per_job": 10,
-  "theme": "dark"
+  "max_runs_per_job": 5,
+  "log_retention_days": 90,
+  "delete_verification_window_minutes": 5,
+  "search_timeout_seconds": 10,
+  "show_directory_sizes": false
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `max_runs_per_job` | Runs kept per job (older ones are deleted); `null` keeps every run |
+| `log_retention_days` | Days a run's log lines are kept; `null` keeps them forever. Each job's newest run and newest failed run always keep their log |
+| `delete_verification_window_minutes` | How long a password check allows deleting files in the file browser (1-60) |
+| `search_timeout_seconds` | Time limit of the file browser's subfolder search (3-60) |
+| `show_directory_sizes` | Whether the file browser computes folder sizes |
 
 ---
 
 ### Update Settings
 
-Update application settings.
+Update application settings. Only the fields sent are changed. For `max_runs_per_job` and `log_retention_days`, `null` means "no limit".
 
 ```
 PUT /settings
@@ -1539,15 +1559,14 @@ PUT /settings
 **Request Body:**
 ```json
 {
-  "max_runs_per_job": 20
+  "log_retention_days": 30
 }
 ```
 
 **Response:**
 ```json
 {
-  "max_runs_per_job": 20,
-  "theme": "dark"
+  "success": true
 }
 ```
 
@@ -1557,7 +1576,7 @@ PUT /settings
 
 ### Live Job Logs
 
-Stream real-time logs for a running job.
+Stream the log lines of a run while it runs.
 
 ```
 WebSocket /ws/logs/:run_id
@@ -1565,32 +1584,24 @@ WebSocket /ws/logs/:run_id
 
 **Authentication:** Session cookie (`token`), sent by the browser with the handshake
 
-**Server Messages:**
+**Server Messages:** one per log line
 ```json
 {
-  "type": "log",
   "run_id": 10,
-  "timestamp": "2026-01-05T02:00:01Z",
   "level": "info",
-  "message": "Starting sync..."
+  "message": "Syncing /data/photos -> /mnt/backup/backups/photos",
+  "source": "rsync",
+  "timestamp": "2026-01-05T02:00:01Z"
 }
 ```
 
-```json
-{
-  "type": "status",
-  "run_id": 10,
-  "status": "completed",
-  "files_transferred": 150,
-  "bytes_transferred": 52428800
-}
-```
+The line `Run finished: <status>` (source `system`) is sent once the run's final status and its whole log are stored.
 
 ---
 
 ### Global Status Updates
 
-Stream status updates for all jobs.
+Events when runs are queued, start and finish.
 
 ```
 WebSocket /ws/status
@@ -1602,31 +1613,18 @@ WebSocket /ws/status
 ```json
 {
   "type": "job_started",
-  "job_id": 1,
   "run_id": 10,
-  "job_name": "Daily Backup"
+  "job_id": 1,
+  "timestamp": "2026-01-05T02:00:00Z"
 }
 ```
 
-```json
-{
-  "type": "job_completed",
-  "job_id": 1,
-  "run_id": 10,
-  "job_name": "Daily Backup",
-  "status": "completed"
-}
-```
-
-```json
-{
-  "type": "job_progress",
-  "job_id": 1,
-  "run_id": 10,
-  "files_transferred": 50,
-  "bytes_transferred": 10485760
-}
-```
+| `type` | Sent when |
+|--------|-----------|
+| `job_queued` | A run waits for another backup to finish |
+| `job_started` | A run starts |
+| `job_completed` | A run ended; its final status and log are stored |
+| `resync` | The connection missed events; reload the job list (no other fields) |
 
 ---
 
