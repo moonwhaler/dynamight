@@ -194,41 +194,40 @@ fn validate_compress_dirs_options(
 }
 
 pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match load_job_list(&state).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list jobs: {}", e);
+            ApiError::internal_error().into_response()
+        }
+    }
+}
+
+async fn load_job_list(state: &AppState) -> Result<Vec<JobResponse>, sqlx::Error> {
     let jobs: Vec<Job> = sqlx::query_as("SELECT * FROM jobs ORDER BY name")
         .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+        .await?;
 
-    // Get last run status for each job
+    // Latest run of each job (highest ID = started last). The covering index
+    // on job_runs(job_id) answers the MAX(id) per job without a table scan.
     let last_runs: Vec<(i64, String, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
         r#"
-        SELECT job_id, status, COALESCE(completed_at, started_at) as run_at
-        FROM job_runs jr1
-        WHERE id = (
-            SELECT id FROM job_runs jr2
-            WHERE jr2.job_id = jr1.job_id
-            ORDER BY COALESCE(completed_at, started_at) DESC
-            LIMIT 1
-        )
+        SELECT r.job_id, r.status, COALESCE(r.completed_at, r.started_at) AS run_at
+        FROM job_runs r
+        JOIN (SELECT job_id, MAX(id) AS id FROM job_runs GROUP BY job_id) latest ON r.id = latest.id
         "#,
     )
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    // Convert to HashMap for O(1) lookups instead of O(n) linear scan per job
     let last_runs_map: HashMap<i64, (String, Option<chrono::DateTime<Utc>>)> = last_runs
         .into_iter()
         .map(|(job_id, status, run_at)| (job_id, (status, run_at)))
         .collect();
 
-    // Batch-fetch all schedules for returned jobs
-    let all_schedules: Vec<Schedule> = sqlx::query_as(
-        "SELECT * FROM schedules WHERE job_id IN (SELECT id FROM jobs ORDER BY name)",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let all_schedules: Vec<Schedule> = sqlx::query_as("SELECT * FROM schedules")
+        .fetch_all(&state.db)
+        .await?;
 
     let mut schedules_map: HashMap<i64, Vec<Schedule>> = all_schedules
         .into_iter()
@@ -252,22 +251,33 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         })
         .collect();
 
-    Json(response)
+    Ok(response)
 }
 
 pub async fn get_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
+    match find_job(&state, id).await {
+        Ok(job) => Json(JobResponse::from(job)).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Load a job, or the error to send instead: 404 when it does not exist,
+/// 500 when the database fails (instead of pretending the job is missing).
+async fn find_job(state: &AppState, id: i64) -> Result<Job, ApiError> {
+    match sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .unwrap_or(None);
-
-    match job {
-        Some(j) => Json(JobResponse::from(j)).into_response(),
-        None => ApiError::job_not_found().into_response(),
+    {
+        Ok(Some(job)) => Ok(job),
+        Ok(None) => Err(ApiError::job_not_found()),
+        Err(e) => {
+            tracing::error!("Failed to load job {}: {}", id, e);
+            Err(ApiError::internal_error())
+        }
     }
 }
 
@@ -628,17 +638,9 @@ pub async fn run_job(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     // Get job
-    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let job = match job {
-        Some(j) => j,
-        None => {
-            return ApiError::job_not_found().into_response();
-        }
+    let job = match find_job(&state, id).await {
+        Ok(job) => job,
+        Err(e) => return e.into_response(),
     };
 
     match state.backup_service.start_run(job, None).await {
@@ -704,17 +706,9 @@ pub async fn clone_job(
 ) -> impl IntoResponse {
     let timezone = state.config.timezone;
     // Fetch the job to clone
-    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let job = match job {
-        Some(j) => j,
-        None => {
-            return ApiError::job_not_found().into_response();
-        }
+    let job = match find_job(&state, id).await {
+        Ok(job) => job,
+        Err(e) => return e.into_response(),
     };
 
     let base_name = job.name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ')' || c == '(' || c == ' ');
@@ -853,17 +847,9 @@ pub async fn check_job_space(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     // Get job
-    let job: Option<Job> = sqlx::query_as("SELECT * FROM jobs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    let job = match job {
-        Some(j) => j,
-        None => {
-            return ApiError::job_not_found().into_response();
-        }
+    let job = match find_job(&state, id).await {
+        Ok(job) => job,
+        Err(e) => return e.into_response(),
     };
 
     // Get destination config
@@ -885,9 +871,26 @@ pub async fn check_job_space(
     let sync_options = job.get_sync_options();
     let source_dirs = job.source_dirs_vec();
 
-    // Perform space check
+    // A run mounts and unmounts the drive itself; measuring at the same time
+    // could unmount it under the running backup
+    if state.backup_service.is_job_running(id).await {
+        return ApiError::job_already_running().into_response();
+    }
+
     let rsync = RsyncProvider::new();
-    match rsync.check_space(&source_dirs, &destination, &sync_options).await {
+    let measured = match rsync.prepare_mount(&destination).await {
+        Ok(did_mount) => {
+            let measured = rsync.measure_space(&source_dirs, &destination, &sync_options).await;
+            // A run may have started while measuring (it can take minutes):
+            // then leave the drive to it
+            if did_mount && !state.backup_service.is_job_running(id).await {
+                rsync.release_mount(&destination).await;
+            }
+            measured
+        }
+        Err(e) => Err(e),
+    };
+    match measured {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -2,9 +2,11 @@ import { writable } from 'svelte/store';
 
 // Status store for global job status updates
 interface StatusUpdate {
-  type: 'job_started' | 'job_completed';
-  run_id: number;
-  timestamp: string;
+  // resync: events were missed, reload everything
+  type: 'job_started' | 'job_completed' | 'resync';
+  run_id?: number;
+  job_id?: number;
+  timestamp?: string;
 }
 
 const RECONNECT_DELAY_MS = 5000;

@@ -26,19 +26,22 @@ pub async fn list_runs(
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
 
-    let runs: Vec<JobRunRow> = sqlx::query_as(
+    let runs: Result<Vec<JobRunRow>, _> = sqlx::query_as(
         "SELECT * FROM job_runs WHERE job_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
     )
     .bind(job_id)
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await;
 
-    let response: Vec<JobRun> = runs.into_iter().map(JobRun::from).collect();
-
-    Json(response)
+    match runs {
+        Ok(runs) => Json(runs.into_iter().map(JobRun::from).collect::<Vec<JobRun>>()).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list runs of job {}: {}", job_id, e);
+            ApiError::internal_error().into_response()
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -65,7 +68,13 @@ pub async fn list_recent_runs(
     State(state): State<Arc<AppState>>,
     Query(query): Query<RecentRunsQuery>,
 ) -> impl IntoResponse {
-    Json(query_runs(&state.db, &query).await.unwrap_or_default())
+    match query_runs(&state.db, &query).await {
+        Ok(runs) => Json(runs).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list runs: {}", e);
+            ApiError::internal_error().into_response()
+        }
+    }
 }
 
 async fn query_runs(db: &sqlx::SqlitePool, query: &RecentRunsQuery) -> Result<Vec<JobRun>, sqlx::Error> {
@@ -115,15 +124,18 @@ pub async fn get_run(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let run: Option<JobRunRow> = sqlx::query_as("SELECT * FROM job_runs WHERE id = ?")
+    let run: Result<Option<JobRunRow>, _> = sqlx::query_as("SELECT * FROM job_runs WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
+        .await;
 
     match run {
-        Some(r) => Json(JobRun::from(r)).into_response(),
-        None => ApiError::run_not_found().into_response(),
+        Ok(Some(r)) => Json(JobRun::from(r)).into_response(),
+        Ok(None) => ApiError::run_not_found().into_response(),
+        Err(e) => {
+            tracing::error!("Failed to load run {}: {}", id, e);
+            ApiError::internal_error().into_response()
+        }
     }
 }
 
@@ -183,21 +195,25 @@ pub async fn get_logs(
     let mut count = QueryBuilder::new("SELECT COUNT(*) FROM log_entries WHERE job_run_id = ");
     count.push_bind(run_id);
     push_log_filters(&mut count, &levels, q);
-    let total: i64 = count
-        .build_query_scalar()
-        .fetch_one(&state.logs_db)
-        .await
-        .unwrap_or(0);
+    let total: i64 = match count.build_query_scalar().fetch_one(&state.logs_db).await {
+        Ok(total) => total,
+        Err(e) => {
+            tracing::error!("Failed to count log lines of run {}: {}", run_id, e);
+            return ApiError::internal_error().into_response();
+        }
+    };
 
     let mut select = QueryBuilder::new("SELECT * FROM log_entries WHERE job_run_id = ");
     select.push_bind(run_id);
     push_log_filters(&mut select, &levels, q);
     select.push(" ORDER BY id LIMIT ").push_bind(limit).push(" OFFSET ").push_bind(offset);
-    let logs: Vec<LogEntryRow> = select
-        .build_query_as()
-        .fetch_all(&state.logs_db)
-        .await
-        .unwrap_or_default();
+    let logs: Vec<LogEntryRow> = match select.build_query_as().fetch_all(&state.logs_db).await {
+        Ok(logs) => logs,
+        Err(e) => {
+            tracing::error!("Failed to load log lines of run {}: {}", run_id, e);
+            return ApiError::internal_error().into_response();
+        }
+    };
 
     let entries: Vec<LogEntry> = logs.into_iter().map(LogEntry::from).collect();
     let fetched = entries.len() as i32;
@@ -210,6 +226,7 @@ pub async fn get_logs(
         limit,
         has_more,
     })
+    .into_response()
 }
 
 /// Delete a single run and its logs

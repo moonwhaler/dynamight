@@ -2,6 +2,7 @@
 
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult};
 use crate::models::{CredentialData, DestinationConfig, LogLevel, SyncOptions};
+use crate::services::backup_service::format_file_size;
 use async_trait::async_trait;
 #[cfg(unix)]
 use nix::sys::signal::{self, Signal};
@@ -63,7 +64,9 @@ impl RsyncProvider {
                 args.push("-q".to_string());
             }
             "verbose" => {
-                args.extend(["-vh".to_string(), "--stats".to_string(), "--progress".to_string()]);
+                // No -h: it makes --stats print sizes like "3.00M", which
+                // cannot be read back as exact byte counts
+                args.extend(["-v".to_string(), "--stats".to_string(), "--progress".to_string()]);
             }
             _ => {
                 // "normal" (default)
@@ -148,40 +151,22 @@ impl RsyncProvider {
         }
     }
 
-    /// Mount a USB drive by UUID
     /// Mount a USB drive by UUID. Returns `true` if this call mounted it,
-    /// `false` if it was already mounted.
+    /// `false` if it was already mounted there.
     async fn mount_usb(&self, ctx: &SyncContext, uuid: &str, mount_point: &str) -> Result<bool, ProviderError> {
         ctx.log_info(&format!("Mounting UUID {} to {}", uuid, mount_point), "mount").await;
-
-        // Create mount point if needed
-        if let Err(e) = tokio::fs::create_dir_all(mount_point).await {
-            ctx.log_warning(&format!("Could not create mount point: {}", e), "mount").await;
-        }
-
-        let mount_result = Command::new("mount")
-            .args(["-U", uuid, mount_point])
-            .output()
-            .await;
-
-        match mount_result {
-            Ok(output) if output.status.success() => {
+        match ensure_mounted(uuid, mount_point).await {
+            Ok(true) => {
                 ctx.log_info("Mount successful", "mount").await;
                 Ok(true)
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if stderr.contains("already mounted") {
-                    ctx.log_info("Drive already mounted", "mount").await;
-                    Ok(false)
-                } else {
-                    ctx.log_error(&format!("Mount failed: {}", stderr), "mount").await;
-                    Err(ProviderError::ConfigError(format!("Mount failed: {}", stderr)))
-                }
+            Ok(false) => {
+                ctx.log_info("Drive already mounted", "mount").await;
+                Ok(false)
             }
-            Err(e) => {
-                ctx.log_error(&format!("Mount error: {}", e), "mount").await;
-                Err(ProviderError::IoError(e))
+            Err(msg) => {
+                ctx.log_error(&msg, "mount").await;
+                Err(ProviderError::ConfigError(msg))
             }
         }
     }
@@ -304,70 +289,54 @@ impl RsyncProvider {
         Ok(transfer_size)
     }
 
-    /// Check if destination has enough space for the sync
-    pub async fn check_space(
+    /// Mount the job's USB drive for a space check (when the job auto-mounts
+    /// it) and make sure the right drive is there. Returns whether this call
+    /// mounted it; pass that to [`release_mount`](Self::release_mount).
+    pub async fn prepare_mount(&self, destination: &DestinationConfig) -> Result<bool, ProviderError> {
+        let DestinationConfig::Local { mount_point, usb_uuid: Some(uuid), auto_mount, .. } = destination else {
+            return Ok(false);
+        };
+        let did_mount = if *auto_mount {
+            ensure_mounted(uuid, mount_point).await.map_err(ProviderError::ConfigError)?
+        } else {
+            false
+        };
+        // Refuse to measure (and create directories in) the empty mount-point
+        // directory when the drive is not mounted there
+        if let Err(msg) = verify_drive_mounted(uuid, mount_point).await {
+            if did_mount {
+                self.unmount_standalone(mount_point).await;
+            }
+            return Err(ProviderError::ConfigError(msg));
+        }
+        Ok(did_mount)
+    }
+
+    /// Unmount a drive [`prepare_mount`](Self::prepare_mount) mounted, if the
+    /// job wants it unmounted after use.
+    pub async fn release_mount(&self, destination: &DestinationConfig) {
+        if let DestinationConfig::Local { mount_point, usb_uuid: Some(_), auto_unmount: true, .. } = destination {
+            self.unmount_standalone(mount_point).await;
+        }
+    }
+
+    /// Measure whether the sources fit on the destination. Does not mount
+    /// anything: the destination must be available already.
+    pub async fn measure_space(
         &self,
         source_dirs: &[String],
         destination: &DestinationConfig,
         options: &SyncOptions,
     ) -> Result<SpaceCheckResult, ProviderError> {
-        // Extract local destination config
-        let (mount_point, backup_subdir, usb_uuid, auto_mount, auto_unmount) = match destination {
-            DestinationConfig::Local {
-                mount_point,
-                backup_subdir,
-                usb_uuid,
-                auto_mount,
-                auto_unmount,
-            } => (
-                mount_point.clone(),
-                backup_subdir.clone(),
-                usb_uuid.clone(),
-                *auto_mount,
-                *auto_unmount,
-            ),
-            _ => {
-                return Err(ProviderError::ConfigError(
-                    "Space check only supports Local destination".to_string(),
-                ))
-            }
+        let DestinationConfig::Local { mount_point, backup_subdir, .. } = destination else {
+            return Err(ProviderError::ConfigError(
+                "Space check only supports Local destination".to_string(),
+            ));
         };
-
-        // Mount if needed
-        let did_mount = if auto_mount {
-            if let Some(uuid) = &usb_uuid {
-                // Create mount point if needed
-                let _ = tokio::fs::create_dir_all(&mount_point).await;
-
-                let mount_result = Command::new("mount")
-                    .args(["-U", uuid, &mount_point])
-                    .output()
-                    .await;
-
-                match mount_result {
-                    Ok(output) => output.status.success() || String::from_utf8_lossy(&output.stderr).contains("already mounted"),
-                    Err(_) => false,
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        // For USB destinations, refuse to measure (and create directories in)
-        // the empty mount-point directory when the drive is not mounted there.
-        if let Some(uuid) = &usb_uuid {
-            if let Err(msg) = verify_drive_mounted(uuid, &mount_point).await {
-                if did_mount && auto_unmount {
-                    self.unmount_standalone(&mount_point).await;
-                }
-                return Err(ProviderError::ConfigError(msg));
-            }
-        }
+        let mount_point = mount_point.as_str();
 
         // Detect filesystem type
-        let fstype = self.detect_filesystem(&mount_point).await;
+        let fstype = self.detect_filesystem(mount_point).await;
 
         // Build rsync args for dry-run
         let rsync_args = self.build_space_check_args(options, &fstype);
@@ -424,39 +393,12 @@ impl RsyncProvider {
             });
         }
 
-        // Ensure mount point directory exists for df command
-        // (may not exist if auto_mount is disabled and no source dirs were processed)
-        if let Err(e) = tokio::fs::create_dir_all(&mount_point).await {
-            tracing::warn!("Could not create mount point directory {}: {}", mount_point, e);
-        }
-
-        // Verify mount point exists and is actually mounted (not just an empty directory)
-        let mount_check = Command::new("findmnt")
-            .args(["--target", &mount_point, "-n", "-o", "TARGET"])
-            .output()
-            .await;
-
-        let is_mounted = match &mount_check {
-            Ok(out) => {
-                let target = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                out.status.success() && !target.is_empty()
-            }
-            Err(_) => false,
-        };
-
-        if !is_mounted {
-            tracing::warn!(
-                "Mount point {} is not mounted or doesn't exist (did_mount={})",
-                mount_point, did_mount
-            );
-        }
-
         // Get destination free space using statvfs via df command
         // First try the GNU coreutils --output option, then fall back to POSIX df
         let (destination_free, destination_total) = {
             // Try GNU df with --output first (most accurate)
             let output = Command::new("df")
-                .args(["--block-size=1", "--output=avail,size", &mount_point])
+                .args(["--block-size=1", "--output=avail,size", mount_point])
                 .output()
                 .await;
 
@@ -490,7 +432,7 @@ impl RsyncProvider {
 
                     // Fallback: try POSIX df (columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on)
                     let fallback = Command::new("df")
-                        .args(["-B1", &mount_point])
+                        .args(["-B1", mount_point])
                         .output()
                         .await;
 
@@ -530,11 +472,6 @@ impl RsyncProvider {
                 }
             }
         };
-
-        // Unmount if we mounted
-        if did_mount && auto_unmount && usb_uuid.is_some() {
-            self.unmount_standalone(&mount_point).await;
-        }
 
         // If we couldn't get destination space info, return an error
         if destination_free == 0 && destination_total == 0 {
@@ -657,7 +594,14 @@ impl SyncProvider for RsyncProvider {
             }
         }
 
-        let sync_outcome = self.run_sources(&ctx, &mount_point, &backup_subdir, &mut result).await;
+        // Skipped in compress mode: the sources are the archives in the staging
+        // directory, whose space is managed by the archive retention
+        let space_failed = !ctx.options.compress_dirs_enabled() && self.space_check_fails(&ctx, &mut result).await;
+        let sync_outcome = if space_failed {
+            Ok(())
+        } else {
+            self.run_sources(&ctx, &mount_point, &backup_subdir, &mut result).await
+        };
 
         // Capture storage info BEFORE unmounting (so we get the USB drive's space, not the underlying filesystem)
         if sync_outcome.is_ok() {
@@ -676,6 +620,10 @@ impl SyncProvider for RsyncProvider {
         }
 
         sync_outcome?;
+        if space_failed {
+            result.success = false;
+            return Ok(result);
+        }
         result.success = result.error_count == 0;
         ctx.log_info(
             &format!(
@@ -764,6 +712,45 @@ fn should_unmount(auto_mount: bool, auto_unmount: bool, we_mounted: bool, is_usb
 }
 
 impl RsyncProvider {
+    /// The job's space check before copying (destination already mounted).
+    /// Returns `true` when the run must stop ("fail" mode and too little
+    /// space); that counts as an error. Problems measuring only warn.
+    async fn space_check_fails(&self, ctx: &SyncContext, result: &mut SyncResult) -> bool {
+        let mode = ctx.options.space_check_mode();
+        if mode == "none" {
+            return false;
+        }
+        match self.measure_space(&ctx.source_dirs, &ctx.destination, &ctx.options).await {
+            Ok(check) if !check.fits => {
+                let msg = format!(
+                    "Insufficient space: need {} to transfer, have {} free ({} short)",
+                    format_file_size(check.transfer_size),
+                    format_file_size(check.destination_free),
+                    format_file_size(check.deficit.unwrap_or(0))
+                );
+                if mode == "fail" {
+                    ctx.log_error(&msg, "space-check").await;
+                    result.error_count += 1;
+                    return true;
+                }
+                ctx.log_warning(&msg, "space-check").await;
+            }
+            Ok(check) => {
+                ctx.log_info(
+                    &format!(
+                        "Space check passed: {} to transfer, {} free",
+                        format_file_size(check.transfer_size),
+                        format_file_size(check.destination_free)
+                    ),
+                    "space-check",
+                )
+                .await;
+            }
+            Err(e) => ctx.log_warning(&format!("Space check failed: {}", e), "space-check").await,
+        }
+        false
+    }
+
     /// Run rsync once per source directory, streaming its output to the run log.
     ///
     /// Returns `Err(ProviderError::Cancelled)` when the run was cancelled, so the
@@ -948,38 +935,120 @@ fn rsync_locale_env(ctype: Option<String>) -> Vec<(&'static str, &'static str)> 
     vars
 }
 
+/// Read a number from rsync output: "1,234" / "1.234" (thousand separators)
+/// or, with `-h`, "3.00M" (units of 1000).
+fn parse_rsync_number(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let unit = match value.chars().last()? {
+        'K' | 'k' => 1e3,
+        'M' => 1e6,
+        'G' => 1e9,
+        'T' => 1e12,
+        'P' => 1e15,
+        _ => return value.replace([',', '.'], "").parse().ok(),
+    };
+    let number: f64 = value[..value.len() - 1].replace(',', "").parse().ok()?;
+    Some((number * unit).round() as i64)
+}
+
 /// Parse rsync `--stats` output lines into the sync result.
 fn parse_stats_line(line: &str, result: &mut SyncResult) {
     // Handle both "Number of files transferred" (old rsync) and
     // "Number of regular files transferred" (rsync 3.1+)
     if line.contains("files transferred") {
-        if let Some(num) = line.split(':').nth(1) {
-            // Handle both comma (US) and dot (EU) thousand separators
-            let cleaned = num.trim().replace([',', '.'], "");
-            if let Ok(n) = cleaned.parse::<i64>() {
-                result.files_transferred += n;
-            }
+        if let Some(n) = line.split(':').nth(1).and_then(parse_rsync_number) {
+            result.files_transferred += n;
         }
     } else if line.contains("Total transferred file size") {
-        if let Some(size_str) = line.split(':').nth(1) {
-            if let Some(bytes) = size_str.split_whitespace().next() {
-                let cleaned = bytes.replace([',', '.'], "");
-                if let Ok(b) = cleaned.parse::<i64>() {
-                    result.bytes_transferred += b;
-                }
-            }
+        let bytes = line.split(':').nth(1).and_then(|v| v.split_whitespace().next());
+        if let Some(b) = bytes.and_then(parse_rsync_number) {
+            result.bytes_transferred += b;
         }
     } else if line.starts_with("sent ") && line.contains(" bytes") && result.bytes_transferred == 0 {
         // Fallback: parse "sent X bytes  received Y bytes" line
-        if let Some(bytes_str) = line.strip_prefix("sent ") {
-            if let Some(bytes) = bytes_str.split_whitespace().next() {
-                let cleaned = bytes.replace([',', '.'], "");
-                if let Ok(b) = cleaned.parse::<i64>() {
-                    result.bytes_transferred = b;
-                }
-            }
+        let bytes = line.strip_prefix("sent ").and_then(|v| v.split_whitespace().next());
+        if let Some(b) = bytes.and_then(parse_rsync_number) {
+            result.bytes_transferred = b;
         }
     }
+}
+
+/// What is mounted exactly at a mount point, compared with the expected drive.
+#[derive(Debug, PartialEq, Eq)]
+enum MountState {
+    /// The expected drive (and nothing stacked on it)
+    Expected,
+    Empty,
+    /// Something else; the UUIDs found
+    Other(String),
+}
+
+fn mount_state(uuid: &str, mounted_uuids: &[String]) -> MountState {
+    match mounted_uuids {
+        [] => MountState::Empty,
+        [only] if only.eq_ignore_ascii_case(uuid.trim()) => MountState::Expected,
+        found => MountState::Other(found.join(", ")),
+    }
+}
+
+fn mount_point_target(mount_point: &str) -> &str {
+    match mount_point.trim_end_matches('/') {
+        "" => "/",
+        t => t,
+    }
+}
+
+/// UUIDs of the filesystems mounted exactly at `mount_point` (empty when
+/// nothing is mounted there; an empty string for a filesystem without UUID).
+async fn mounted_uuids(mount_point: &str) -> Result<Vec<String>, String> {
+    let target = mount_point_target(mount_point);
+    let output = Command::new("findmnt")
+        .args(["-n", "-o", "UUID", "--mountpoint", target])
+        .output()
+        .await
+        .map_err(|e| format!("Could not check mount point {}: {}", target, e))?;
+    if !output.status.success() {
+        // findmnt exits with 1 when nothing is mounted there
+        return Ok(Vec::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).lines().map(|l| l.trim().to_string()).collect())
+}
+
+/// Make sure the drive `uuid` is mounted at `mount_point`, mounting it if
+/// nothing is mounted there. Returns `true` if this call mounted it.
+///
+/// Decides by asking findmnt, not by reading mount's (translated) error
+/// messages. Never mounts on top of a different device.
+async fn ensure_mounted(uuid: &str, mount_point: &str) -> Result<bool, String> {
+    let target = mount_point_target(mount_point);
+    match mount_state(uuid, &mounted_uuids(target).await?) {
+        MountState::Expected => return Ok(false),
+        MountState::Other(found) => {
+            return Err(format!(
+                "A different device (UUID {}) is mounted at {}, expected drive {}.",
+                if found.trim().is_empty() { "unknown" } else { &found },
+                target,
+                uuid
+            ))
+        }
+        MountState::Empty => {}
+    }
+
+    // A missing directory makes mount fail with its own message below
+    let _ = tokio::fs::create_dir_all(target).await;
+    let output = Command::new("mount")
+        .args(["-U", uuid, target])
+        .output()
+        .await
+        .map_err(|e| format!("Mount error: {}", e))?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    // Mounted by someone else in the meantime (for example an automounter)
+    if mount_state(uuid, &mounted_uuids(target).await?) == MountState::Expected {
+        return Ok(false);
+    }
+    Err(format!("Mount failed: {}", String::from_utf8_lossy(&output.stderr).trim()))
 }
 
 /// Check that the filesystem mounted exactly at `mount_point` is the drive
@@ -1054,12 +1123,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_human_readable_stats() {
+        let mut r = SyncResult::default();
+        parse_stats_line("Total transferred file size: 3.00M bytes", &mut r);
+        assert_eq!(r.bytes_transferred, 3_000_000);
+        assert_eq!(parse_rsync_number("1.5K"), Some(1500));
+        assert_eq!(parse_rsync_number("12,345,678"), Some(12_345_678));
+        assert_eq!(parse_rsync_number("x"), None);
+    }
+
+    #[test]
     fn sent_line_is_fallback_only() {
         let mut r = SyncResult::default();
         parse_stats_line("sent 2,048 bytes  received 35 bytes", &mut r);
         assert_eq!(r.bytes_transferred, 2048);
         parse_stats_line("sent 9,999 bytes  received 35 bytes", &mut r);
         assert_eq!(r.bytes_transferred, 2048);
+    }
+
+    #[test]
+    fn mount_state_tells_expected_empty_and_other() {
+        let uuid = "1234-ABCD";
+        assert_eq!(mount_state(uuid, &[]), MountState::Empty);
+        assert_eq!(mount_state(uuid, &["1234-abcd".into()]), MountState::Expected);
+        assert_eq!(mount_state(uuid, &["9999-0000".into()]), MountState::Other("9999-0000".into()));
+        // Something stacked on top of the drive is not the expected state
+        assert!(matches!(
+            mount_state(uuid, &["1234-ABCD".into(), "9999-0000".into()]),
+            MountState::Other(_)
+        ));
+        assert!(matches!(mount_state(uuid, &["".into()]), MountState::Other(_)));
     }
 
     #[test]

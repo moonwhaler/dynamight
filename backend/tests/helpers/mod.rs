@@ -22,6 +22,9 @@ pub struct TestApp {
     pub db: SqlitePool,
     #[allow(dead_code)]
     pub logs_db: SqlitePool,
+    /// For putting jobs into states the API cannot reach quickly (running)
+    #[allow(dead_code)]
+    pub backup_service: Arc<BackupService>,
 }
 
 /// Create an in-memory SQLite pool with all migrations applied.
@@ -119,7 +122,7 @@ impl TestApp {
             logs_db: logs_db.clone(),
             config,
             auth_service,
-            backup_service,
+            backup_service: Arc::clone(&backup_service),
             mount_service,
             rate_limit_service,
             credential_service,
@@ -134,7 +137,7 @@ impl TestApp {
 
         let server = TestServer::new(router).expect("Failed to create test server");
 
-        Self { server, db, logs_db }
+        Self { server, db, logs_db, backup_service }
     }
 
     // ── Auth convenience helpers ────────────────────────────────────────

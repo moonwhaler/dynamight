@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::extractors::extract_token_from_headers;
-use crate::services::{RUN_FINISHED_PREFIX, RUN_STARTED_MESSAGE};
+use crate::services::RunEventKind;
 use crate::middleware::check_session;
 use crate::AppState;
 
@@ -105,44 +105,26 @@ pub async fn ws_status_handler(
 async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
 
-    // Subscribe to log broadcasts for status updates
-    let mut log_rx = state.log_tx.subscribe();
+    let mut events = state.backup_service.subscribe_events();
 
     let mut send_task = tokio::spawn(async move {
         loop {
-            let msg = match log_rx.recv().await {
-                Ok(msg) => msg,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            let update = match events.recv().await {
+                Ok(event) => json!({
+                    "type": match event.kind {
+                        RunEventKind::Started => "job_started",
+                        RunEventKind::Completed => "job_completed",
+                    },
+                    "run_id": event.run_id,
+                    "job_id": event.job_id,
+                    "timestamp": event.timestamp,
+                }),
+                // Events were missed: the client reloads everything
+                Err(broadcast::error::RecvError::Lagged(_)) => json!({ "type": "resync" }),
                 Err(broadcast::error::RecvError::Closed) => break,
             };
-            if msg.source != "system" {
-                continue;
-            }
-            // Status updates for job start/finish. RUN_FINISHED_PREFIX is logged
-            // by finalize_run after the final status is stored, for every
-            // provider and outcome, so clients that reload see the new status.
-            let status_update = if msg.message.starts_with(RUN_STARTED_MESSAGE) {
-                Some(serde_json::json!({
-                    "type": "job_started",
-                    "run_id": msg.run_id,
-                    "timestamp": msg.timestamp
-                }))
-            } else if msg.message.starts_with(RUN_FINISHED_PREFIX) {
-                Some(serde_json::json!({
-                    "type": "job_completed",
-                    "run_id": msg.run_id,
-                    "timestamp": msg.timestamp
-                }))
-            } else {
-                None
-            };
-
-            if let Some(update) = status_update {
-                if let Ok(json) = serde_json::to_string(&update) {
-                    if sender.send(Message::Text(json)).await.is_err() {
-                        break;
-                    }
-                }
+            if sender.send(Message::Text(update.to_string())).await.is_err() {
+                break;
             }
         }
     });

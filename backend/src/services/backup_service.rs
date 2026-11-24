@@ -1,9 +1,9 @@
-use crate::models::{DestinationConfig, Job, JobRunStatus, LogLevel, LogMessage};
+use crate::models::{Job, JobRunStatus, LogLevel, LogMessage};
 use crate::services::compress_service;
 use crate::services::credential_service::CredentialService;
 use crate::services::log_writer::{LogRow, LogWriter};
 use crate::services::notification_service::{self, EventKind, Notifier, RunInfo};
-use crate::services::providers::{self, RsyncProvider, StorageInfo, SyncContext, ProviderError};
+use crate::services::providers::{self, StorageInfo, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::{QueryBuilder, SqlitePool};
 use std::path::{Path, PathBuf};
@@ -13,12 +13,33 @@ use std::time::Duration;
 use tokio::sync::{broadcast, RwLock, Mutex};
 use tokio_util::task::TaskTracker;
 
-/// Logged (source "system") when a run starts; the status WebSocket turns it
-/// into a `job_started` event.
+/// Logged (source "system") when a run starts.
 pub const RUN_STARTED_MESSAGE: &str = "Starting backup job";
 /// Prefix of the message `finalize_run` logs (source "system") once the final
-/// run status is stored; the status WebSocket turns it into `job_completed`.
+/// run status is stored; live log viewers reload on it. Status clients get a
+/// [`RunEvent`] instead.
 pub const RUN_FINISHED_PREFIX: &str = "Run finished";
+
+/// A run started or finished. Sent on its own channel (see
+/// [`BackupService::subscribe_events`]) so these few events cannot be lost
+/// among thousands of log lines when a client falls behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEventKind {
+    Started,
+    /// Final status and the whole log are stored
+    Completed,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunEvent {
+    pub kind: RunEventKind,
+    pub run_id: i64,
+    pub job_id: i64,
+    pub timestamp: chrono::DateTime<Utc>,
+}
+
+/// Run events held for slow subscribers (a handful per run)
+const EVENT_CAPACITY: usize = 64;
 
 /// Why [`BackupService::start_run`] did not start a run.
 #[derive(Debug)]
@@ -48,6 +69,7 @@ pub struct BackupService {
     logs_db: SqlitePool,
     log_writer: LogWriter,
     log_tx: broadcast::Sender<LogMessage>,
+    events: broadcast::Sender<RunEvent>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
     /// Tracks cancelled run_ids
     cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
@@ -74,6 +96,7 @@ impl BackupService {
             log_writer: LogWriter::spawn(logs_db.clone()),
             logs_db,
             log_tx,
+            events: broadcast::channel(EVENT_CAPACITY).0,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
             max_runs_per_job: Arc::new(RwLock::new(max_runs_per_job)),
@@ -85,6 +108,15 @@ impl BackupService {
 
     pub fn notifier(&self) -> &Notifier {
         &self.notifier
+    }
+
+    /// Run started/finished events (for the status WebSocket)
+    pub fn subscribe_events(&self) -> broadcast::Receiver<RunEvent> {
+        self.events.subscribe()
+    }
+
+    fn emit(&self, kind: RunEventKind, run_id: i64, job_id: i64) {
+        let _ = self.events.send(RunEvent { kind, run_id, job_id, timestamp: Utc::now() });
     }
 
     /// Update the job's alert state for a finished run and send the matching
@@ -254,6 +286,7 @@ impl BackupService {
             .bind(run_id)
             .execute(&service.db)
             .await;
+            service.emit(RunEventKind::Started, run_id, job.id);
 
             let result = service.execute_job(&job, run_id, schedule_id).await;
             service.finalize_run(run_id, job.id, &job, result).await;
@@ -749,57 +782,8 @@ impl BackupService {
             source_dirs.clone()
         };
 
-        // Pre-flight space check for local destinations (skipped when compression is enabled,
-        // since the staging space is managed via retention and compression ratio is unpredictable)
-        if matches!(destination, DestinationConfig::Local { .. }) && !sync_options.compress_dirs_enabled() {
-            let space_mode = sync_options.space_check_mode();
-            if space_mode != "none" {
-                let rsync = RsyncProvider::new();
-                match rsync.check_space(&source_dirs, &destination, &sync_options).await {
-                    Ok(result) if !result.fits => {
-                        let deficit = result.deficit.unwrap_or(0);
-                        let msg = format!(
-                            "Insufficient space: need {} to transfer, have {} free ({} short)",
-                            format_file_size(result.transfer_size),
-                            format_file_size(result.destination_free),
-                            format_file_size(deficit)
-                        );
-                        if space_mode == "fail" {
-                            self.log(run_id, LogLevel::Error, &msg, "space-check").await;
-                            return Ok(JobResult {
-                                exit_code: 1,
-                                error_count: 1,
-                                ..Default::default()
-                            });
-                        } else {
-                            // "warn" mode - log warning but continue
-                            self.log(run_id, LogLevel::Warning, &msg, "space-check").await;
-                        }
-                    }
-                    Ok(result) => {
-                        self.log(
-                            run_id,
-                            LogLevel::Info,
-                            &format!(
-                                "Space check passed: {} to transfer, {} free",
-                                format_file_size(result.transfer_size),
-                                format_file_size(result.destination_free)
-                            ),
-                            "space-check",
-                        ).await;
-                    }
-                    Err(e) => {
-                        // Space check failed - log warning but don't block
-                        self.log(
-                            run_id,
-                            LogLevel::Warning,
-                            &format!("Space check failed: {}", e),
-                            "space-check",
-                        ).await;
-                    }
-                }
-            }
-        }
+        // The space check for local destinations runs in RsyncProvider::sync,
+        // once the drive is mounted (one mount per run)
 
         // Create cancellation checker closure
         let cancelled_runs = Arc::clone(&self.cancelled_runs);
@@ -1023,7 +1007,7 @@ impl BackupService {
         }
 
         // After the status and the whole log are stored, so clients reloading
-        // on this event see both
+        // on this line or the Completed event see both
         self.log_stored(
             run_id,
             LogLevel::Info,
@@ -1031,6 +1015,7 @@ impl BackupService {
             "system",
         )
         .await;
+        self.emit(RunEventKind::Completed, run_id, job_id);
 
         self.notify_run_result(run_id, job, final_status).await;
 
@@ -1123,7 +1108,7 @@ impl BackupService {
 }
 
 /// Format a byte count as a human-readable string (B / KB / MB / GB / TB).
-fn format_file_size(bytes: u64) -> String {
+pub(crate) fn format_file_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     let b = bytes as f64;
     if bytes < 1024 {
@@ -1536,5 +1521,46 @@ mod notification_flow_tests {
             .await
             .unwrap();
         assert_eq!(service.check_overdue(chrono_tz::Tz::UTC).await, 0);
+    }
+}
+
+#[cfg(test)]
+mod run_event_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_run_sends_started_then_completed() {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = Arc::new(BackupService::new(db.clone(), logs_db, log_tx, None, credentials));
+        let mut events = service.subscribe_events();
+
+        // No mount point: the run fails right away at the config check
+        let id = sqlx::query(
+            "INSERT INTO jobs (name, mount_point, source_dirs, destination_type, destination_config) \
+             VALUES ('j', '', '[]', 'local', '{}')",
+        )
+        .execute(&db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(id).fetch_one(&db).await.unwrap();
+        let run_id = service.start_run(job, None).await.unwrap();
+
+        let started = tokio::time::timeout(Duration::from_secs(3), events.recv()).await.unwrap().unwrap();
+        assert_eq!((started.kind, started.run_id, started.job_id), (RunEventKind::Started, run_id, id));
+        let completed = tokio::time::timeout(Duration::from_secs(3), events.recv()).await.unwrap().unwrap();
+        assert_eq!((completed.kind, completed.run_id), (RunEventKind::Completed, run_id));
+
+        // The status is final by the time Completed arrives
+        let (status,): (String,) = sqlx::query_as("SELECT status FROM job_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(status, "failed");
     }
 }

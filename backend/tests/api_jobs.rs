@@ -76,6 +76,60 @@ async fn list_jobs_returns_created_jobs() {
 }
 
 #[tokio::test]
+async fn list_jobs_reports_each_jobs_latest_run() {
+    let app = TestApp::new().await;
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+    let a = create_test_job(&app, &cookie, "Job A").await;
+    let b = create_test_job(&app, &cookie, "Job B").await;
+    create_test_job(&app, &cookie, "Job C").await;
+
+    // Interleaved runs; the last one inserted per job is its latest
+    for (job, status) in [(a, "failed"), (b, "completed"), (a, "completed"), (b, "failed"), (a, "running")] {
+        sqlx::query("INSERT INTO job_runs (job_id, status, started_at) VALUES (?, ?, datetime('now'))")
+            .bind(job)
+            .bind(status)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+
+    let resp = app
+        .server
+        .get("/jobs")
+        .add_header(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_str(&cookie).unwrap(),
+        )
+        .await;
+    resp.assert_status_ok();
+    let body: Vec<serde_json::Value> = resp.json();
+    let status = |name: &str| body.iter().find(|j| j["name"] == name).unwrap()["last_run_status"].clone();
+    assert_eq!(status("Job A"), "running");
+    assert_eq!(status("Job B"), "failed");
+    assert!(status("Job C").is_null());
+}
+
+#[tokio::test]
+async fn check_space_is_refused_while_the_job_runs() {
+    let app = TestApp::new().await;
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+    let id = create_test_job(&app, &cookie, "Busy").await;
+    assert!(app.backup_service.try_reserve_job(id).await);
+
+    let resp = app
+        .server
+        .post(&format!("/jobs/{}/check-space", id))
+        .add_header(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_str(&cookie).unwrap(),
+        )
+        .await;
+    resp.assert_status(axum::http::StatusCode::CONFLICT);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["code"], "JOB_ALREADY_RUNNING");
+}
+
+#[tokio::test]
 async fn list_jobs_rejects_unauthenticated() {
     let app = TestApp::new().await;
 

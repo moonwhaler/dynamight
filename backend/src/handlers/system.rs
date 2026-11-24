@@ -434,24 +434,27 @@ pub async fn search_path(
     let canonical_str = canonical.to_string_lossy().to_string();
     let query = params.query.clone();
 
-    let timeout_secs = *state.search_timeout_seconds.read().await;
+    let timeout = Duration::from_secs(*state.search_timeout_seconds.read().await as u64);
+    let deadline = Instant::now() + timeout;
 
+    // The search stops itself at the deadline; the outer timeout only guards
+    // against a single filesystem call that hangs (e.g. a dead network mount)
     let search_result = tokio::time::timeout(
-        Duration::from_secs(timeout_secs as u64),
+        timeout + Duration::from_secs(5),
         tokio::task::spawn_blocking(move || {
             let ms = crate::services::MountService;
-            ms.search_path(&canonical_str, &query, max_results, 20)
+            ms.search_path(&canonical_str, &query, max_results, 20, deadline)
         }),
     )
     .await;
 
     match search_result {
-        Ok(Ok(Ok((results, truncated)))) => Json(json!({
+        Ok(Ok(Ok((results, truncated, timed_out)))) => Json(json!({
             "base_path": canonical.to_string_lossy(),
             "query": params.query,
             "results": results,
             "truncated": truncated,
-            "timed_out": false,
+            "timed_out": timed_out,
         }))
         .into_response(),
         Err(_) => {
@@ -929,12 +932,18 @@ pub async fn delete_path(
         Err(_) => return ApiError::file_not_found().into_response(),
     };
 
-    // 10. Perform deletion
-    let result = if metadata.is_dir() {
-        std::fs::remove_dir_all(&canonical)
-    } else {
-        std::fs::remove_file(&canonical)
-    };
+    // 10. Perform deletion (on a blocking thread: a large tree takes a while)
+    let is_dir = metadata.is_dir();
+    let target = canonical.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        if is_dir {
+            std::fs::remove_dir_all(&target)
+        } else {
+            std::fs::remove_file(&target)
+        }
+    })
+    .await
+    .unwrap_or_else(|e| Err(std::io::Error::other(e)));
 
     match result {
         Ok(_) => {

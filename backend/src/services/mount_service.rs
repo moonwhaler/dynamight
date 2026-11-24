@@ -431,18 +431,23 @@ impl MountService {
         Ok(result)
     }
 
-    /// Search recursively for files matching a query
+    /// Search recursively for files matching a query.
+    ///
+    /// Stops at `deadline` and returns what it found so far. Returns
+    /// `(results, truncated, timed_out)`.
     pub fn search_path(
         &self,
         base_path: &str,
         query: &str,
         max_results: usize,
         max_depth: usize,
-    ) -> Result<(Vec<DirectoryEntry>, bool), MountError> {
+        deadline: std::time::Instant,
+    ) -> Result<(Vec<DirectoryEntry>, bool, bool), MountError> {
         let query_lower = query.to_lowercase();
         let is_glob = query_lower.contains('*') || query_lower.contains('?');
         let mut results = Vec::new();
         let mut truncated = false;
+        let mut timed_out = false;
 
         let walker = WalkDir::new(base_path)
             .max_depth(max_depth)
@@ -452,6 +457,11 @@ impl MountService {
             .filter_entry(|e| !(e.depth() > 0 && e.file_name().to_string_lossy().starts_with('.')));
 
         for entry in walker {
+            // Checked first: most entries do not match and `continue` below
+            if std::time::Instant::now() >= deadline {
+                timed_out = true;
+                break;
+            }
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -511,7 +521,7 @@ impl MountService {
             }
         }
 
-        Ok((results, truncated))
+        Ok((results, truncated, timed_out))
     }
 
     /// Generate a safe mount point path from a drive label
@@ -584,4 +594,28 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     }
 
     pi == plen
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn search_stops_at_the_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in 0..5 {
+            std::fs::write(dir.path().join(format!("photo{n}.jpg")), b"x").unwrap();
+        }
+        let base = dir.path().to_str().unwrap();
+
+        let (found, _, timed_out) = MountService
+            .search_path(base, "photo", 100, 5, Instant::now() + Duration::from_secs(30))
+            .unwrap();
+        assert_eq!((found.len(), timed_out), (5, false));
+
+        let (found, _, timed_out) = MountService.search_path(base, "photo", 100, 5, Instant::now()).unwrap();
+        assert!(found.is_empty());
+        assert!(timed_out);
+    }
 }
