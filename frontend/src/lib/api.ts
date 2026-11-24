@@ -2,6 +2,9 @@ import type {
   User,
   Job,
   Schedule,
+  NotificationSettings,
+  NotificationSettingsUpdate,
+  NotificationTestResult,
   JobRun,
   LogEntry,
   PaginatedLogsResponse,
@@ -93,6 +96,7 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     // Job errors
     JOB_NOT_FOUND: () => m.error_job_not_found(),
     JOB_ALREADY_RUNNING: () => m.error_job_already_running(),
+    SERVER_SHUTTING_DOWN: () => m.error_server_shutting_down(),
     JOB_NAME_EXISTS: () => m.error_job_name_exists(),
     NO_RUNNING_JOB: () => m.error_no_running_job(),
     JOB_CREATE_FAILED: () => m.job_error_save(),
@@ -103,6 +107,18 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     // Schedule errors
     SCHEDULE_NOT_FOUND: () => m.error_schedule_not_found(),
     INVALID_CRON: () => m.error_invalid_cron(),
+    NOTIFICATION_SETTINGS_INVALID: () => {
+      switch (params?.field) {
+        case 'ntfy_server':
+          return m.error_notify_ntfy_server();
+        case 'ntfy_topic':
+          return m.error_notify_ntfy_topic();
+        case 'webhook_url':
+          return m.error_notify_webhook_url();
+        default:
+          return m.error_notify_base_url();
+      }
+    },
 
     // Credential errors
     CREDENTIAL_NOT_FOUND: () => m.error_credential_not_found(),
@@ -383,6 +399,21 @@ export const api = {
       request<{ success: boolean; deleted: number }>(`/jobs/${jobId}/runs`, { method: 'DELETE' }),
     purgeAll: () =>
       request<{ success: boolean; deleted: number }>('/runs', { method: 'DELETE' }),
+  },
+
+  notifications: {
+    get: () => request<NotificationSettings>('/settings/notifications'),
+    update: (settings: NotificationSettingsUpdate) =>
+      request<NotificationSettings>('/settings/notifications', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      }),
+    /** Send a test with these (unsaved) settings */
+    test: (settings: NotificationSettingsUpdate) =>
+      request<{ results: NotificationTestResult[] }>('/settings/notifications/test', {
+        method: 'POST',
+        body: JSON.stringify(settings),
+      }),
   },
 
   settings: {

@@ -105,6 +105,12 @@ pub fn build_api_router(state: Arc<AppState>) -> Router {
         .route("/system/dir-sizes", post(handlers::system::dir_sizes))
         .route("/system/delete-status", get(handlers::system::delete_status))
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
+        .route(
+            "/settings/notifications",
+            get(handlers::notifications::get_notification_settings)
+                .put(handlers::notifications::update_notification_settings),
+        )
+        .route("/settings/notifications/test", post(handlers::notifications::test_notification_settings))
         .route("/config/export", post(handlers::config_backup::export_config))
         .route("/config/import", post(handlers::config_backup::import_config))
         .route("/config/import/preview", post(handlers::config_backup::preview_import))

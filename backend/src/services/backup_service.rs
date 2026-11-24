@@ -1,12 +1,17 @@
 use crate::models::{DestinationConfig, Job, JobRunStatus, LogLevel, LogMessage};
 use crate::services::compress_service;
 use crate::services::credential_service::CredentialService;
+use crate::services::log_writer::{LogRow, LogWriter};
+use crate::services::notification_service::{self, EventKind, Notifier, RunInfo};
 use crate::services::providers::{self, RsyncProvider, StorageInfo, SyncContext, ProviderError};
 use chrono::Utc;
 use sqlx::{QueryBuilder, SqlitePool};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio_util::task::TaskTracker;
 
 /// Logged (source "system") when a run starts; the status WebSocket turns it
 /// into a `job_started` event.
@@ -14,6 +19,17 @@ pub const RUN_STARTED_MESSAGE: &str = "Starting backup job";
 /// Prefix of the message `finalize_run` logs (source "system") once the final
 /// run status is stored; the status WebSocket turns it into `job_completed`.
 pub const RUN_FINISHED_PREFIX: &str = "Run finished";
+
+/// Why [`BackupService::start_run`] did not start a run.
+#[derive(Debug)]
+pub enum StartRunError {
+    AlreadyRunning,
+    ShuttingDown,
+    Database(sqlx::Error),
+}
+
+/// Summary of runs cancelled because the server stopped.
+pub const SHUTDOWN_SUMMARY: &str = "Cancelled: server shutting down";
 
 #[derive(Debug, Default)]
 pub struct JobResult {
@@ -28,12 +44,18 @@ pub struct JobResult {
 pub struct BackupService {
     db: SqlitePool,
     logs_db: SqlitePool,
+    log_writer: LogWriter,
     log_tx: broadcast::Sender<LogMessage>,
     running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
     /// Tracks cancelled run_ids
     cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
     max_runs_per_job: Arc<RwLock<Option<u32>>>,
     credential_service: Arc<CredentialService>,
+    /// Set by `shutdown`: no new runs start
+    shutting_down: AtomicBool,
+    /// Every run task, so `shutdown` can wait for them to finish
+    tasks: TaskTracker,
+    notifier: Notifier,
 }
 
 impl BackupService {
@@ -45,14 +67,245 @@ impl BackupService {
         credential_service: Arc<CredentialService>,
     ) -> Self {
         Self {
+            notifier: Notifier::new(db.clone()),
             db,
+            log_writer: LogWriter::spawn(logs_db.clone()),
             logs_db,
             log_tx,
             running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
             cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
             max_runs_per_job: Arc::new(RwLock::new(max_runs_per_job)),
             credential_service,
+            shutting_down: AtomicBool::new(false),
+            tasks: TaskTracker::new(),
         }
+    }
+
+    pub fn notifier(&self) -> &Notifier {
+        &self.notifier
+    }
+
+    /// Update the job's alert state for a finished run and send the matching
+    /// notification (failed, recovered or completed). Cancelled runs send none.
+    async fn notify_run_result(&self, run_id: i64, job: &Job, status: JobRunStatus) {
+        let dry_run = job.get_sync_options().dry_run;
+        let previous: String = sqlx::query_as::<_, (String,)>("SELECT alert_state FROM jobs WHERE id = ?")
+            .bind(job.id)
+            .fetch_optional(&self.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|(s,)| s)
+            .unwrap_or_else(|| "ok".to_string());
+
+        let kind = match status {
+            JobRunStatus::Failed => {
+                self.set_alert_state(job.id, "failed").await;
+                EventKind::Failed
+            }
+            // A dry run proves nothing about the backup, so it does not end a problem
+            JobRunStatus::Completed if !dry_run && previous != "ok" => {
+                self.set_alert_state(job.id, "ok").await;
+                EventKind::Recovered
+            }
+            JobRunStatus::Completed => EventKind::Success,
+            _ => return,
+        };
+
+        type Time = Option<chrono::DateTime<Utc>>;
+        type RunRow = (String, Time, Time, Option<i64>, Option<i64>, Option<i64>);
+        let row: Option<RunRow> =
+            sqlx::query_as(
+                "SELECT status, started_at, completed_at, files_transferred, bytes_transferred, error_count \
+                 FROM job_runs WHERE id = ?",
+            )
+            .bind(run_id)
+            .fetch_optional(&self.db)
+            .await
+            .ok()
+            .flatten();
+        let Some((run_status, started_at, completed_at, files, bytes, errors)) = row else {
+            return;
+        };
+        let run = RunInfo {
+            id: run_id,
+            status: run_status,
+            started_at,
+            completed_at,
+            files_transferred: files.unwrap_or(0),
+            bytes_transferred: bytes.unwrap_or(0),
+            error_count: errors.unwrap_or(0),
+        };
+
+        // The log is complete here (finalize_run flushed it)
+        let last_error = if kind == EventKind::Failed {
+            sqlx::query_as::<_, (String,)>(
+                "SELECT message FROM log_entries WHERE job_run_id = ? AND level = 'error' ORDER BY id DESC LIMIT 1",
+            )
+            .bind(run_id)
+            .fetch_optional(&self.logs_db)
+            .await
+            .ok()
+            .flatten()
+            .map(|(m,)| m)
+        } else {
+            None
+        };
+
+        let notification =
+            notification_service::run_notification(kind, job.id, &job.name, run, dry_run, last_error);
+        let notifier = self.notifier.clone();
+        self.tasks.spawn(async move { notifier.notify(notification).await });
+    }
+
+    async fn set_alert_state(&self, job_id: i64, state: &str) {
+        let _ = sqlx::query("UPDATE jobs SET alert_state = ? WHERE id = ?")
+            .bind(state)
+            .bind(job_id)
+            .execute(&self.db)
+            .await;
+    }
+
+    /// Mark enabled, scheduled jobs without a recent successful backup as
+    /// overdue and notify once (until a successful run resets the state).
+    /// Jobs already failing are left alone: that problem was reported.
+    /// Returns the number of jobs that became overdue.
+    pub async fn check_overdue(&self, tz: chrono_tz::Tz) -> usize {
+        type JobRow = (i64, String, chrono::DateTime<Utc>, Option<chrono::DateTime<Utc>>);
+        let jobs: Vec<JobRow> = match sqlx::query_as(
+            "SELECT id, name, created_at, last_success_at FROM jobs WHERE enabled = 1 AND alert_state = 'ok'",
+        )
+        .fetch_all(&self.db)
+        .await
+        {
+            Ok(jobs) => jobs,
+            Err(e) => {
+                tracing::warn!("Overdue check failed: {}", e);
+                return 0;
+            }
+        };
+        let schedules: Vec<(i64, String)> =
+            sqlx::query_as("SELECT job_id, cron_expression FROM schedules WHERE enabled = 1")
+                .fetch_all(&self.db)
+                .await
+                .unwrap_or_default();
+
+        let now = Utc::now();
+        let mut count = 0;
+        for (job_id, name, created_at, last_success) in jobs {
+            let crons = schedules.iter().filter(|(j, _)| *j == job_id).map(|(_, c)| c.as_str());
+            let Some(limit) = crate::models::overdue_after(crons, tz) else {
+                continue;
+            };
+            // A run in progress will settle it either way
+            if now - last_success.unwrap_or(created_at) <= limit || self.is_job_running(job_id).await {
+                continue;
+            }
+            let updated = sqlx::query("UPDATE jobs SET alert_state = 'overdue' WHERE id = ? AND alert_state = 'ok'")
+                .bind(job_id)
+                .execute(&self.db)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
+            if updated == 0 {
+                continue;
+            }
+            tracing::warn!("Job '{}' is overdue (last success: {:?})", name, last_success);
+            count += 1;
+            let notification = notification_service::overdue_notification(job_id, &name, last_success, now, tz);
+            let notifier = self.notifier.clone();
+            self.tasks.spawn(async move { notifier.notify(notification).await });
+        }
+        count
+    }
+
+    /// Start a run of `job` in the background and return its run ID.
+    ///
+    /// The one way runs start (manual and scheduled): reserves the job so two
+    /// triggers cannot run it twice, creates the run record, and tracks the
+    /// task so a shutdown can wait for it.
+    pub async fn start_run(
+        self: &Arc<Self>,
+        job: Job,
+        schedule_id: Option<i64>,
+    ) -> Result<i64, StartRunError> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(StartRunError::ShuttingDown);
+        }
+        if !self.try_reserve_job(job.id).await {
+            return Err(StartRunError::AlreadyRunning);
+        }
+
+        let run_id = match sqlx::query("INSERT INTO job_runs (job_id, schedule_id, status) VALUES (?, ?, ?)")
+            .bind(job.id)
+            .bind(schedule_id)
+            .bind(JobRunStatus::Pending.as_str())
+            .execute(&self.db)
+            .await
+        {
+            Ok(r) => r.last_insert_rowid(),
+            Err(e) => {
+                self.release_job(job.id).await;
+                return Err(StartRunError::Database(e));
+            }
+        };
+
+        let service = Arc::clone(self);
+        self.tasks.spawn(async move {
+            let _ = sqlx::query(
+                "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'",
+            )
+            .bind(JobRunStatus::Running.as_str())
+            .bind(Utc::now())
+            .bind(run_id)
+            .execute(&service.db)
+            .await;
+
+            let result = service.execute_job(&job, run_id, schedule_id).await;
+            service.finalize_run(run_id, job.id, &job, result).await;
+        });
+
+        Ok(run_id)
+    }
+
+    /// Stop for a server shutdown: start no new runs, cancel the active ones,
+    /// and wait up to `grace` for them to stop (rsync is killed, drives are
+    /// unmounted, the run is stored as cancelled). Then store all log lines.
+    pub async fn shutdown(&self, grace: Duration) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+
+        let active: Vec<(i64,)> =
+            sqlx::query_as("SELECT id FROM job_runs WHERE status IN ('pending', 'running')")
+                .fetch_all(&self.db)
+                .await
+                .unwrap_or_default();
+        if !active.is_empty() {
+            tracing::info!("Shutdown: cancelling {} active run(s)", active.len());
+        }
+        for (run_id,) in active {
+            self.cancelled_runs.lock().await.insert(run_id);
+            let _ = sqlx::query(
+                "UPDATE job_runs SET status = ?, completed_at = ?, summary = ? \
+                 WHERE id = ? AND status IN ('pending', 'running')",
+            )
+            .bind(JobRunStatus::Cancelled.as_str())
+            .bind(Utc::now())
+            .bind(SHUTDOWN_SUMMARY)
+            .bind(run_id)
+            .execute(&self.db)
+            .await;
+            self.log(run_id, LogLevel::Warning, "Server is shutting down, cancelling the run", "system").await;
+        }
+
+        self.tasks.close();
+        if tokio::time::timeout(grace, self.tasks.wait()).await.is_err() {
+            tracing::warn!(
+                "Shutdown: {} run(s) did not stop within {:?}",
+                self.tasks.len(),
+                grace
+            );
+        }
+        self.log_writer.flush().await;
     }
 
     /// Update the max_runs_per_job setting dynamically
@@ -391,29 +644,17 @@ impl BackupService {
 
                     let log_tx = self.log_tx.clone();
                     // Persist as well, so compression output shows up in History.
-                    // log_fn is synchronous, so lines go through a channel to one
-                    // writer task: History is ordered by insert ID, and a task
-                    // per line could insert them out of order.
-                    let (line_tx, mut line_rx) =
-                        tokio::sync::mpsc::unbounded_channel::<(String, chrono::DateTime<Utc>)>();
-                    let logs_db = self.logs_db.clone();
-                    let writer = tokio::spawn(async move {
-                        while let Some((message, timestamp)) = line_rx.recv().await {
-                            let _ = sqlx::query(
-                                "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
-                            )
-                            .bind(run_id)
-                            .bind(LogLevel::Info.as_str())
-                            .bind(message)
-                            .bind("compress")
-                            .bind(timestamp)
-                            .execute(&logs_db)
-                            .await;
-                        }
-                    });
+                    // log_fn is synchronous; the writer keeps the lines in order.
+                    let log_writer = self.log_writer.clone();
                     let log_fn = move |msg: String| {
                         let timestamp = Utc::now();
-                        let _ = line_tx.send((msg.clone(), timestamp));
+                        log_writer.write_now(LogRow {
+                            run_id,
+                            level: LogLevel::Info,
+                            message: msg.clone(),
+                            source: "compress".to_string(),
+                            timestamp,
+                        });
                         let _ = log_tx.send(LogMessage {
                             run_id,
                             level: LogLevel::Info,
@@ -433,10 +674,6 @@ impl BackupService {
                         is_cancelled_fn,
                     )
                     .await;
-
-                    // log_fn (the only sender) is dropped now: let the writer
-                    // store the remaining lines before the next log entries
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), writer).await;
 
                     let archive_path = match archive_path {
                         Ok(p) => p,
@@ -598,7 +835,7 @@ impl BackupService {
             options: sync_options,
             credential,
             log_sender: self.log_tx.clone(),
-            logs_db: self.logs_db.clone(),
+            log_writer: self.log_writer.clone(),
             is_cancelled,
             oauth,
         });
@@ -635,30 +872,49 @@ impl BackupService {
     }
 
     async fn log(&self, run_id: i64, level: LogLevel, message: &str, source: &str) {
-        let timestamp = Utc::now();
-
-        let log_msg = LogMessage {
+        let row = LogRow {
             run_id,
             level,
             message: message.to_string(),
             source: source.to_string(),
-            timestamp,
+            timestamp: Utc::now(),
         };
+        // Broadcast to WebSocket clients, then store (batched)
+        let _ = self.log_tx.send(LogMessage {
+            run_id,
+            level,
+            message: row.message.clone(),
+            source: row.source.clone(),
+            timestamp: row.timestamp,
+        });
+        self.log_writer.write(row).await;
+    }
 
-        // Broadcast to WebSocket clients
-        let _ = self.log_tx.send(log_msg);
+    /// Store a line, wait until it and all earlier lines are in the database,
+    /// then broadcast it. For messages that make clients reload the log.
+    async fn log_stored(&self, run_id: i64, level: LogLevel, message: &str, source: &str) {
+        let row = LogRow {
+            run_id,
+            level,
+            message: message.to_string(),
+            source: source.to_string(),
+            timestamp: Utc::now(),
+        };
+        let msg = LogMessage {
+            run_id,
+            level,
+            message: row.message.clone(),
+            source: row.source.clone(),
+            timestamp: row.timestamp,
+        };
+        self.log_writer.write(row).await;
+        self.log_writer.flush().await;
+        let _ = self.log_tx.send(msg);
+    }
 
-        // Store in logs database (separate from main database for performance)
-        let _ = sqlx::query(
-            "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(run_id)
-        .bind(level.as_str())
-        .bind(message)
-        .bind(source)
-        .bind(timestamp)
-        .execute(&self.logs_db)
-        .await;
+    /// Wait until every queued log line is stored.
+    pub async fn flush_logs(&self) {
+        self.log_writer.flush().await;
     }
 
     /// Finalise a completed job run: write status/stats to the DB, update storage info,
@@ -740,14 +996,17 @@ impl BackupService {
             }
         }
 
-        // After the status is stored, so clients reloading on this event see it
-        self.log(
+        // After the status and the whole log are stored, so clients reloading
+        // on this event see both
+        self.log_stored(
             run_id,
             LogLevel::Info,
             &format!("{}: {}", RUN_FINISHED_PREFIX, final_status.as_str()),
             "system",
         )
         .await;
+
+        self.notify_run_result(run_id, job, final_status).await;
 
         self.cleanup_old_runs(job_id).await;
     }
@@ -959,5 +1218,266 @@ mod last_success_tests {
         sqlx::query("UPDATE jobs SET last_success_at = '2026-11-24T02:00:00Z' WHERE id = 1").execute(&db).await.unwrap();
         crate::db::run_migrations(&db).await.unwrap();
         assert_eq!(last_success(&db, 1).await.unwrap().to_rfc3339(), "2026-11-24T02:00:00+00:00");
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use std::io::Write;
+
+    async fn service() -> (SqlitePool, SqlitePool, Arc<BackupService>) {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(1000);
+        let service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx, None, credentials));
+        (db, logs_db, service)
+    }
+
+    async fn slow_local_job(db: &SqlitePool, dir: &Path) -> Job {
+        let src = dir.join("src");
+        let dst = dir.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        // 20 MB at 200 KB/s: far longer than the test waits
+        let mut f = std::fs::File::create(src.join("big.bin")).unwrap();
+        f.write_all(&vec![7u8; 20 * 1024 * 1024]).unwrap();
+
+        let destination = serde_json::json!({
+            "type": "local", "mount_point": dst, "backup_subdir": "b",
+            "auto_mount": false, "auto_unmount": false
+        });
+        let id = sqlx::query(
+            "INSERT INTO jobs (name, mount_point, source_dirs, destination_type, destination_config, sync_options) \
+             VALUES ('slow', ?, ?, 'local', ?, ?)",
+        )
+        .bind(dst.to_string_lossy().to_string())
+        .bind(serde_json::json!([src]).to_string())
+        .bind(destination.to_string())
+        .bind(r#"{"bandwidth_limit_kbps": 200, "space_check_mode": "none"}"#)
+        .execute(db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(id).fetch_one(db).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_running_runs_and_blocks_new_ones() {
+        let (db, logs_db, service) = service().await;
+        let dir = tempfile::tempdir().unwrap();
+        let job = slow_local_job(&db, dir.path()).await;
+
+        let run_id = service.start_run(job.clone(), None).await.unwrap();
+        // Wait until rsync is running
+        for _ in 0..100 {
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_entries WHERE message LIKE 'Spawned rsync%'")
+                .fetch_one(&logs_db)
+                .await
+                .unwrap();
+            if n > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(service.is_job_running(job.id).await, "run should still be active");
+
+        let started = std::time::Instant::now();
+        service.shutdown(Duration::from_secs(10)).await;
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+
+        let (status, summary): (String, Option<String>) =
+            sqlx::query_as("SELECT status, summary FROM job_runs WHERE id = ?")
+                .bind(run_id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(status, "cancelled");
+        assert_eq!(summary.as_deref(), Some(SHUTDOWN_SUMMARY));
+        assert!(!service.is_job_running(job.id).await);
+
+        // The whole log is stored, ending with the final status
+        let (last,): (String,) = sqlx::query_as("SELECT message FROM log_entries WHERE job_run_id = ? ORDER BY id DESC LIMIT 1")
+            .bind(run_id)
+            .fetch_one(&logs_db)
+            .await
+            .unwrap();
+        assert_eq!(last, format!("{}: cancelled", RUN_FINISHED_PREFIX));
+
+        assert!(matches!(service.start_run(job, None).await, Err(StartRunError::ShuttingDown)));
+    }
+
+    #[tokio::test]
+    async fn shutdown_without_runs_returns_at_once() {
+        let (_db, _logs, service) = service().await;
+        tokio::time::timeout(Duration::from_secs(2), service.shutdown(Duration::from_secs(10)))
+            .await
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod notification_flow_tests {
+    use super::*;
+    use crate::services::notification_service::{NotificationSettings, WebhookSettings};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A webhook receiver that reports the "event" field of each request.
+    async fn webhook_receiver() -> (String, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buf).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text
+                                .lines()
+                                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length: ").map(|v| v.trim().parse::<usize>().unwrap()))
+                                .unwrap_or(0);
+                            if buf.len() >= end + 4 + len {
+                                let body: serde_json::Value = serde_json::from_str(&text[end + 4..]).unwrap();
+                                let _ = tx.send(body["event"].as_str().unwrap().to_string());
+                                break;
+                            }
+                        }
+                    }
+                    let _ = sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n").await;
+                });
+            }
+        });
+        (url, rx)
+    }
+
+    async fn next_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Option<String> {
+        tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.ok().flatten()
+    }
+
+    async fn setup(success: bool) -> (SqlitePool, BackupService, tokio::sync::mpsc::UnboundedReceiver<String>, Job) {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = BackupService::new(db.clone(), logs_db, log_tx, None, credentials);
+
+        let (url, rx) = webhook_receiver().await;
+        let mut settings = NotificationSettings {
+            webhook: WebhookSettings { enabled: true, url, auth_header: String::new() },
+            ..Default::default()
+        };
+        settings.events.success = success;
+        settings.save(&db).await.unwrap();
+
+        let id = sqlx::query(
+            "INSERT INTO jobs (name, mount_point, source_dirs, destination_type, destination_config) \
+             VALUES ('Docs', '', '[]', 'local', '{}')",
+        )
+        .execute(&db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(id).fetch_one(&db).await.unwrap();
+        (db, service, rx, job)
+    }
+
+    async fn finish(db: &SqlitePool, service: &BackupService, job: &Job, errors: i32) {
+        let run_id = sqlx::query("INSERT INTO job_runs (job_id, status, started_at) VALUES (?, 'running', ?)")
+            .bind(job.id)
+            .bind(Utc::now())
+            .execute(db)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+        let result = JobResult { error_count: errors, exit_code: if errors > 0 { 1 } else { 0 }, ..Default::default() };
+        service.finalize_run(run_id, job.id, job, Ok(result)).await;
+    }
+
+    async fn alert_state(db: &SqlitePool, job_id: i64) -> String {
+        sqlx::query_as::<_, (String,)>("SELECT alert_state FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn failure_then_recovery_then_quiet_success() {
+        let (db, service, mut rx, job) = setup(false).await;
+
+        finish(&db, &service, &job, 1).await;
+        assert_eq!(next_event(&mut rx).await.as_deref(), Some("failed"));
+        assert_eq!(alert_state(&db, job.id).await, "failed");
+
+        finish(&db, &service, &job, 0).await;
+        assert_eq!(next_event(&mut rx).await.as_deref(), Some("recovered"));
+        assert_eq!(alert_state(&db, job.id).await, "ok");
+
+        // "Every successful run" is off: nothing more
+        finish(&db, &service, &job, 0).await;
+        assert_eq!(next_event(&mut rx).await, None);
+    }
+
+    #[tokio::test]
+    async fn success_events_when_enabled() {
+        let (db, service, mut rx, job) = setup(true).await;
+        finish(&db, &service, &job, 0).await;
+        assert_eq!(next_event(&mut rx).await.as_deref(), Some("success"));
+    }
+
+    #[tokio::test]
+    async fn overdue_is_reported_once() {
+        let (db, service, mut rx, job) = setup(false).await;
+        sqlx::query("INSERT INTO schedules (job_id, enabled, cron_expression) VALUES (?, 1, '0 2 * * *')")
+            .bind(job.id)
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE jobs SET last_success_at = ? WHERE id = ?")
+            .bind(Utc::now() - chrono::Duration::days(5))
+            .bind(job.id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        assert_eq!(service.check_overdue(chrono_tz::Tz::UTC).await, 1);
+        assert_eq!(next_event(&mut rx).await.as_deref(), Some("overdue"));
+        assert_eq!(alert_state(&db, job.id).await, "overdue");
+        assert_eq!(service.check_overdue(chrono_tz::Tz::UTC).await, 0);
+
+        // A successful run ends it
+        finish(&db, &service, &job, 0).await;
+        assert_eq!(next_event(&mut rx).await.as_deref(), Some("recovered"));
+    }
+
+    #[tokio::test]
+    async fn recent_backup_is_not_overdue() {
+        let (db, service, _rx, job) = setup(false).await;
+        sqlx::query("INSERT INTO schedules (job_id, enabled, cron_expression) VALUES (?, 1, '0 2 * * *')")
+            .bind(job.id)
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE jobs SET last_success_at = ? WHERE id = ?")
+            .bind(Utc::now() - chrono::Duration::hours(30))
+            .bind(job.id)
+            .execute(&db)
+            .await
+            .unwrap();
+        assert_eq!(service.check_overdue(chrono_tz::Tz::UTC).await, 0);
     }
 }

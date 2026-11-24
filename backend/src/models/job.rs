@@ -44,6 +44,9 @@ pub struct Job {
     /// Last run that completed without errors (dry runs excluded)
     pub last_success_at: Option<DateTime<Utc>>,
 
+    /// Notification state: "ok", "failed" or "overdue"
+    pub alert_state: String,
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -223,6 +226,11 @@ pub struct JobResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_success_at: Option<DateTime<Utc>>,
 
+    /// A backup is overdue when the last success (or the job's creation) is
+    /// longer ago than this; None when the job has no usable schedule
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overdue_after_secs: Option<i64>,
+
     #[serde(default)]
     pub schedules: Vec<Schedule>,
 }
@@ -291,6 +299,7 @@ impl From<Job> for JobResponse {
             dest_storage_total: job.dest_storage_total,
             dest_storage_updated_at: job.dest_storage_updated_at,
             last_success_at: job.last_success_at,
+            overdue_after_secs: None,
             schedules: vec![],
         }
     }
@@ -303,7 +312,13 @@ impl JobResponse {
         self
     }
 
-    pub fn with_schedules(mut self, schedules: Vec<Schedule>) -> Self {
+    /// Attach the schedules and derive the overdue limit from the enabled ones.
+    pub fn with_schedules_in(mut self, schedules: Vec<Schedule>, tz: chrono_tz::Tz) -> Self {
+        self.overdue_after_secs = crate::models::overdue_after(
+            schedules.iter().filter(|s| s.enabled).map(|s| s.cron_expression.as_str()),
+            tz,
+        )
+        .map(|d| d.num_seconds());
         self.schedules = schedules;
         self
     }
@@ -343,6 +358,7 @@ mod tests {
             dest_storage_total: None,
             dest_storage_updated_at: None,
             last_success_at: None,
+            alert_state: "ok".to_string(),
             created_at: now,
             updated_at: now,
         }

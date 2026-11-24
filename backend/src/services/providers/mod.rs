@@ -22,7 +22,6 @@ use crate::models::{CredentialData, DestinationConfig, LogLevel, LogMessage, Syn
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -92,7 +91,8 @@ pub struct SyncContext {
     pub options: SyncOptions,
     pub credential: Option<CredentialData>,
     pub log_sender: broadcast::Sender<LogMessage>,
-    pub logs_db: SqlitePool,
+    /// Stores log lines in batches (see `LogWriter`)
+    pub log_writer: crate::services::LogWriter,
     /// Callback to check if the run has been cancelled
     pub is_cancelled: CancellationChecker,
     /// Renews OAuth access tokens during long runs (Google Drive, OneDrive)
@@ -114,17 +114,16 @@ impl SyncContext {
         // Broadcast to WebSocket clients
         let _ = self.log_sender.send(log_msg);
 
-        // Persist to logs database
-        let _ = sqlx::query(
-            "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(self.run_id)
-        .bind(level.as_str())
-        .bind(message)
-        .bind(source)
-        .bind(timestamp)
-        .execute(&self.logs_db)
-        .await;
+        // Persist (batched; waits only while the writer's queue is full)
+        self.log_writer
+            .write(crate::services::LogRow {
+                run_id: self.run_id,
+                level,
+                message: message.to_string(),
+                source: source.to_string(),
+                timestamp,
+            })
+            .await;
     }
 
     pub async fn log_info(&self, message: &str, source: &str) {

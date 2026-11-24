@@ -3,6 +3,7 @@ pub mod config_backup;
 pub mod credentials;
 pub mod jobs;
 pub mod logs;
+pub mod notifications;
 pub mod providers;
 pub mod schedules;
 pub mod settings;

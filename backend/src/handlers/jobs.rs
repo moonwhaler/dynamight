@@ -12,8 +12,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::{ApiError, ErrorCode};
-use crate::models::{CompressDirsOptions, CreateJobRequest, DestinationConfig, Job, JobResponse, JobRunStatus, Schedule, UpdateJobRequest};
+use crate::models::{CompressDirsOptions, CreateJobRequest, DestinationConfig, Job, JobResponse, Schedule, UpdateJobRequest};
 use crate::services::providers::RsyncProvider;
+use crate::services::StartRunError;
 use crate::AppState;
 
 /// Validates rsync exclude patterns to prevent shell injection and unexpected behavior.
@@ -245,7 +246,9 @@ pub async fn list_jobs(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 .map(|(s, t)| (Some(s.clone()), *t))
                 .unwrap_or((None, None));
             let schedules = schedules_map.remove(&job_id).unwrap_or_default();
-            JobResponse::from(job).with_run_status(status, run_at).with_schedules(schedules)
+            JobResponse::from(job)
+                .with_run_status(status, run_at)
+                .with_schedules_in(schedules, state.config.timezone)
         })
         .collect();
 
@@ -638,42 +641,15 @@ pub async fn run_job(
         }
     };
 
-    // Atomically reserve the job so concurrent triggers cannot start it twice
-    if !state.backup_service.try_reserve_job(id).await {
-        return ApiError::job_already_running().into_response();
-    }
-
-    // Create job run
-    let result = sqlx::query("INSERT INTO job_runs (job_id, status) VALUES (?, ?)")
-        .bind(id)
-        .bind(JobRunStatus::Pending.as_str())
-        .execute(&state.db)
-        .await;
-
-    let run_id = match result {
-        Ok(r) => r.last_insert_rowid(),
-        Err(_) => {
-            state.backup_service.release_job(id).await;
-            return ApiError::new(ErrorCode::RunCreateFailed).into_response();
+    match state.backup_service.start_run(job, None).await {
+        Ok(run_id) => (StatusCode::OK, Json(json!({"runId": run_id}))).into_response(),
+        Err(StartRunError::AlreadyRunning) => ApiError::job_already_running().into_response(),
+        Err(StartRunError::ShuttingDown) => ApiError::new(ErrorCode::ServerShuttingDown).into_response(),
+        Err(StartRunError::Database(e)) => {
+            tracing::error!("Failed to create run for job {}: {}", id, e);
+            ApiError::new(ErrorCode::RunCreateFailed).into_response()
         }
-    };
-
-    let backup_service = state.backup_service.clone();
-    let db = state.db.clone();
-
-    tokio::spawn(async move {
-        let _ = sqlx::query("UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'")
-            .bind(JobRunStatus::Running.as_str())
-            .bind(Utc::now())
-            .bind(run_id)
-            .execute(&db)
-            .await;
-
-        let result = backup_service.execute_job(&job, run_id, None).await;
-        backup_service.finalize_run(run_id, id, &job, result).await;
-    });
-
-    (StatusCode::OK, Json(json!({"runId": run_id}))).into_response()
+    }
 }
 
 pub async fn cancel_job(

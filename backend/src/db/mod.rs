@@ -154,6 +154,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .await?;
     }
 
+    // Notification state per job: 'ok', 'failed' or 'overdue'. "Overdue" is
+    // sent once per problem and "recovered" only after one.
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN alert_state TEXT NOT NULL DEFAULT 'ok'")
+        .execute(pool)
+        .await;
+
     // Last accepted TOTP time step (prevents replaying a code)
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN totp_last_step INTEGER DEFAULT NULL")
         .execute(pool)

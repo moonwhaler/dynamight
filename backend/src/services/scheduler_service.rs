@@ -1,5 +1,4 @@
-use crate::models::JobRunStatus;
-use crate::services::BackupService;
+use crate::services::{BackupService, StartRunError};
 use chrono::Utc;
 use chrono_tz::Tz;
 use crate::models::parse_cron;
@@ -27,10 +26,16 @@ impl SchedulerService {
         }
 
         let mut ticker = interval(Duration::from_secs(60));
+        let mut tick: u64 = 0;
 
         loop {
             ticker.tick().await;
             self.check_and_run_due_jobs().await;
+            // Overdue backups: every 10 minutes is plenty for limits of hours or days
+            if tick.is_multiple_of(10) {
+                self.backup_service.check_overdue(self.timezone).await;
+            }
+            tick += 1;
         }
     }
 
@@ -133,61 +138,19 @@ impl SchedulerService {
                 }
             };
 
-            // Atomically reserve the job (skips if a manual or other scheduled run is active)
-            if !self.backup_service.try_reserve_job(schedule.job_id).await {
-                tracing::warn!(
+            // Skipped if a manual or other scheduled run is active
+            match self.backup_service.start_run(job, Some(schedule.schedule_id)).await {
+                Ok(_) => {}
+                Err(StartRunError::AlreadyRunning) => tracing::warn!(
                     "Job {} is already running, skipping scheduled run",
                     schedule.job_name
-                );
-                continue;
-            }
-
-            // Create job run record
-            let run_id = match self
-                .create_job_run(schedule.job_id, Some(schedule.schedule_id))
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::error!("Failed to create job run: {}", e);
-                    self.backup_service.release_job(schedule.job_id).await;
-                    continue;
+                ),
+                Err(StartRunError::ShuttingDown) => return,
+                Err(StartRunError::Database(e)) => {
+                    tracing::error!("Failed to create job run: {}", e)
                 }
-            };
-
-            // Spawn job execution
-            let backup_service = self.backup_service.clone();
-            let db = self.db.clone();
-            let job_id = schedule.job_id;
-            let schedule_id = schedule.schedule_id;
-
-            tokio::spawn(async move {
-                let _ = sqlx::query(
-                    "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'",
-                )
-                .bind(JobRunStatus::Running.as_str())
-                .bind(Utc::now())
-                .bind(run_id)
-                .execute(&db)
-                .await;
-
-                let result = backup_service.execute_job(&job, run_id, Some(schedule_id)).await;
-                backup_service.finalize_run(run_id, job_id, &job, result).await;
-            });
+            }
         }
-    }
-
-    async fn create_job_run(&self, job_id: i64, schedule_id: Option<i64>) -> anyhow::Result<i64> {
-        let result = sqlx::query(
-            "INSERT INTO job_runs (job_id, schedule_id, status) VALUES (?, ?, ?)",
-        )
-        .bind(job_id)
-        .bind(schedule_id)
-        .bind(JobRunStatus::Pending.as_str())
-        .execute(&self.db)
-        .await?;
-
-        Ok(result.last_insert_rowid())
     }
 }
 

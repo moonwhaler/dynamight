@@ -37,6 +37,8 @@ pub enum ErrorCode {
     // Job errors
     JobNotFound,
     JobAlreadyRunning,
+    /// No new runs start while the server shuts down
+    ServerShuttingDown,
     JobNameExists,
     JobCreateFailed,
     JobUpdateFailed,
@@ -117,6 +119,9 @@ pub enum ErrorCode {
     BackupUnsupportedVersion,
     BackupJobsRunning,
     BackupPasswordTooShort,
+
+    // Notification settings (params: field)
+    NotificationSettingsInvalid,
 
     // Generic
     InternalError,
@@ -348,6 +353,9 @@ impl IntoResponse for ApiError {
             // 429 Too Many Requests
             ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
 
+            // 503 Service Unavailable
+            ErrorCode::ServerShuttingDown => StatusCode::SERVICE_UNAVAILABLE,
+
             // 409 Conflict
             ErrorCode::JobAlreadyRunning
             | ErrorCode::JobNameExists
@@ -386,7 +394,8 @@ impl IntoResponse for ApiError {
             | ErrorCode::BackupInvalidPassword
             | ErrorCode::BackupInvalidFormat
             | ErrorCode::BackupUnsupportedVersion
-            | ErrorCode::BackupPasswordTooShort => StatusCode::BAD_REQUEST,
+            | ErrorCode::BackupPasswordTooShort
+            | ErrorCode::NotificationSettingsInvalid => StatusCode::BAD_REQUEST,
 
             // 409 Conflict - backup refused while jobs running
             ErrorCode::BackupJobsRunning => StatusCode::CONFLICT,

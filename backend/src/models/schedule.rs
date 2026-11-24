@@ -153,6 +153,57 @@ fn expand_standard_dow_item(item: &str) -> Option<Vec<u32>> {
     Some((start..=end).step_by(step.unwrap_or(1) as usize).collect())
 }
 
+/// Longest time between two consecutive runs of a schedule, measured over its
+/// next runs in `tz` (so weekday lists, short months and DST are included).
+/// None for an invalid expression or one with fewer than two upcoming runs.
+pub fn max_schedule_gap(cron_expr: &str, tz: chrono_tz::Tz) -> Option<chrono::Duration> {
+    let schedule = parse_cron(cron_expr).ok()?;
+    let times: Vec<_> = schedule.upcoming(tz).take(64).collect();
+    times.windows(2).map(|w| w[1] - w[0]).max()
+}
+
+/// The overdue limit for a job's enabled schedules: twice the gap of its most
+/// frequent schedule plus an hour (one missed run is tolerated, two are not).
+/// Shared by the dashboard (via the job list) and the overdue notifications.
+pub fn overdue_after<'a>(
+    cron_exprs: impl IntoIterator<Item = &'a str>,
+    tz: chrono_tz::Tz,
+) -> Option<chrono::Duration> {
+    cron_exprs
+        .into_iter()
+        .filter_map(|c| max_schedule_gap(c, tz))
+        .min()
+        .map(|gap| gap * 2 + chrono::Duration::hours(1))
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+    use chrono::Duration;
+    use chrono_tz::Tz;
+
+    #[test]
+    fn measures_the_longest_gap() {
+        assert_eq!(max_schedule_gap("*/15 * * * *", Tz::UTC), Some(Duration::minutes(15)));
+        assert_eq!(max_schedule_gap("30 2 * * *", Tz::UTC), Some(Duration::days(1)));
+        // Mon + Fri: Friday to Monday
+        assert_eq!(max_schedule_gap("0 2 * * 1,5", Tz::UTC), Some(Duration::days(4)));
+        // Weekdays only: Friday to Monday
+        assert_eq!(max_schedule_gap("0 2 * * 1-5", Tz::UTC), Some(Duration::days(3)));
+        // Day 31 skips short months
+        assert!(max_schedule_gap("0 3 31 * *", Tz::UTC).unwrap() >= Duration::days(61));
+        assert_eq!(max_schedule_gap("not cron", Tz::UTC), None);
+    }
+
+    #[test]
+    fn overdue_limit_uses_the_most_frequent_schedule() {
+        let limit = overdue_after(["0 3 1 * *", "0 2 * * *"], Tz::UTC);
+        assert_eq!(limit, Some(Duration::days(2) + Duration::hours(1)));
+        assert_eq!(overdue_after(["bogus"], Tz::UTC), None);
+        assert_eq!(overdue_after([], Tz::UTC), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -72,7 +72,7 @@ async fn run(
         },
         credential: Some(credential.clone()),
         log_sender: tx,
-        logs_db: db.clone(),
+        log_writer: dynamight::services::LogWriter::spawn(db.clone()),
         is_cancelled: Arc::new(|_| false),
         oauth: None,
     });

@@ -1,42 +1,4 @@
 import type { Job } from '../types';
-import { describeCron } from './cron';
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-
-/** Slack for long runs, the scheduler's one-minute tick and clock skew */
-const GRACE_MS = HOUR;
-
-/**
- * Longest time between two runs of a cron schedule, or null when the
- * expression is too unusual to tell (then no overdue warning is given).
- */
-export function maxScheduleGapMs(cron: string): number | null {
-  const d = describeCron(cron);
-  switch (d.kind) {
-    case 'every_minutes':
-      return Math.min(d.count, 60) * MINUTE;
-    case 'every_hours':
-      return Math.min(d.count, 24) * HOUR;
-    case 'daily':
-      return DAY;
-    case 'days': {
-      // Largest distance between neighbouring weekdays, across the week end
-      let gap = 0;
-      d.days.forEach((day, i) => {
-        const next = i + 1 < d.days.length ? d.days[i + 1] : d.days[0] + 7;
-        gap = Math.max(gap, next - day);
-      });
-      return gap * DAY;
-    }
-    case 'monthly':
-      // Day 29-31 is skipped in shorter months
-      return (d.day > 28 ? 62 : 31) * DAY;
-    default:
-      return null;
-  }
-}
 
 export type JobHealth =
   /** Nothing to report */
@@ -49,25 +11,18 @@ export type JobHealth =
 /**
  * Whether a job needs attention.
  *
- * A job is overdue when it is scheduled and the last successful backup (or,
- * if there never was one, the job's creation) lies more than twice the
- * longest schedule gap in the past: one missed run is tolerated, two are not.
+ * Overdue uses the limit the server derives from the job's enabled schedules
+ * (`overdue_after_secs`: twice the longest gap of the most frequent schedule
+ * plus an hour), the same rule the overdue notifications use. The reference
+ * time is the last successful backup, or the job's creation if there was none.
  */
 export function jobHealth(job: Job, now = Date.now()): JobHealth {
   if (job.last_run_status === 'failed') return { state: 'failed' };
-  if (!job.enabled) return { state: 'ok' };
-
-  const gaps = (job.schedules ?? [])
-    .filter((s) => s.enabled)
-    .map((s) => maxScheduleGapMs(s.cron_expression));
-  // The most frequent schedule sets the expectation; unknown ones are ignored
-  const known = gaps.filter((g): g is number => g !== null);
-  if (known.length === 0) return { state: 'ok' };
-  const allowed = 2 * Math.min(...known) + GRACE_MS;
+  if (!job.enabled || !job.overdue_after_secs) return { state: 'ok' };
 
   const since = job.last_success_at ?? job.created_at;
   const sinceMs = Date.parse(since);
-  if (Number.isNaN(sinceMs) || now - sinceMs <= allowed) return { state: 'ok' };
+  if (Number.isNaN(sinceMs) || now - sinceMs <= job.overdue_after_secs * 1000) return { state: 'ok' };
   return { state: 'overdue', lastSuccessAt: job.last_success_at ?? null };
 }
 

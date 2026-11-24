@@ -375,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Start scheduler
-    let scheduler = SchedulerService::new(db.clone(), backup_service, config.timezone);
+    let scheduler = SchedulerService::new(db.clone(), backup_service.clone(), config.timezone);
     tokio::spawn(async move {
         scheduler.start().await;
     });
@@ -397,16 +397,41 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(
+    // On SIGTERM/Ctrl+C: stop the backups cleanly first (systemd allows 30 s,
+    // see TimeoutStopSec), then let the HTTP server finish its requests.
+    let http_stop = Arc::new(tokio::sync::Notify::new());
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .with_graceful_shutdown({
+        let http_stop = Arc::clone(&http_stop);
+        async move { http_stop.notified().await }
+    });
+
+    let stop = async {
+        shutdown_signal().await;
+        backup_service.shutdown(SHUTDOWN_GRACE).await;
+        http_stop.notify_one();
+        // Open live-log WebSockets would keep the server waiting
+        tokio::time::sleep(HTTP_SHUTDOWN_GRACE).await;
+    };
+
+    tokio::select! {
+        result = server => result?,
+        _ = stop => tracing::warn!("Connections still open after {:?}, exiting", HTTP_SHUTDOWN_GRACE),
+    }
 
     tracing::info!("Server shut down gracefully");
     Ok(())
 }
+
+/// How long running backups get to stop on shutdown (kill rsync, unmount,
+/// store the run as cancelled). Below systemd's TimeoutStopSec (30 s) and the
+/// compose file's stop_grace_period, so it finishes before a SIGKILL.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long open HTTP connections may delay the exit after that.
+const HTTP_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 async fn shutdown_signal() {
     let ctrl_c = async {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { jobHealth, maxScheduleGapMs, nextScheduledRun, oldestBackup } from './backupHealth';
+import { jobHealth, nextScheduledRun, oldestBackup } from './backupHealth';
 import type { Job, Schedule } from '../types';
 
 const HOUR = 3_600_000;
@@ -23,26 +23,11 @@ function job(extra: Partial<Job> = {}): Job {
     last_run_status: 'completed',
     last_success_at: ago(HOUR),
     schedules: [schedule('0 2 * * *')],
+    // What the server sends for a daily schedule: 2 days + 1 hour
+    overdue_after_secs: (2 * DAY + HOUR) / 1000,
     ...extra,
   } as Job;
 }
-
-describe('maxScheduleGapMs', () => {
-  it('knows the common patterns', () => {
-    expect(maxScheduleGapMs('*/15 * * * *')).toBe(15 * 60_000);
-    expect(maxScheduleGapMs('0 */6 * * *')).toBe(6 * HOUR);
-    expect(maxScheduleGapMs('30 2 * * *')).toBe(DAY);
-    expect(maxScheduleGapMs('0 3 1 * *')).toBe(31 * DAY);
-    expect(maxScheduleGapMs('0 3 31 * *')).toBe(62 * DAY);
-    expect(maxScheduleGapMs('0 1 1-5 6 *')).toBeNull();
-  });
-
-  it('measures weekday gaps across the week end', () => {
-    // Monday and Friday: Friday -> Monday is the longest gap
-    expect(maxScheduleGapMs('0 2 * * 1,5')).toBe(4 * DAY);
-    expect(maxScheduleGapMs('0 2 * * 0')).toBe(7 * DAY);
-  });
-});
 
 describe('jobHealth', () => {
   it('reports a failed last run', () => {
@@ -62,17 +47,15 @@ describe('jobHealth', () => {
     expect(jobHealth(job({ last_success_at: null }), NOW)).toEqual({ state: 'overdue', lastSuccessAt: null });
   });
 
-  it('expects nothing of disabled or unscheduled jobs', () => {
+  it('expects nothing of disabled jobs or jobs without an overdue limit', () => {
     expect(jobHealth(job({ enabled: false, last_success_at: null }), NOW).state).toBe('ok');
-    expect(jobHealth(job({ schedules: [], last_success_at: null }), NOW).state).toBe('ok');
-    expect(
-      jobHealth(job({ schedules: [schedule('0 2 * * *', { enabled: false })], last_success_at: null }), NOW).state
-    ).toBe('ok');
+    expect(jobHealth(job({ overdue_after_secs: null, last_success_at: null }), NOW).state).toBe('ok');
   });
 
-  it('uses the most frequent schedule', () => {
-    const schedules = [schedule('0 3 1 * *'), schedule('0 2 * * *')];
-    expect(jobHealth(job({ schedules, last_success_at: ago(5 * DAY) }), NOW).state).toBe('overdue');
+  it('follows the limit the server sends', () => {
+    const weekly = (8 * DAY) / 1000;
+    expect(jobHealth(job({ overdue_after_secs: weekly, last_success_at: ago(5 * DAY) }), NOW).state).toBe('ok');
+    expect(jobHealth(job({ overdue_after_secs: weekly, last_success_at: ago(9 * DAY) }), NOW).state).toBe('overdue');
   });
 });
 

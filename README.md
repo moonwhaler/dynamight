@@ -40,7 +40,9 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Preferences persisted per browser
 
 - **Monitoring & History**
-  - Dashboard with job cards, run statistics, and free-space indicators for local destinations
+  - Dashboard showing jobs that need attention (last run failed, or no successful backup for twice the schedule interval), the oldest backup and the next scheduled run
+  - Notifications via [ntfy](https://ntfy.sh) and a generic JSON webhook for failed, overdue, recovered and (optionally) every successful run
+  - Free-space indicators for local destinations
   - Searchable run history with status, job, and date-range filters
   - Full log viewer for every run (live while running, stored afterwards)
   - Configurable history retention
@@ -134,6 +136,7 @@ services:
     image: ghcr.io/moonwhaler/dynamight:latest
     container_name: dynamight
     restart: unless-stopped
+    stop_grace_period: 30s              # time for running backups to stop cleanly
     cap_add:
       - SYS_ADMIN
     devices:
@@ -228,6 +231,28 @@ Any setting can be overridden via environment variables using SCREAMING_SNAKE_CA
 | `security.secure_cookies` | `true` | Require HTTPS for cookies |
 | `security.allowed_browse_paths` | `["/mnt", "/home", "/media"]` | Paths users can browse |
 | `rate_limit.max_attempts` | `5` | Max failed auth attempts before lockout |
+
+### Notifications
+
+Set up under **Settings → Notifications**. The server sends them, so they arrive without an open browser. Choose the events (run failed, backup overdue, recovered, every successful run) and one or both channels:
+
+- **ntfy**: server (default `https://ntfy.sh`), topic and an optional access token. On a public server anyone who knows the topic can read it, so pick a hard-to-guess topic or use a token.
+- **Webhook**: any URL, with an optional `Authorization` header. Dynamight POSTs JSON:
+
+```json
+{
+  "event": "failed",
+  "title": "Backup failed: Photos",
+  "message": "Run #12 failed in 3m 12s. 0 file(s), 0 B transferred, 1 error(s).\nLast error: …",
+  "timestamp": "2026-11-24T02:03:12Z",
+  "url": "https://backup.example.com/#/jobs/3",
+  "job": { "id": 3, "name": "Photos" },
+  "run": { "id": 12, "status": "failed", "started_at": "…", "completed_at": "…",
+           "files_transferred": 0, "bytes_transferred": 0, "error_count": 1 }
+}
+```
+
+`event` is `failed`, `overdue`, `recovered`, `success` or `test`; `run` is `null` for `overdue` and `test`. A backup is overdue when the last successful run is more than twice the longest gap of the job's most frequent schedule ago (plus an hour); this is sent once, and "recovered" follows the next successful run. **Send test** tries the values in the form without saving them. Set the Dynamight address to make notifications link to the job.
 
 ## Local Development
 

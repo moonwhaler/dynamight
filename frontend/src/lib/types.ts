@@ -257,8 +257,43 @@ export interface Job {
 
   /** Last run that completed without errors (dry runs excluded) */
   last_success_at?: string | null;
+  /** Overdue limit in seconds from the enabled schedules (server-side rule) */
+  overdue_after_secs?: number | null;
 
   schedules?: Schedule[];
+}
+
+/** Which events send notifications */
+export interface NotificationEvents {
+  failed: boolean;
+  overdue: boolean;
+  recovered: boolean;
+  success: boolean;
+}
+
+/** Notification settings as the server returns them (secrets only as "set") */
+export interface NotificationSettings {
+  ntfy: { enabled: boolean; server: string; topic: string; token_set: boolean };
+  webhook: { enabled: boolean; url: string; auth_header_set: boolean };
+  events: NotificationEvents;
+  base_url: string;
+}
+
+/**
+ * Notification settings to save or test. Secrets: null keeps the stored
+ * value, "" removes it, anything else replaces it.
+ */
+export interface NotificationSettingsUpdate {
+  ntfy: { enabled: boolean; server: string; topic: string; token: string | null };
+  webhook: { enabled: boolean; url: string; auth_header: string | null };
+  events: NotificationEvents;
+  base_url: string;
+}
+
+export interface NotificationTestResult {
+  channel: 'ntfy' | 'webhook';
+  ok: boolean;
+  error?: string;
 }
 
 export interface Schedule {

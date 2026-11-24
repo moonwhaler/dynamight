@@ -4,6 +4,10 @@ services:
     container_name: dynamight
     restart: unless-stopped
 
+    # On stop, running backups get 20 s to cancel cleanly (kill rsync,
+    # unmount USB drives). The default of 10 s would kill them first.
+    stop_grace_period: 30s
+
     # Required for mount operations
     cap_add:
       - SYS_ADMIN
