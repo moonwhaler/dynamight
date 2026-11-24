@@ -26,7 +26,7 @@ rand = "0.8"
 # TOTP / 2FA
 totp-rs = { version = "5", features = ["otpauth", "gen_secret"] }
 qrcode = "0.14"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.22"
 
 # Scheduling

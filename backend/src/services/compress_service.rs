@@ -351,6 +351,10 @@ pub async fn compress_directory(
                 cmd.args(["-x", rel.as_str()]);
                 cmd.args(["-x", &format!("{}/*", rel)]);
             }
+            // The file manager's trash and unfinished copies and uploads
+            for pattern in ["*/.dynamight-trash/*", "*.dynamight-part", "*.dynamight-upload-*"] {
+                cmd.args(["-x", pattern]);
+            }
             cmd.current_dir(parent_dir);
             // zip exit 18 = some files could not be read; the archive is still written
             (cmd, &[18])
@@ -370,6 +374,10 @@ pub async fn compress_directory(
             // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
             for rel in &rel_excludes {
                 cmd.arg(format!("--exclude={}", rel));
+            }
+            // The file manager's trash and unfinished copies and uploads
+            for pattern in crate::services::path_guard::INTERNAL_EXCLUDES {
+                cmd.arg(format!("--exclude={}", pattern));
             }
             cmd.arg(dir_name);
             // GNU tar exit 1 = some files changed while being read; the archive is complete

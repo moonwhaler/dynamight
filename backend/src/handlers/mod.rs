@@ -1,6 +1,9 @@
 pub mod auth;
 pub mod config_backup;
 pub mod credentials;
+pub mod file_actions;
+pub mod file_preview;
+pub mod files;
 pub mod jobs;
 pub mod logs;
 pub mod notifications;
@@ -9,4 +12,5 @@ pub mod schedules;
 pub mod settings;
 pub mod system;
 pub mod totp;
+pub mod uploads;
 pub mod websocket;

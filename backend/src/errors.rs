@@ -100,6 +100,22 @@ pub enum ErrorCode {
     DeleteFailed,
     DeleteVerificationRequired,
     DeleteVerificationFailed,
+    /// A file or folder name the file manager does not accept
+    NameInvalid,
+    /// Something with that name already exists
+    NameTaken,
+    /// A copy, move or rename failed
+    FileOperationFailed,
+    FileTaskNotFound,
+    /// The target drive has too little free space
+    NotEnoughSpace,
+    /// Copy or move into the folder itself, or onto itself
+    TargetInsideSource,
+    UploadNotFound,
+    /// A chunk does not start where the upload stands (params: offset)
+    UploadOffsetMismatch,
+    /// Another request is writing to this upload
+    UploadBusy,
 
     // Run errors
     RunNotFound,
@@ -348,6 +364,8 @@ impl IntoResponse for ApiError {
             | ErrorCode::CredentialNotFound
             | ErrorCode::RunNotFound
             | ErrorCode::NoRunningJob
+            | ErrorCode::FileTaskNotFound
+            | ErrorCode::UploadNotFound
             | ErrorCode::FileNotFound => StatusCode::NOT_FOUND,
 
             // 429 Too Many Requests
@@ -360,6 +378,9 @@ impl IntoResponse for ApiError {
             ErrorCode::JobAlreadyRunning
             | ErrorCode::JobNameExists
             | ErrorCode::CredentialInUse
+            | ErrorCode::NameTaken
+            | ErrorCode::UploadOffsetMismatch
+            | ErrorCode::UploadBusy
             | ErrorCode::TotpAlreadyEnabled => StatusCode::CONFLICT,
 
             // 403 Forbidden
@@ -386,6 +407,9 @@ impl IntoResponse for ApiError {
             | ErrorCode::NotAFile
             | ErrorCode::FileTooLarge
             | ErrorCode::DeleteVerificationFailed
+            | ErrorCode::NameInvalid
+            | ErrorCode::NotEnoughSpace
+            | ErrorCode::TargetInsideSource
             | ErrorCode::CompressStagingPathRequired
             | ErrorCode::CompressStagingPathNotAllowed
             | ErrorCode::CompressStagingOverlapsSource

@@ -3,16 +3,24 @@
 
   export type ToastVariant = 'error' | 'success' | 'warning' | 'info';
 
+  export interface ToastAction {
+    label: string;
+    onclick: () => void;
+  }
+
   export interface ToastOptions {
     message: string;
     variant?: ToastVariant;
     duration?: number; // ms, 0 = no auto-dismiss
+    /** A button next to the message, such as Undo */
+    action?: ToastAction;
   }
 
   interface ToastState {
     visible: boolean;
     message: string;
     variant: ToastVariant;
+    action?: ToastAction;
     timeoutId: ReturnType<typeof setTimeout> | null;
   }
 
@@ -45,6 +53,7 @@
       visible: true,
       message: options.message,
       variant: options.variant || 'info',
+      action: options.action,
       timeoutId,
     });
   }
@@ -73,12 +82,14 @@
   let visible = $state(false);
   let message = $state('');
   let variant = $state<ToastVariant>('info');
+  let action = $state<ToastAction | undefined>(undefined);
   let el = $state<HTMLDivElement | null>(null);
 
   toastStore.subscribe((s) => {
     visible = s.visible;
     message = s.message;
     variant = s.variant;
+    action = s.action;
   });
 
   // The toast lives in the browser's top layer (popover) so it shows above
@@ -124,6 +135,18 @@
     >
       <span class="shrink-0 {styles[variant].tone}"><Icon name={styles[variant].icon} /></span>
       <p class="flex-1 text-sm text-gray-800 dark:text-gray-100 py-1">{message}</p>
+      {#if action}
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm shrink-0 font-semibold text-primary-700 dark:text-primary-300"
+          onclick={() => {
+            // Dismissing clears the action, so take it first
+            const run = action?.onclick;
+            dismissToast();
+            run?.();
+          }}>{action.label}</button
+        >
+      {/if}
       <button type="button" onclick={dismissToast} class="btn btn-ghost btn-icon btn-sm shrink-0" aria-label={m.common_close()}>
         <Icon name="x" class="w-4 h-4" />
       </button>

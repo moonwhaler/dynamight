@@ -16,6 +16,9 @@ use tokio_util::io::ReaderStream;
 use crate::errors::{ApiError, ErrorCode};
 use crate::extractors::AuthClaims;
 use crate::handlers::auth::extract_client_ip;
+use crate::services::path_guard::{
+    contains_mount_point, content_disposition_attachment, is_allowed_root, is_path_allowed,
+};
 use crate::services::{AuthService, TotpService};
 use crate::AppState;
 
@@ -72,105 +75,6 @@ fn is_mount_point_allowed(mount_point: &str, allowed_paths: &[String]) -> bool {
     });
 
     under_mnt || under_allowed
-}
-
-/// Check if a path is within one of the allowed base paths.
-/// Uses canonicalization to prevent symlink bypass attacks.
-fn is_path_allowed(path: &Path, allowed_paths: &[String]) -> bool {
-    // Handle the case where the path doesn't exist yet (for mkdir)
-    // We need to check if the path or any of its parents are under allowed paths
-    let path_to_check = if path.exists() {
-        match path.canonicalize() {
-            Ok(p) => p,
-            Err(_) => return false,
-        }
-    } else {
-        // For non-existent paths, check the string representation
-        // This is safe because we'll canonicalize during actual operations
-        path.to_path_buf()
-    };
-
-    for allowed in allowed_paths {
-        let allowed_path = Path::new(allowed);
-
-        // Try to canonicalize the allowed path
-        if let Ok(allowed_canonical) = allowed_path.canonicalize() {
-            if path_to_check.starts_with(&allowed_canonical) {
-                return true;
-            }
-        }
-
-        // Also check non-canonicalized for paths that don't exist yet
-        if path_to_check.starts_with(allowed) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// `Content-Disposition: attachment` with an ASCII fallback name and the
-/// real (UTF-8) name per RFC 6266 / RFC 5987, so non-ASCII names survive.
-fn content_disposition_attachment(filename: &str) -> String {
-    let ascii: String = filename
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
-        .collect();
-    let encoded: String = filename
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'~') {
-                (b as char).to_string()
-            } else {
-                format!("%{:02X}", b)
-            }
-        })
-        .collect();
-    format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", ascii, encoded)
-}
-
-/// True if `path` (canonical) is one of the allowed base paths itself.
-fn is_allowed_root(path: &Path, allowed_paths: &[String]) -> bool {
-    allowed_paths.iter().any(|allowed| {
-        let allowed = Path::new(allowed);
-        path == allowed
-            || allowed
-                .canonicalize()
-                .map(|c| c == path)
-                .unwrap_or(false)
-    })
-}
-
-/// True if `path` is a mount point or has a mount point somewhere below it.
-fn contains_mount_point(path: &Path) -> bool {
-    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-    mount_targets(&mounts).iter().any(|target| Path::new(target).starts_with(path))
-}
-
-/// Parse mount targets from /proc/self/mounts content (second field, with the
-/// kernel's octal escapes such as `\040` for spaces decoded).
-fn mount_targets(mounts: &str) -> Vec<String> {
-    mounts
-        .lines()
-        .filter_map(|line| line.split_whitespace().nth(1))
-        .map(|raw| {
-            let bytes = raw.as_bytes();
-            let mut out = Vec::with_capacity(bytes.len());
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' && i + 3 < bytes.len() {
-                    if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 4]).unwrap_or(""), 8) {
-                        out.push(v);
-                        i += 4;
-                        continue;
-                    }
-                }
-                out.push(bytes[i]);
-                i += 1;
-            }
-            String::from_utf8_lossy(&out).into_owned()
-        })
-        .collect()
 }
 
 pub async fn list_drives(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -710,6 +614,17 @@ pub struct VerifyDeleteResponse {
     pub expires_at: u64,
 }
 
+/// True while the user's password check for deleting is still valid
+pub(crate) async fn is_delete_verified(state: &AppState, user_id: i64) -> bool {
+    let window = Duration::from_secs(get_delete_verification_window(state).await * 60);
+    state
+        .delete_verifications
+        .read()
+        .await
+        .get(&user_id)
+        .is_some_and(|verified_at| verified_at.elapsed() < window)
+}
+
 /// Get the delete verification window in minutes from settings, defaulting to 5
 async fn get_delete_verification_window(state: &AppState) -> u64 {
     let db_value: Option<(String,)> = sqlx::query_as(
@@ -1017,6 +932,7 @@ pub async fn delete_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::path_guard::mount_targets;
     use std::path::Path;
 
     // ── is_valid_uuid ──

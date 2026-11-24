@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import type { FileTask } from '$lib/types';
 
 // Status store for global job status updates
 interface StatusUpdate {
@@ -8,6 +9,9 @@ interface StatusUpdate {
   job_id?: number;
   timestamp?: string;
 }
+
+/** File manager copy/move progress; kept apart from the job events */
+export type FileTaskMessage = { type: 'file_task'; task: FileTask } | { type: 'file_tasks_resync' };
 
 const RECONNECT_DELAY_MS = 5000;
 
@@ -20,6 +24,7 @@ function createStatusStore() {
   // close the socket the new page just asked for.
   let users = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  const fileTaskListeners = new Set<(message: FileTaskMessage) => void>();
 
   function open() {
     // Authenticated by the session cookie, which the browser sends with the handshake
@@ -27,10 +32,19 @@ function createStatusStore() {
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/status`);
     ws = socket;
 
+    // Events sent while the socket was down are lost: file tasks reload
+    socket.onopen = () => {
+      for (const listener of fileTaskListeners) listener({ type: 'file_tasks_resync' });
+    };
+
     socket.onmessage = (event) => {
       try {
-        const status: StatusUpdate = JSON.parse(event.data);
-        update((updates) => [...updates.slice(-99), status]);
+        const message = JSON.parse(event.data) as StatusUpdate | FileTaskMessage;
+        if (message.type === 'file_task' || message.type === 'file_tasks_resync') {
+          for (const listener of fileTaskListeners) listener(message);
+          return;
+        }
+        update((updates) => [...updates.slice(-99), message]);
       } catch {
         // Ignore parse errors
       }
@@ -72,6 +86,12 @@ function createStatusStore() {
     disconnect() {
       users = Math.max(0, users - 1);
       if (users === 0) close();
+    },
+
+    /** Receive file task messages while connected; returns the unsubscribe */
+    onFileTask(listener: (message: FileTaskMessage) => void): () => void {
+      fileTaskListeners.add(listener);
+      return () => fileTaskListeners.delete(listener);
     },
   };
 }

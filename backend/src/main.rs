@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use axum::http::{header, HeaderValue, Method};
 use axum::http::{Extensions, HeaderMap, StatusCode, Version};
-use tower_http::compression::{predicate::{DefaultPredicate, Predicate}, CompressionLayer};
+use tower_http::compression::{predicate::{DefaultPredicate, NotForContentType, Predicate}, CompressionLayer};
 use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -277,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|(value,)| value.parse::<u32>().ok())
         .unwrap_or(10);
 
-    // Check for show_directory_sizes in database, default to false if not set
+    // Check for show_directory_sizes in database, default to true if not set
     let db_show_dir_sizes: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM app_settings WHERE key = 'show_directory_sizes'"
     )
@@ -287,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
 
     let show_directory_sizes = db_show_dir_sizes
         .map(|(value,)| value == "true")
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     // Initialize services
     let auth_service = AuthService::new(config.jwt_secret.clone());
@@ -368,12 +368,16 @@ async fn main() -> anyhow::Result<()> {
         search_timeout_seconds: RwLock::new(search_timeout_seconds),
         show_directory_sizes: RwLock::new(show_directory_sizes),
         dir_size_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
+        file_ops: dynamight::services::file_ops::FileOps::new(config.allowed_browse_paths.clone()),
+        thumbs_dir: dynamight::thumbs_dir_for(&config.database_url),
     });
 
     // Hourly cleanup of expired sessions and tokens; log retention every
     // 6 hours (the first tick runs right away, at startup)
     let cleanup_db = db.clone();
     let maintenance = backup_service.clone();
+    let browse_paths = config.allowed_browse_paths.clone();
+    let thumbs_dir = state.thumbs_dir.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         let mut hours: u64 = 0;
@@ -383,6 +387,13 @@ async fn main() -> anyhow::Result<()> {
                 maintenance.maintain_logs().await;
             }
             hours += 1;
+            dynamight::handlers::files::purge_expired_trash(&cleanup_db, &browse_paths).await;
+            dynamight::handlers::uploads::remove_stale(&cleanup_db).await;
+            let thumbs = thumbs_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                dynamight::handlers::file_preview::trim_thumbs(&thumbs, THUMB_CACHE_BYTES)
+            })
+            .await;
             let _ = sqlx::query("DELETE FROM pending_totp_sessions WHERE expires_at < datetime('now')")
                 .execute(&cleanup_db)
                 .await;
@@ -423,10 +434,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Compress pages, scripts and JSON, but not file downloads (attachments):
     // those can be large or compressed already, and keep their Content-Length
+    // Streamed folder sizes (NDJSON) must reach the browser line by line, and
+    // compression would hold them back
     let compression = CompressionLayer::new().compress_when(
-        DefaultPredicate::new().and(|_: StatusCode, _: Version, headers: &HeaderMap, _: &Extensions| {
-            !headers.contains_key(header::CONTENT_DISPOSITION)
-        }),
+        DefaultPredicate::new()
+            .and(NotForContentType::const_new("application/x-ndjson"))
+            .and(|_: StatusCode, _: Version, headers: &HeaderMap, _: &Extensions| {
+                !headers.contains_key(header::CONTENT_DISPOSITION)
+            }),
     );
 
     let app = Router::new()
@@ -473,6 +488,8 @@ async fn main() -> anyhow::Result<()> {
 /// How long running backups get to stop on shutdown (kill rsync, unmount,
 /// store the run as cancelled). Below systemd's TimeoutStopSec (30 s) and the
 /// compose file's stop_grace_period, so it finishes before a SIGKILL.
+/// Size the thumbnail cache is trimmed to every hour
+const THUMB_CACHE_BYTES: u64 = 500 * 1024 * 1024;
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 /// How long open HTTP connections may delay the exit after that.
 const HTTP_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);

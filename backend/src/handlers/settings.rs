@@ -14,6 +14,8 @@ pub struct AppSettings {
     pub show_directory_sizes: Option<bool>,
     /// Days run logs are kept; `None` keeps them forever
     pub log_retention_days: Option<u32>,
+    /// Days items stay in the file manager's trash; `None` keeps them
+    pub trash_retention_days: Option<u32>,
 }
 
 /// Stored value of `max_runs_per_job` that means "keep every run"
@@ -22,6 +24,8 @@ const UNLIMITED: &str = "unlimited";
 pub const DEFAULT_MAX_RUNS_PER_JOB: u32 = 5;
 /// Days run logs are kept when nothing is configured
 pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 90;
+/// Days items stay in the trash when nothing is configured
+pub const DEFAULT_TRASH_RETENTION_DAYS: u32 = 30;
 
 /// Read a stored limit: missing means `default`, "unlimited" means no
 /// limit (None).
@@ -43,7 +47,12 @@ pub fn log_days_from_setting(value: Option<&str>) -> Option<u32> {
     limit_from_setting(value, DEFAULT_LOG_RETENTION_DAYS)
 }
 
-async fn stored_value(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
+/// Read the stored `trash_retention_days` setting
+pub fn trash_days_from_setting(value: Option<&str>) -> Option<u32> {
+    limit_from_setting(value, DEFAULT_TRASH_RETENTION_DAYS)
+}
+
+pub async fn stored_value(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
     sqlx::query_as::<_, (String,)>("SELECT value FROM app_settings WHERE key = ?")
         .bind(key)
         .fetch_optional(db)
@@ -86,6 +95,9 @@ pub struct UpdateSettingsRequest {
     /// Days to keep run logs, or `null` to keep them forever
     #[serde(default, deserialize_with = "present")]
     pub log_retention_days: Option<Option<u32>>,
+    /// Days to keep trashed files, or `null` to keep them until emptied
+    #[serde(default, deserialize_with = "present")]
+    pub trash_retention_days: Option<Option<u32>>,
     pub delete_verification_window_minutes: Option<u32>,
     pub search_timeout_seconds: Option<u32>,
     pub show_directory_sizes: Option<bool>,
@@ -126,7 +138,7 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
         .and_then(|(value,)| value.parse::<u32>().ok())
         .or(Some(10));
 
-    // Get show_directory_sizes from database, default to false if not set
+    // Get show_directory_sizes from database, default to true if not set
     let show_dir_sizes_db: Option<(String,)> = sqlx::query_as(
         "SELECT value FROM app_settings WHERE key = 'show_directory_sizes'"
     )
@@ -137,13 +149,16 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
     let show_directory_sizes = Some(
         show_dir_sizes_db
             .map(|(value,)| value == "true")
-            .unwrap_or(false),
+            .unwrap_or(true),
     );
 
     let log_retention_days = log_days_from_setting(stored_value(&state.db, "log_retention_days").await.as_deref());
+    let trash_retention_days =
+        trash_days_from_setting(stored_value(&state.db, "trash_retention_days").await.as_deref());
 
     Json(AppSettings {
         log_retention_days,
+        trash_retention_days,
         max_runs_per_job,
         delete_verification_window_minutes,
         search_timeout_seconds,
@@ -178,6 +193,19 @@ pub async fn update_settings(
         // Apply a shorter limit now instead of at the next maintenance
         let service = Arc::clone(&state.backup_service);
         tokio::spawn(async move { service.maintain_logs().await });
+    }
+
+    // trash_retention_days: absent = unchanged, null = keep until emptied
+    if let Some(days) = req.trash_retention_days {
+        let days = days.map(|n| n.max(1));
+        if let Err(e) = store_limit(&state.db, "trash_retention_days", days).await {
+            tracing::error!("Failed to update trash_retention_days setting: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to save setting"})));
+        }
+        // Apply a shorter limit now instead of at the next hourly cleanup
+        let db = state.db.clone();
+        let allowed = state.config.allowed_browse_paths.clone();
+        tokio::spawn(async move { crate::handlers::files::purge_expired_trash(&db, &allowed).await });
     }
 
     // Update delete_verification_window_minutes when present

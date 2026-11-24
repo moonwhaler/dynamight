@@ -8,30 +8,38 @@
   import { showToast } from '../ui/Toast.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
-  type Key = 'max_runs_per_job' | 'log_retention_days' | 'delete_verification_window_minutes' | 'search_timeout_seconds';
+  type Key =
+    | 'max_runs_per_job'
+    | 'log_retention_days'
+    | 'trash_retention_days'
+    | 'delete_verification_window_minutes'
+    | 'search_timeout_seconds';
   /** Settings where an empty field means "no limit" */
-  const optional: Key[] = ['max_runs_per_job', 'log_retention_days'];
+  const optional: Key[] = ['max_runs_per_job', 'log_retention_days', 'trash_retention_days'];
 
   // Values as stored on the server, and the text in each input
   let stored = $state<Record<Key, number | null>>({
     max_runs_per_job: null,
     log_retention_days: 90,
+    trash_retention_days: 30,
     delete_verification_window_minutes: 5,
     search_timeout_seconds: 10,
   });
   let input = $state<Record<Key, string>>({
     max_runs_per_job: '',
     log_retention_days: '90',
+    trash_retention_days: '30',
     delete_verification_window_minutes: '5',
     search_timeout_seconds: '10',
   });
   let saving = $state<Key | 'sizes' | null>(null);
-  let showDirectorySizes = $state(false);
+  let showDirectorySizes = $state(true);
 
   /** Allowed range per setting; the optional ones may also be empty (no limit) */
   const limits: Record<Key, { min: number; max: number; invalid: () => string }> = {
     max_runs_per_job: { min: 1, max: 1_000_000, invalid: m.settings_retention_invalid },
     log_retention_days: { min: 1, max: 36_500, invalid: m.settings_log_retention_invalid },
+    trash_retention_days: { min: 1, max: 36_500, invalid: m.settings_trash_retention_invalid },
     delete_verification_window_minutes: { min: 1, max: 60, invalid: m.settings_delete_verification_invalid },
     search_timeout_seconds: { min: 3, max: 60, invalid: m.settings_search_timeout_invalid },
   };
@@ -42,16 +50,18 @@
       stored = {
         max_runs_per_job: s.max_runs_per_job,
         log_retention_days: s.log_retention_days,
+        trash_retention_days: s.trash_retention_days,
         delete_verification_window_minutes: s.delete_verification_window_minutes ?? 5,
         search_timeout_seconds: s.search_timeout_seconds ?? 10,
       };
       input = {
         max_runs_per_job: s.max_runs_per_job?.toString() ?? '',
         log_retention_days: s.log_retention_days?.toString() ?? '',
+        trash_retention_days: s.trash_retention_days?.toString() ?? '',
         delete_verification_window_minutes: String(s.delete_verification_window_minutes ?? 5),
         search_timeout_seconds: String(s.search_timeout_seconds ?? 10),
       };
-      showDirectorySizes = s.show_directory_sizes ?? false;
+      showDirectorySizes = s.show_directory_sizes ?? true;
     } catch (err) {
       showToast({ message: err instanceof Error ? err.message : m.error_failed_load(), variant: 'error' });
     }
@@ -146,6 +156,14 @@
         disabled={saving === 'sizes'}
         onchange={saveSizes}
       />
+      {@render numberField(
+        'trash_retention_days',
+        'trash-days',
+        m.settings_trash_retention_label(),
+        m.settings_trash_retention_help(),
+        m.settings_log_retention_unit(),
+        m.settings_log_retention_placeholder(),
+      )}
       {@render numberField(
         'delete_verification_window_minutes',
         'delete-window',

@@ -363,9 +363,94 @@ export interface DirectoryEntry {
   name: string;
   path: string;
   is_dir: boolean;
+  /** A symbolic link (shown with what it points to) */
+  is_symlink?: boolean;
   size: number | null;
   modified: number | null;
   extension: string | null;
+}
+
+/** An allowed path with its drive's free space */
+export interface FilePlace {
+  path: string;
+  total: number | null;
+  free: number | null;
+}
+
+export interface FileDrive extends UsbDrive {
+  total: number | null;
+  free: number | null;
+}
+
+export interface FilePlaces {
+  places: FilePlace[];
+  drives: FileDrive[];
+  trash_items: number;
+}
+
+export interface TrashItem {
+  id: string;
+  /** The trash folder holding the item */
+  root: string;
+  name: string;
+  original_path: string;
+  /** Unix seconds */
+  deleted_at: number;
+  is_dir: boolean;
+  size: number | null;
+}
+
+export interface TrashRef {
+  root: string;
+  id: string;
+}
+
+export type TrashFailureReason = 'not_allowed' | 'not_found' | 'protected' | 'no_anchor' | 'cross_device' | 'io';
+
+export interface TrashMoveResult {
+  moved: TrashItem[];
+  failed: { path: string; reason: TrashFailureReason }[];
+}
+
+export interface TrashRestoreResult {
+  restored: { id: string; path: string }[];
+  conflicts: (TrashRef & { path: string })[];
+  failed: TrashRef[];
+}
+
+export type FileTaskKind = 'copy' | 'move';
+export type FileTaskState = 'queued' | 'running' | 'conflict' | 'done' | 'failed' | 'cancelled';
+export type ConflictChoice = 'replace' | 'keep_both' | 'skip';
+
+export interface FileFacts {
+  is_dir: boolean;
+  size: number | null;
+  modified: number | null;
+}
+
+export interface FileTask {
+  id: number;
+  /** Grows with every change; an update with a lower one is outdated */
+  revision: number;
+  kind: FileTaskKind;
+  sources: string[];
+  target: string;
+  state: FileTaskState;
+  total_bytes: number;
+  done_bytes: number;
+  total_files: number;
+  done_files: number;
+  current: string | null;
+  conflict: { path: string; existing: FileFacts; incoming: FileFacts } | null;
+  errors: { path: string; message: string }[];
+  failure: string | null;
+  created_at: number;
+  finished_at: number | null;
+}
+
+export interface TrashListing {
+  items: TrashItem[];
+  roots: { root: string; anchor: string; items: number }[];
 }
 
 export interface CreateJobRequest {

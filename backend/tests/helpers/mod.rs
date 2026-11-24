@@ -117,6 +117,7 @@ impl TestApp {
         };
         let rate_limit_service = RateLimitService::new(rate_limit_config);
 
+        let allowed = config.allowed_browse_paths.clone();
         let state = Arc::new(AppState {
             db: db.clone(),
             logs_db: logs_db.clone(),
@@ -129,8 +130,10 @@ impl TestApp {
             log_tx,
             delete_verifications: RwLock::new(HashMap::new()),
             search_timeout_seconds: RwLock::new(10),
-            show_directory_sizes: RwLock::new(false),
+            show_directory_sizes: RwLock::new(true),
             dir_size_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            file_ops: dynamight::services::file_ops::FileOps::new(allowed),
+            thumbs_dir: dynamight::thumbs_dir_for("sqlite::memory:"),
         });
 
         let router = build_api_router(state);

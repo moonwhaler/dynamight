@@ -13,9 +13,24 @@
     onSelect: (path: string) => void;
     onClose: () => void;
     allowedPaths?: string[];
+    /** Folder shown first (default: `rootPath`, the top the user can go up to) */
+    startPath?: string;
+    /** Dialog title; "Select Folder" by default */
+    title?: string;
+    /** Text of the confirm button */
+    confirmLabel?: string;
   }
 
-  let { open = $bindable(), rootPath, onSelect, onClose, allowedPaths = [] }: Props = $props();
+  let {
+    open = $bindable(),
+    rootPath,
+    onSelect,
+    onClose,
+    allowedPaths = [],
+    startPath,
+    title = m.filebrowser_select_folder(),
+    confirmLabel = m.filebrowser_select_folder(),
+  }: Props = $props();
 
   // Local state
   let currentPath = $state('');
@@ -27,7 +42,7 @@
   // Watch for open changes to initialize
   $effect(() => {
     if (open && rootPath) {
-      browsePath(rootPath);
+      browsePath(startPath || rootPath);
     }
   });
 
@@ -104,7 +119,7 @@
   }
 </script>
 
-<Dialog bind:open title={m.filebrowser_select_folder()} size="lg" onclose={reset} bodyClass="p-0 flex flex-col h-[60dvh] sm:h-[32rem]">
+<Dialog bind:open {title} size="lg" onclose={reset} bodyClass="p-0 flex flex-col h-[60dvh] sm:h-[32rem]">
   {#snippet header()}
     <span class="hidden sm:block max-w-[16rem] truncate font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath || rootPath}>
       {currentPath || rootPath}
@@ -163,7 +178,7 @@
   {#snippet footer()}
     <button type="button" onclick={handleClose} class="btn btn-secondary">{m.common_cancel()}</button>
     <button type="button" onclick={handleSelect} disabled={!currentPath} class="btn btn-primary">
-      {m.filebrowser_select_folder()}
+      {confirmLabel}
     </button>
   {/snippet}
 </Dialog>

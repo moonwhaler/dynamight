@@ -50,6 +50,25 @@ pub struct AppState {
     pub search_timeout_seconds: RwLock<u32>,
     pub show_directory_sizes: RwLock<bool>,
     pub dir_size_cache: Arc<std::sync::RwLock<HashMap<PathBuf, (u64, Instant)>>>,
+    /// Copy and move jobs of the file manager
+    pub file_ops: Arc<services::file_ops::FileOps>,
+    /// Cache of image and video thumbnails
+    pub thumbs_dir: PathBuf,
+}
+
+/// Folder for cached thumbnails: next to the database file, or in the
+/// system's temp folder for an in-memory database
+pub fn thumbs_dir_for(database_url: &str) -> PathBuf {
+    let path = database_url
+        .trim_start_matches("sqlite://")
+        .trim_start_matches("sqlite:")
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    match std::path::Path::new(path).parent() {
+        Some(parent) if !path.contains(":memory:") && !parent.as_os_str().is_empty() => parent.join("thumbs"),
+        _ => std::env::temp_dir().join("dynamight-thumbs"),
+    }
 }
 
 /// Build the API router (without static-file fallback or outer layers like
@@ -104,6 +123,29 @@ pub fn build_api_router(state: Arc<AppState>) -> Router {
         .route("/system/delete", delete(handlers::system::delete_path))
         .route("/system/dir-sizes", post(handlers::system::dir_sizes))
         .route("/system/delete-status", get(handlers::system::delete_status))
+        .route("/files/places", get(handlers::files::places))
+        .route("/files/raw", get(handlers::files::raw))
+        .route(
+            "/files/trash",
+            get(handlers::files::list_trash)
+                .post(handlers::files::move_to_trash)
+                .delete(handlers::files::purge_trash),
+        )
+        .route("/files/trash/restore", post(handlers::files::restore_trash))
+        .route("/files/dir-sizes", post(handlers::files::dir_sizes))
+        .route("/files/tasks", get(handlers::file_actions::list_tasks).post(handlers::file_actions::start_task))
+        .route("/files/tasks/:id/cancel", post(handlers::file_actions::cancel_task))
+        .route("/files/tasks/:id/resolve", post(handlers::file_actions::resolve_task))
+        .route("/files/rename", post(handlers::file_actions::rename))
+        .route("/files/archive", post(handlers::file_actions::prepare_archive))
+        .route("/files/archive/:token", get(handlers::file_actions::download_archive))
+        .route("/files/text", get(handlers::file_preview::text))
+        .route("/files/thumb", get(handlers::file_preview::thumb))
+        .route("/files/uploads", post(handlers::uploads::start))
+        .route(
+            "/files/uploads/:id",
+            get(handlers::uploads::status).put(handlers::uploads::chunk).delete(handlers::uploads::cancel),
+        )
         .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
         .route(
             "/settings/notifications",

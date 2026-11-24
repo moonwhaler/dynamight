@@ -110,10 +110,26 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
 
     let mut events = state.backup_service.subscribe_events();
+    let mut file_tasks = state.file_ops.subscribe();
 
     let mut send_task = tokio::spawn(async move {
         loop {
-            let update = match events.recv().await {
+            let received = tokio::select! {
+                event = events.recv() => event,
+                task = file_tasks.recv() => {
+                    let update = match task {
+                        Ok(event) => json!({ "type": "file_task", "task": event.task }),
+                        // Missed progress: the client reloads the task list
+                        Err(broadcast::error::RecvError::Lagged(_)) => json!({ "type": "file_tasks_resync" }),
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    };
+                    if sender.send(Message::Text(update.to_string())).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let update = match received {
                 Ok(event) => json!({
                     "type": match event.kind {
                         RunEventKind::Queued => "job_queued",

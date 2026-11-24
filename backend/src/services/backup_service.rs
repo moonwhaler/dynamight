@@ -1065,6 +1065,13 @@ impl BackupService {
             _ => None,
         };
 
+        // The file manager's trash and its unfinished copies and uploads never
+        // go into a backup (and, being excluded, are never deleted from a
+        // destination by --delete either)
+        sync_options
+            .exclude_patterns
+            .extend(crate::services::path_guard::INTERNAL_EXCLUDES.iter().map(|p| p.to_string()));
+
         if !include_only.is_empty() {
             sync_options.include_only = include_only;
             // Temporary files of archives still being written (other jobs)

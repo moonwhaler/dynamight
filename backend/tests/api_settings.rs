@@ -67,3 +67,19 @@ async fn log_retention_defaults_to_ninety_days_and_can_be_off() {
     put(&app, &cookie, json!({ "log_retention_days": null })).await;
     assert_eq!(get(&app, &cookie).await["log_retention_days"], Value::Null);
 }
+
+#[tokio::test]
+async fn trash_retention_defaults_to_thirty_days_and_can_be_off() {
+    let app = TestApp::new().await;
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+
+    let s = get(&app, &cookie).await;
+    assert_eq!(s["trash_retention_days"], 30);
+    assert_eq!(s["show_directory_sizes"], true);
+
+    put(&app, &cookie, json!({ "trash_retention_days": 7 })).await;
+    assert_eq!(get(&app, &cookie).await["trash_retention_days"], 7);
+
+    put(&app, &cookie, json!({ "trash_retention_days": null })).await;
+    assert_eq!(get(&app, &cookie).await["trash_retention_days"], Value::Null);
+}

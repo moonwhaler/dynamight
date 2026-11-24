@@ -142,8 +142,9 @@ fn default_rate_limit_lockout_secs() -> u64 {
 fn default_rate_limit_max_lockout_secs() -> u64 {
     3600
 }
+/// Downloads stream to disk, so the limit only guards against mistakes: 1 TiB
 fn default_max_download_size() -> u64 {
-    2_147_483_648
+    1 << 40
 }
 fn default_max_request_body_size() -> usize {
     10 * 1024 * 1024
@@ -167,7 +168,7 @@ pub struct Config {
     pub rate_limit_max_lockout_secs: u64,
     // Cookie security
     pub secure_cookies: bool,
-    // File browser max download size (default: 2GB)
+    // Largest single file download (default: 1 TiB)
     pub max_download_size: u64,
     // Trusted proxy IPs/CIDRs for X-Forwarded-For header trust
     // If empty, X-Forwarded-For is ignored (safest default)
@@ -363,6 +364,15 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::path::Path;
+
+    #[test]
+    fn download_limit_defaults_to_one_tebibyte() {
+        assert_eq!(LimitsConfig::default().max_download_size, 1_099_511_627_776);
+        let set: LimitsConfig = toml::from_str("max_download_size = 5").unwrap();
+        assert_eq!(set.max_download_size, 5);
+        let empty: LimitsConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.max_download_size, 1_099_511_627_776);
+    }
 
     /// Helper: construct a Config directly for pure unit tests that don't need Config::load().
     fn make_config(database_url: &str) -> Config {

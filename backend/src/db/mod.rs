@@ -182,6 +182,53 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Trash folders the file manager has used, so the trash view and the
+    // retention find them without scanning the drives
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS trash_roots (path TEXT PRIMARY KEY, last_seen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    )
+    .execute(pool)
+    .await;
+
+    // Uploads in progress, so they resume after a dropped connection or a
+    // restart. The part file holds the bytes; `offset` is checked against it.
+    let _ = sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS uploads (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            dir TEXT NOT NULL,
+            name TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL,
+            mtime INTEGER,
+            on_conflict TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await;
+
+    // 2.2: folder sizes are streamed and on by default. Older versions saved
+    // `false` with every settings save, so drop that value once.
+    let marker: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM app_settings WHERE key = 'dir_sizes_default_on'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    if marker.is_none() {
+        let _ = sqlx::query("DELETE FROM app_settings WHERE key = 'show_directory_sizes'")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES ('dir_sizes_default_on', '1', CURRENT_TIMESTAMP)",
+        )
+        .execute(pool)
+        .await;
+    }
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }

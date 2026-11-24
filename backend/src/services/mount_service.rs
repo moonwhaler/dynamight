@@ -361,14 +361,30 @@ impl MountService {
 
     /// Calculate the total size of a directory recursively.
     pub fn calculate_dir_size(path: &std::path::Path) -> u64 {
-        WalkDir::new(path)
+        Self::dir_size_until(path, &std::sync::atomic::AtomicBool::new(false)).unwrap_or(0)
+    }
+
+    /// Size of a directory, without crossing into other filesystems (mounted
+    /// drives) or counting the file manager's own files. Returns `None`
+    /// when `stop` is set before the walk is done.
+    pub fn dir_size_until(path: &std::path::Path, stop: &std::sync::atomic::AtomicBool) -> Option<u64> {
+        let mut total = 0u64;
+        let walker = WalkDir::new(path)
             .follow_links(false)
+            .same_file_system(true)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.metadata().ok())
-            .filter(|m| m.is_file())
-            .map(|m| m.len())
-            .sum()
+            .filter_entry(|e| e.depth() == 0 || !crate::services::path_guard::is_internal_name(&e.file_name().to_string_lossy()));
+        for (n, entry) in walker.enumerate() {
+            if n % 1000 == 0 && stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return None;
+            }
+            if let Some(m) = entry.ok().and_then(|e| e.metadata().ok()) {
+                if m.is_file() {
+                    total += m.len();
+                }
+            }
+        }
+        Some(total)
     }
 
     /// Browse a directory path
@@ -377,12 +393,17 @@ impl MountService {
         let mut result = Vec::new();
 
         for entry in entries.flatten() {
-            // Skip entries we can't read metadata for (permission denied, broken symlinks, etc.)
-            let metadata = match entry.metadata() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if crate::services::path_guard::is_internal_name(&name) {
+                continue;
+            }
+            // A symlink shows what it points to; a broken one shows the link
+            let is_symlink = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+            let metadata = match if is_symlink { std::fs::metadata(entry.path()).or_else(|_| entry.metadata()) } else { entry.metadata() } {
                 Ok(m) => m,
+                // Permission denied and the like
                 Err(_) => continue,
             };
-            let name = entry.file_name().to_string_lossy().to_string();
             let is_dir = metadata.is_dir();
 
             // Get modified time as Unix timestamp
@@ -414,6 +435,7 @@ impl MountService {
                 name,
                 path: entry.path().to_string_lossy().to_string(),
                 is_dir,
+                is_symlink,
                 size,
                 modified,
                 extension,
@@ -505,6 +527,7 @@ impl MountService {
                 name,
                 path: entry.path().to_string_lossy().to_string(),
                 is_dir,
+                is_symlink: entry.path_is_symlink(),
                 size: if metadata.is_file() {
                     Some(metadata.len())
                 } else {
@@ -551,6 +574,8 @@ pub struct DirectoryEntry {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    #[serde(default)]
+    pub is_symlink: bool,
     pub size: Option<u64>,
     pub modified: Option<i64>,
     pub extension: Option<String>,

@@ -28,10 +28,18 @@ import type {
   SpaceCheckResponse,
   ImportPreview,
   ImportResult,
+  FilePlaces,
+  FileTask,
+  FileTaskKind,
+  ConflictChoice,
+  TrashMoveResult,
+  TrashListing,
+  TrashRef,
+  TrashRestoreResult,
 } from './types';
 import * as m from '$lib/paraglide/messages.js';
 
-const API_BASE = '/api';
+export const API_BASE = '/api';
 
 export interface RunsQuery {
   limit?: number;
@@ -163,6 +171,15 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     DELETE_FAILED: () => m.error_delete_failed(),
     DELETE_VERIFICATION_REQUIRED: () => m.error_delete_verification_required(),
     DELETE_VERIFICATION_FAILED: () => m.error_delete_verification_failed(),
+    NAME_INVALID: () => m.error_name_invalid(),
+    NAME_TAKEN: () => m.error_name_taken(),
+    FILE_OPERATION_FAILED: () => m.error_file_operation_failed(),
+    FILE_TASK_NOT_FOUND: () => m.error_file_task_not_found(),
+    NOT_ENOUGH_SPACE: () => m.error_not_enough_space(),
+    UPLOAD_NOT_FOUND: () => m.error_upload_not_found(),
+    UPLOAD_OFFSET_MISMATCH: () => m.error_upload_offset_mismatch(),
+    UPLOAD_BUSY: () => m.error_upload_busy(),
+    TARGET_INSIDE_SOURCE: () => m.error_target_inside_source(),
 
     // Search errors
     SEARCH_FAILED: () => m.error_search_failed(),
@@ -196,6 +213,54 @@ export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
 }
 
+/** The translated error of a failed response */
+async function errorFrom(response: Response, endpoint: string): Promise<ApiError> {
+  return errorFromText(response.status, await response.text(), endpoint);
+}
+
+/** The translated error of a failed request, from its status and body */
+export function errorFromText(status: number, text: string, endpoint: string): ApiError {
+  if (status === 401) {
+    onUnauthorized?.();
+  }
+  let errorMessage: string = String(m.error_generic());
+  let errorCode: string | undefined;
+  let errorParams: Record<string, string | number> | undefined;
+
+  try {
+    const errorData = JSON.parse(text);
+
+    // Check if it's the new error code format
+    if ('code' in errorData) {
+      const apiError = errorData as ApiErrorResponse;
+      errorCode = apiError.code;
+      errorParams = apiError.params;
+      errorMessage = String(translateErrorCode(apiError.code, apiError.params));
+    }
+    // Legacy format with "error" string
+    else if ('error' in errorData) {
+      const legacyError = errorData as LegacyErrorResponse;
+      errorMessage = String(legacyError.error);
+    }
+    // Plain { message } bodies (e.g. connection test results)
+    else if (typeof errorData.message === 'string' && errorData.message) {
+      errorMessage = errorData.message;
+    }
+  } catch {
+    console.error(`API Error [${status}] ${endpoint}:`, text || '(empty response)');
+  }
+  return new ApiError(status, errorMessage, errorCode, errorParams);
+}
+
+/** Check that a file can be fetched (one byte), so a download link shows errors as toasts */
+async function probeRaw(path: string): Promise<void> {
+  const endpoint = `/files/raw?path=${encodeURIComponent(path)}`;
+  const response = await fetch(`${API_BASE}${endpoint}`, { headers: { Range: 'bytes=0-0' }, credentials: 'include' });
+  // 416: an empty file has no first byte, but downloads fine
+  if (!response.ok && response.status !== 416) throw await errorFrom(response, endpoint);
+  await response.body?.cancel();
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
@@ -206,39 +271,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     credentials: 'include',
   });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      onUnauthorized?.();
-    }
-    const text = await response.text();
-    let errorMessage: string = String(m.error_generic());
-    let errorCode: string | undefined;
-    let errorParams: Record<string, string | number> | undefined;
-
-    try {
-      const errorData = JSON.parse(text);
-
-      // Check if it's the new error code format
-      if ('code' in errorData) {
-        const apiError = errorData as ApiErrorResponse;
-        errorCode = apiError.code;
-        errorParams = apiError.params;
-        errorMessage = String(translateErrorCode(apiError.code, apiError.params));
-      }
-      // Legacy format with "error" string
-      else if ('error' in errorData) {
-        const legacyError = errorData as LegacyErrorResponse;
-        errorMessage = String(legacyError.error);
-      }
-      // Plain { message } bodies (e.g. connection test results)
-      else if (typeof errorData.message === 'string' && errorData.message) {
-        errorMessage = errorData.message;
-      }
-    } catch {
-      console.error(`API Error [${response.status}] ${endpoint}:`, text || '(empty response)');
-    }
-    throw new ApiError(response.status, errorMessage, errorCode, errorParams);
-  }
+  if (!response.ok) throw await errorFrom(response, endpoint);
 
   const text = await response.text();
   if (!text) {
@@ -425,6 +458,7 @@ export const api = {
     get: () => request<{
       max_runs_per_job: number | null;
       log_retention_days: number | null;
+      trash_retention_days: number | null;
       delete_verification_window_minutes: number | null;
       search_timeout_seconds: number | null;
       show_directory_sizes: boolean | null;
@@ -432,6 +466,7 @@ export const api = {
     update: (settings: {
       max_runs_per_job?: number | null;
       log_retention_days?: number | null;
+      trash_retention_days?: number | null;
       delete_verification_window_minutes?: number | null;
       search_timeout_seconds?: number | null;
       show_directory_sizes?: boolean;
@@ -499,6 +534,60 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ paths }),
       }),
+  },
+
+  files: {
+    places: () => request<FilePlaces>('/files/places'),
+    /** URL of a file: downloaded, or shown in the browser with `inline` */
+    probe: probeRaw,
+    rawUrl: (path: string, inline = false) =>
+      `${API_BASE}/files/raw?path=${encodeURIComponent(path)}${inline ? '&disposition=inline' : ''}`,
+    trash: (paths: string[]) =>
+      request<TrashMoveResult>('/files/trash', { method: 'POST', body: JSON.stringify({ paths }) }),
+    listTrash: () => request<TrashListing>('/files/trash'),
+    restore: (items: TrashRef[], keepBoth = false) =>
+      request<TrashRestoreResult>('/files/trash/restore', {
+        method: 'POST',
+        body: JSON.stringify({ items, keep_both: keepBoth }),
+      }),
+    rename: (path: string, newName: string) =>
+      request<{ path: string }>('/files/rename', { method: 'POST', body: JSON.stringify({ path, new_name: newName }) }),
+    tasks: () => request<FileTask[]>('/files/tasks'),
+    startTask: (kind: FileTaskKind, sources: string[], target: string) =>
+      request<FileTask>('/files/tasks', { method: 'POST', body: JSON.stringify({ kind, sources, target }) }),
+    cancelTask: (id: number) => request<{ success: boolean }>(`/files/tasks/${id}/cancel`, { method: 'POST' }),
+    resolveTask: (id: number, choice: ConflictChoice, applyToAll: boolean) =>
+      request<{ success: boolean }>(`/files/tasks/${id}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ choice, apply_to_all: applyToAll }),
+      }),
+    /** Check paths for a download as one .tar; returns the link to fetch it */
+    archive: (paths: string[]) =>
+      request<{ url: string; filename: string }>('/files/archive', { method: 'POST', body: JSON.stringify({ paths }) }),
+    text: (path: string) =>
+      request<{ text: string; binary: boolean; truncated: boolean; size: number }>(
+        `/files/text?path=${encodeURIComponent(path)}`,
+      ),
+    thumbUrl: (path: string) => `${API_BASE}/files/thumb?path=${encodeURIComponent(path)}`,
+    startUpload: (body: {
+      dir: string;
+      rel_dir?: string;
+      name: string;
+      size: number;
+      mtime?: number;
+      fingerprint: string;
+      on_conflict?: 'replace' | 'keep_both';
+    }) =>
+      request<{ id: string; offset: number; size: number; chunk_size: number; path?: string }>('/files/uploads', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    uploadStatus: (id: string) => request<{ id: string; offset: number; size: number }>(`/files/uploads/${id}`),
+    cancelUpload: (id: string) => request<{ success: boolean }>(`/files/uploads/${id}`, { method: 'DELETE' }),
+    uploadUrl: (id: string) => `${API_BASE}/files/uploads/${id}`,
+    /** Delete trash items for good; needs a recent password check */
+    purge: (body: { items?: TrashRef[]; all?: boolean; roots?: string[] }) =>
+      request<{ purged: number; failed: number }>('/files/trash', { method: 'DELETE', body: JSON.stringify(body) }),
   },
 
   credentials: {
