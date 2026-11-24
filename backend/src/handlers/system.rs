@@ -537,6 +537,14 @@ pub async fn version() -> impl IntoResponse {
     }))
 }
 
+/// GET /system/info - Server facts the UI needs to display data correctly.
+///
+/// `timezone` is the zone schedules are interpreted in: "Daily at 02:00"
+/// means 02:00 there, which may differ from the browser's zone.
+pub async fn info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(json!({ "timezone": state.config.timezone.name() }))
+}
+
 /// GET /system/allowed-paths - Return the list of allowed browse paths
 /// Only returns paths that actually exist on the filesystem
 pub async fn allowed_paths(State(state): State<Arc<AppState>>) -> impl IntoResponse {

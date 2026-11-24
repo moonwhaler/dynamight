@@ -1,23 +1,26 @@
 <script lang="ts">
   import { api } from '../../lib/api';
-  import type { Schedule, CreateScheduleRequest } from '../../lib/types';
+  import type { Schedule } from '../../lib/types';
   import HelpTooltip from '../ui/HelpTooltip.svelte';
   import { showToast } from '../ui/Toast.svelte';
   import { describeCron } from '$lib/utils/cron';
+  import { serverTimezone, differingTimezone, formatScheduleTime } from '$lib/stores/serverTimezone';
   import * as m from '$lib/paraglide/messages.js';
 
+  // Schedule changes are a draft: they are applied when the job is saved
+  // (see JobDetail), so cancelling the form also discards them.
   let {
-    jobId = null,
     schedules = $bindable<Schedule[]>([]),
     pendingSchedules = $bindable<string[]>([]),
+    dirty = false,
   }: {
-    jobId?: number | null;
+    /** Saved schedules; removing or toggling one only changes this list */
     schedules: Schedule[];
+    /** Cron expressions to create on save */
     pendingSchedules?: string[];
+    /** Whether the draft differs from what is saved */
+    dirty?: boolean;
   } = $props();
-
-  // Pending mode: when jobId is null, we store cron expressions locally
-  let isPendingMode = $derived(jobId === null);
 
   let showAdd = $state(false);
   let saving = $state(false);
@@ -78,20 +81,14 @@
     saving = true;
     try {
       const cron = buildCronExpression();
-
-      if (isPendingMode) {
-        // In pending mode, store cron expression locally
-        pendingSchedules = [...pendingSchedules, cron];
-        showAdd = false;
-        resetForm();
-      } else {
-        // Normal mode: create via API
-        const request: CreateScheduleRequest = { cron_expression: cron };
-        const schedule = await api.schedules.create(jobId!, request);
-        schedules = [...schedules, schedule];
-        showAdd = false;
-        resetForm();
+      // The other types are built from valid parts; a typed expression is
+      // checked by the server's parser before it joins the draft
+      if (scheduleType === 'custom') {
+        await api.schedules.validate(cron);
       }
+      pendingSchedules = [...pendingSchedules, cron];
+      showAdd = false;
+      resetForm();
     } catch (e) {
       showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
     } finally {
@@ -103,22 +100,12 @@
     pendingSchedules = pendingSchedules.filter((_, i) => i !== index);
   }
 
-  async function deleteSchedule(id: number) {
-    try {
-      await api.schedules.delete(id);
-      schedules = schedules.filter((s) => s.id !== id);
-    } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
-    }
+  function deleteSchedule(id: number) {
+    schedules = schedules.filter((s) => s.id !== id);
   }
 
-  async function toggleSchedule(schedule: Schedule) {
-    try {
-      const updated = await api.schedules.update(schedule.id, { enabled: !schedule.enabled });
-      schedules = schedules.map((s) => (s.id === updated.id ? updated : s));
-    } catch (e) {
-      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
-    }
+  function toggleSchedule(schedule: Schedule) {
+    schedules = schedules.map((s) => (s.id === schedule.id ? { ...s, enabled: !s.enabled } : s));
   }
 
   function resetForm() {
@@ -155,8 +142,11 @@
 
   function formatNextRun(date: string | null): string {
     if (!date) return m.schedule_not_scheduled();
-    return new Date(date).toLocaleString();
+    // In the server's zone when it differs, so it matches "Daily at 02:00"
+    return formatScheduleTime(date, $serverTimezone);
   }
+
+  const otherZone = $derived(differingTimezone($serverTimezone));
 
   // Preview the cron expression
   let cronPreview = $derived(buildCronExpression());
@@ -177,6 +167,14 @@
 
   {#if schedules.length === 0 && pendingSchedules.length === 0 && !showAdd}
     <p class="text-gray-500 dark:text-gray-400 text-sm">{m.schedule_no_schedules()}</p>
+  {/if}
+
+  {#if otherZone}
+    <p class="text-sm text-gray-500 dark:text-gray-400">{m.schedule_timezone_hint({ tz: otherZone })}</p>
+  {/if}
+
+  {#if dirty}
+    <p class="text-sm text-amber-600 dark:text-amber-400">{m.schedule_changes_unsaved()}</p>
   {/if}
 
   <!-- Pending Schedules (for new jobs) -->

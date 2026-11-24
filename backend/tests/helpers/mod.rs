@@ -77,6 +77,7 @@ fn test_config() -> Config {
         trusted_proxies: vec![],
         max_request_body_size: 10 * 1024 * 1024,
         timezone: chrono_tz::Tz::UTC,
+        log_level: "info".to_string(),
     }
 }
 

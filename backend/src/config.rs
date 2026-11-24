@@ -14,7 +14,6 @@ struct TomlConfig {
     #[serde(default)]
     database: DatabaseConfig,
     #[serde(default)]
-    #[allow(dead_code)] // Parsed for documentation; logging uses RUST_LOG env var
     logging: LoggingConfig,
     #[serde(default)]
     rate_limit: RateLimitConfig,
@@ -54,11 +53,16 @@ struct DatabaseConfig {
     logs_url: Option<String>,
 }
 
-#[allow(dead_code)] // Parsed for documentation; logging uses RUST_LOG env var
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 struct LoggingConfig {
     #[serde(default = "default_log_level")]
     level: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self { level: default_log_level() }
+    }
 }
 
 #[derive(Deserialize)]
@@ -123,7 +127,7 @@ fn default_timezone() -> String {
 fn default_database_url() -> String {
     "sqlite:data/dynamight.db".to_string()
 }
-fn default_log_level() -> String {
+pub fn default_log_level() -> String {
     "info,dynamight=debug".to_string()
 }
 fn default_rate_limit_max_attempts() -> u32 {
@@ -172,6 +176,8 @@ pub struct Config {
     pub max_request_body_size: usize,
     // Timezone for cron schedule interpretation (e.g. "Europe/Berlin")
     pub timezone: Tz,
+    // Tracing filter from [logging] level (RUST_LOG overrides it)
+    pub log_level: String,
 }
 
 impl Config {
@@ -292,6 +298,7 @@ impl Config {
                     }).ok()
                 })
                 .unwrap_or(Tz::UTC),
+            log_level: toml_config.logging.level,
         }
     }
 
@@ -377,6 +384,7 @@ mod tests {
             trusted_proxies: vec![],
             max_request_body_size: 10 * 1024 * 1024,
             timezone: chrono_tz::Tz::UTC,
+            log_level: default_log_level(),
         }
     }
 

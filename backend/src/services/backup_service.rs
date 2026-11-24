@@ -528,8 +528,10 @@ impl BackupService {
                     Ok(result) if !result.fits => {
                         let deficit = result.deficit.unwrap_or(0);
                         let msg = format!(
-                            "Insufficient space: need {} bytes to transfer, have {} bytes free (deficit: {} bytes)",
-                            result.transfer_size, result.destination_free, deficit
+                            "Insufficient space: need {} to transfer, have {} free ({} short)",
+                            format_file_size(result.transfer_size),
+                            format_file_size(result.destination_free),
+                            format_file_size(deficit)
                         );
                         if space_mode == "fail" {
                             self.log(run_id, LogLevel::Error, &msg, "space-check").await;
@@ -548,8 +550,9 @@ impl BackupService {
                             run_id,
                             LogLevel::Info,
                             &format!(
-                                "Space check passed: {} bytes to transfer, {} bytes free",
-                                result.transfer_size, result.destination_free
+                                "Space check passed: {} to transfer, {} free",
+                                format_file_size(result.transfer_size),
+                                format_file_size(result.destination_free)
                             ),
                             "space-check",
                         ).await;
@@ -723,6 +726,14 @@ impl BackupService {
             .execute(&self.db)
             .await;
 
+            if status == JobRunStatus::Completed && !job.get_sync_options().dry_run {
+                let _ = sqlx::query("UPDATE jobs SET last_success_at = ? WHERE id = ?")
+                    .bind(Utc::now())
+                    .bind(job_id)
+                    .execute(&self.db)
+                    .await;
+            }
+
             if result.as_ref().map(|r| r.error_count == 0).unwrap_or(false) {
                 let storage_info = result.as_ref().ok().and_then(|r| r.storage_info.clone());
                 let _ = self.update_storage_info(job_id, job, storage_info).await;
@@ -826,15 +837,127 @@ impl BackupService {
     }
 }
 
-/// Format a byte count as a human-readable string (B / KB / MB / GB).
+/// Format a byte count as a human-readable string (B / KB / MB / GB / TB).
 fn format_file_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    let b = bytes as f64;
     if bytes < 1024 {
         format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if b < KB * KB {
+        format!("{:.1} KB", b / KB)
+    } else if b < KB * KB * KB {
+        format!("{:.1} MB", b / (KB * KB))
+    } else if b < KB * KB * KB * KB {
+        format!("{:.2} GB", b / (KB * KB * KB))
     } else {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+        format!("{:.2} TB", b / (KB * KB * KB * KB))
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::format_file_size;
+
+    #[test]
+    fn formats_sizes() {
+        assert_eq!(format_file_size(512), "512 B");
+        assert_eq!(format_file_size(300_300), "293.3 KB");
+        assert_eq!(format_file_size(64_944_992_256), "60.48 GB");
+        assert_eq!(format_file_size(3 * 1024u64.pow(4)), "3.00 TB");
+    }
+}
+
+#[cfg(test)]
+mod last_success_tests {
+    use super::*;
+
+    async fn setup() -> (SqlitePool, BackupService) {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = BackupService::new(db.clone(), logs_db, log_tx, None, credentials);
+        (db, service)
+    }
+
+    async fn job_with_run(db: &SqlitePool, sync_options: &str) -> (Job, i64) {
+        let job_id = sqlx::query(
+            "INSERT INTO jobs (name, mount_point, source_dirs, destination_type, destination_config, sync_options) \
+             VALUES ('j', '', '[]', 'local', '{}', ?)",
+        )
+        .bind(sync_options)
+        .execute(db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let run_id = sqlx::query("INSERT INTO job_runs (job_id, status) VALUES (?, 'running')")
+            .bind(job_id)
+            .execute(db)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+        let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(job_id).fetch_one(db).await.unwrap();
+        (job, run_id)
+    }
+
+    async fn last_success(db: &SqlitePool, job_id: i64) -> Option<chrono::DateTime<Utc>> {
+        sqlx::query_as::<_, (Option<chrono::DateTime<Utc>>,)>("SELECT last_success_at FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn only_real_successful_runs_count() {
+        let (db, service) = setup().await;
+
+        let (job, run) = job_with_run(&db, "{}").await;
+        service.finalize_run(run, job.id, &job, Ok(JobResult { error_count: 1, ..Default::default() })).await;
+        assert!(last_success(&db, job.id).await.is_none(), "failed run");
+
+        let (job, run) = job_with_run(&db, r#"{"dry_run": true}"#).await;
+        service.finalize_run(run, job.id, &job, Ok(JobResult::default())).await;
+        assert!(last_success(&db, job.id).await.is_none(), "dry run");
+
+        let (job, run) = job_with_run(&db, "{}").await;
+        service.finalize_run(run, job.id, &job, Ok(JobResult::default())).await;
+        assert!(last_success(&db, job.id).await.is_some(), "successful run");
+    }
+
+    #[tokio::test]
+    async fn migration_backfills_from_kept_runs() {
+        let options = sqlx::sqlite::SqliteConnectOptions::new().filename(":memory:");
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        // A database from before the column existed
+        sqlx::raw_sql(include_str!("../../../migrations/001_initial.sql")).execute(&db).await.unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO jobs (id, name, mount_point, source_dirs) VALUES (1, 'a', '', '[]'), (2, 'b', '', '[]');
+             INSERT INTO job_runs (job_id, status, completed_at) VALUES
+                (1, 'completed', '2026-11-01T02:00:00Z'),
+                (1, 'completed', '2026-11-20T02:00:00Z'),
+                (1, 'failed', '2026-11-23T02:00:00Z'),
+                (2, 'failed', '2026-11-23T02:00:00Z');",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        crate::db::run_migrations(&db).await.unwrap();
+
+        let a = last_success(&db, 1).await.unwrap();
+        assert_eq!(a.to_rfc3339(), "2026-11-20T02:00:00+00:00");
+        assert!(last_success(&db, 2).await.is_none());
+
+        // Running again (every start) leaves the value alone
+        sqlx::query("UPDATE jobs SET last_success_at = '2026-11-24T02:00:00Z' WHERE id = 1").execute(&db).await.unwrap();
+        crate::db::run_migrations(&db).await.unwrap();
+        assert_eq!(last_success(&db, 1).await.unwrap().to_rfc3339(), "2026-11-24T02:00:00+00:00");
     }
 }

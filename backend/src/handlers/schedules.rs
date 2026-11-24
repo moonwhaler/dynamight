@@ -26,6 +26,28 @@ pub async fn list_schedules(
     Json(schedules)
 }
 
+#[derive(serde::Deserialize)]
+pub struct ValidateCronRequest {
+    pub cron_expression: String,
+}
+
+/// Check a cron expression without saving it, so the job form can keep
+/// schedule changes as a draft until the job is saved. Returns the next run
+/// time in the server's schedule timezone.
+pub async fn validate_cron(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ValidateCronRequest>,
+) -> impl IntoResponse {
+    let Ok(cron_schedule) = parse_cron(req.cron_expression.trim()) else {
+        return ApiError::invalid_cron().into_response();
+    };
+    let next_run = cron_schedule
+        .upcoming(state.config.timezone)
+        .next()
+        .map(|dt| dt.with_timezone(&Utc));
+    Json(json!({ "next_run_at": next_run })).into_response()
+}
+
 pub async fn create_schedule(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<i64>,

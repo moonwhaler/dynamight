@@ -43,6 +43,9 @@
   let drives = $state<UsbDrive[]>([]);
   let credentials = $state<Credential[]>([]);
   let schedules = $state<Schedule[]>([]);
+  // Schedules as last loaded from the server; the difference to `schedules`
+  // and `pendingSchedules` is applied when the job is saved
+  let savedSchedules = $state<Schedule[]>([]);
   let loadedJobId = $state<string | null>(null);
   let activeRunId = $state<number | null>(null);
   let running = $state(false);
@@ -62,8 +65,47 @@
   let syncOptions = $state<SyncOptions>(createDefaultSyncOptions());
   let credentialId = $state<number | null>(null);
 
-  // Pending schedules for new jobs (cron expressions stored until job is created)
+  // New schedules (cron expressions), created when the job is saved
   let pendingSchedules = $state<string[]>([]);
+
+  let schedulesDirty = $derived(
+    pendingSchedules.length > 0 ||
+      schedules.length !== savedSchedules.length ||
+      schedules.some((s) => savedSchedules.find((o) => o.id === s.id)?.enabled !== s.enabled)
+  );
+
+  function setSavedSchedules(list: Schedule[]) {
+    savedSchedules = list;
+    schedules = list.map((s) => ({ ...s }));
+    pendingSchedules = [];
+  }
+
+  /** Apply the schedule draft to the server. Returns how many changes failed. */
+  async function saveSchedules(jobId: number): Promise<number> {
+    let failed = 0;
+    for (const saved of savedSchedules) {
+      const current = schedules.find((s) => s.id === saved.id);
+      try {
+        if (!current) {
+          await api.schedules.delete(saved.id);
+        } else if (current.enabled !== saved.enabled) {
+          await api.schedules.update(saved.id, { enabled: current.enabled });
+        }
+      } catch (e) {
+        console.error('[JobDetail] Failed to update schedule:', e);
+        failed++;
+      }
+    }
+    for (const cron of pendingSchedules) {
+      try {
+        await api.schedules.create(jobId, { cron_expression: cron });
+      } catch (e) {
+        console.error('[JobDetail] Failed to create schedule:', e);
+        failed++;
+      }
+    }
+    return failed;
+  }
 
   function getCloneIdFromUrl(): number | null {
     const hash = window.location.hash;
@@ -128,7 +170,7 @@
         loadError = null;
         const job = await api.jobs.get(parseInt(params.id));
         loadJob(job);
-        schedules = await api.schedules.list(job.id);
+        setSavedSchedules(await api.schedules.list(job.id));
       }
 
       // Load capabilities for the current provider
@@ -261,27 +303,29 @@
     };
 
     try {
+      const job = isNew
+        ? await api.jobs.create(jobData)
+        : await api.jobs.update(parseInt(params.id!), jobData);
       if (isNew) {
-        const job = await api.jobs.create(jobData);
         jobsStore.addJob(job);
-
-        // Create pending schedules for the new job
-        if (pendingSchedules.length > 0) {
-          for (const cron of pendingSchedules) {
-            try {
-              await api.schedules.create(job.id, { cron_expression: cron });
-            } catch (e) {
-              console.error('[JobDetail] Failed to create schedule:', e);
-            }
-          }
-        }
-
-        showToast({ message: m.job_toast_created(), variant: 'success' });
       } else {
-        const job = await api.jobs.update(parseInt(params.id!), jobData);
         jobsStore.updateJob(job);
-        showToast({ message: m.job_toast_saved(), variant: 'success' });
       }
+
+      const failed = await saveSchedules(job.id);
+      if (failed > 0) {
+        // The job itself is saved. Stay on (or open) its page with the
+        // schedules as the server has them, so nothing looks scheduled that is not.
+        showToast({ message: m.job_schedules_save_failed({ count: failed }), variant: 'error' });
+        if (isNew) {
+          push(`/jobs/${job.id}`);
+        } else {
+          setSavedSchedules(await api.schedules.list(job.id));
+        }
+        return;
+      }
+
+      showToast({ message: isNew ? m.job_toast_created() : m.job_toast_saved(), variant: 'success' });
       push('/jobs');
     } catch (e) {
       console.error('[JobDetail] Submit error:', e);
@@ -547,11 +591,7 @@
 
       <!-- Schedule -->
       <div class="card p-6">
-        {#if isNew}
-          <SchedulePicker bind:schedules bind:pendingSchedules />
-        {:else}
-          <SchedulePicker jobId={parseInt(params.id!)} bind:schedules />
-        {/if}
+        <SchedulePicker bind:schedules bind:pendingSchedules dirty={!isNew && schedulesDirty} />
       </div>
 
       <!-- Actions -->

@@ -12,6 +12,7 @@
   import { getStatusIndicator } from '$lib/i18n/status';
   import { getDestinationLabel } from '$lib/utils/jobUtils';
   import { describeCron } from '$lib/utils/cron';
+  import { serverTimezone, scheduleZoneSuffix } from '$lib/stores/serverTimezone';
   import * as m from '$lib/paraglide/messages.js';
 
   let { job, onShowLogs }: { job: Job; onShowLogs: (runId: number) => void } = $props();
@@ -193,7 +194,7 @@
           {@const sched = job.schedules[0]}
           <div class="flex flex-col gap-0.5 min-w-0">
             <span class="truncate {!sched.enabled ? 'line-through opacity-50' : ''}">
-              {formatSchedule(sched)}
+              {formatSchedule(sched)}{scheduleZoneSuffix(sched.cron_expression, $serverTimezone)}
             </span>
             {#if sched.next_run_at && sched.enabled}
               <span class="text-xs text-gray-400 dark:text-gray-500">

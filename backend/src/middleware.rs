@@ -51,23 +51,47 @@ pub async fn require_auth(
         )
     })?;
 
-    if let Err(code) = check_session(&state, &claims).await {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "code": code }))));
+    match check_session(&state, &claims).await {
+        Ok(()) => {}
+        Err(SessionError::Expired) => {
+            return Err((StatusCode::UNAUTHORIZED, Json(json!({ "code": "SESSION_EXPIRED" }))));
+        }
+        Err(SessionError::Unavailable) => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "code": "INTERNAL_ERROR" })),
+            ));
+        }
     }
 
     Ok(next.run(request).await)
 }
 
+/// Why [`check_session`] rejected a token.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionError {
+    /// Revoked by logout, or issued before the last password change
+    Expired,
+    /// The database could not be asked. The token is rejected then too: a
+    /// check that cannot run must not let revoked tokens through.
+    Unavailable,
+}
+
 /// Reject tokens that were revoked by logout, or issued before the user's
 /// last password change (which invalidates all sessions).
-pub async fn check_session(state: &AppState, claims: &crate::services::Claims) -> Result<(), &'static str> {
+pub async fn check_session(state: &AppState, claims: &crate::services::Claims) -> Result<(), SessionError> {
+    let unavailable = |e: sqlx::Error| {
+        tracing::error!("Session check failed: {}", e);
+        SessionError::Unavailable
+    };
+
     let revoked: Option<(String,)> = sqlx::query_as("SELECT jti FROM revoked_tokens WHERE jti = ?")
         .bind(&claims.jti)
         .fetch_optional(&state.db)
         .await
-        .unwrap_or(None);
+        .map_err(unavailable)?;
     if revoked.is_some() {
-        return Err("SESSION_EXPIRED");
+        return Err(SessionError::Expired);
     }
 
     let password_changed_at: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
@@ -75,11 +99,11 @@ pub async fn check_session(state: &AppState, claims: &crate::services::Claims) -
             .bind(claims.sub)
             .fetch_optional(&state.db)
             .await
-            .unwrap_or(None);
+            .map_err(unavailable)?;
 
     if let Some((Some(changed_at),)) = password_changed_at {
         if (claims.iat as i64) < changed_at.timestamp() {
-            return Err("SESSION_EXPIRED");
+            return Err(SessionError::Expired);
         }
     }
     Ok(())

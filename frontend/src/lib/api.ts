@@ -353,6 +353,12 @@ export const api = {
       }),
     delete: (id: number) =>
       request<{ success: boolean }>(`/schedules/${id}`, { method: 'DELETE' }),
+    /** Check a cron expression without saving it */
+    validate: (cronExpression: string) =>
+      request<{ next_run_at: string | null }>('/schedules/validate', {
+        method: 'POST',
+        body: JSON.stringify({ cron_expression: cronExpression }),
+      }),
   },
 
   runs: {
@@ -401,6 +407,8 @@ export const api = {
   system: {
     version: () =>
       request<{ version: string; build: string; date: string }>('/system/version'),
+    /** Server facts for display; `timezone` is the zone schedules run in */
+    info: () => request<{ timezone: string }>('/system/info'),
     drives: () => request<UsbDrive[]>('/system/drives'),
     browse: (path: string) =>
       request<{ path: string; entries: DirectoryEntry[] }>(

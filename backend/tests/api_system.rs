@@ -125,3 +125,22 @@ async fn browse_works_with_auth() {
     assert!(body["path"].as_str().is_some());
     assert!(body["entries"].as_array().is_some());
 }
+
+#[tokio::test]
+async fn system_info_reports_schedule_timezone() {
+    let app = TestApp::new().await;
+    app.server.get("/system/info").await.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+    let resp = app
+        .server
+        .get("/system/info")
+        .add_header(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_str(&cookie).unwrap(),
+        )
+        .await;
+    resp.assert_status_ok();
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["timezone"], "UTC");
+}

@@ -1,56 +1,24 @@
-mod config;
-mod db;
-mod errors;
-mod extractors;
-mod handlers;
-mod middleware;
-mod models;
-mod services;
+//! Server binary. Everything but startup lives in the library crate
+//! (`src/lib.rs`), which the integration tests use too, so the server and the
+//! tests share one route tree.
 
-#[cfg(test)]
-mod test_helpers;
-
-use axum::{
-    middleware as axum_middleware,
-    routing::{delete, get, post, put},
-    Router,
-};
+use axum::Router;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{broadcast, RwLock};
 use axum::http::{header, HeaderValue, Method};
-use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::config::Config;
-use crate::services::{AuthService, BackupService, CredentialService, MountService, RateLimitConfig, RateLimitService, SchedulerService};
-
-pub struct AppState {
-    pub db: sqlx::SqlitePool,
-    pub logs_db: sqlx::SqlitePool,
-    pub config: Config,
-    pub auth_service: AuthService,
-    pub backup_service: Arc<BackupService>,
-    pub mount_service: MountService,
-    pub rate_limit_service: Arc<RateLimitService>,
-    pub credential_service: Arc<CredentialService>,
-    pub log_tx: broadcast::Sender<models::LogMessage>,
-    /// Tracks when each user last verified their credentials for file deletion.
-    /// Maps user_id -> last verification timestamp.
-    pub delete_verifications: RwLock<HashMap<i64, Instant>>,
-    /// Configurable timeout for recursive file search (in seconds).
-    pub search_timeout_seconds: RwLock<u32>,
-    /// Whether to calculate and show directory sizes in the file browser.
-    pub show_directory_sizes: RwLock<bool>,
-    /// In-memory cache for directory sizes (path -> (size, computed_at)).
-    /// Uses std::sync::RwLock because it's accessed inside spawn_blocking.
-    pub dir_size_cache: Arc<std::sync::RwLock<HashMap<PathBuf, (u64, Instant)>>>,
-}
+use dynamight::config::{self, Config};
+use dynamight::services::{
+    AuthService, BackupService, CredentialService, MountService, RateLimitConfig, RateLimitService,
+    SchedulerService,
+};
+use dynamight::{db, models, AppState};
 
 use tower::ServiceBuilder;
 
@@ -217,16 +185,35 @@ fn handle_args() {
 async fn main() -> anyhow::Result<()> {
     handle_args();
 
-    // Initialize tracing
+    // Initialize tracing. RUST_LOG wins; otherwise start with the default
+    // filter (so config loading can log) and switch to [logging] level below.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().ok();
+    let from_env = env_filter.is_some();
+    let (filter_layer, filter_handle) = tracing_subscriber::reload::Layer::new(
+        env_filter.unwrap_or_else(|| config::default_log_level().into()),
+    );
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,dynamight=debug".into()),
-        )
+        .with(filter_layer)
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     let config = Config::load();
+
+    if !from_env {
+        match tracing_subscriber::EnvFilter::try_new(&config.log_level) {
+            Ok(filter) => {
+                if let Err(e) = filter_handle.reload(filter) {
+                    tracing::warn!("Could not apply log level '{}': {}", config.log_level, e);
+                }
+            }
+            Err(e) => tracing::warn!(
+                "Invalid [logging] level '{}' ({}), keeping '{}'",
+                config.log_level,
+                e,
+                config::default_log_level()
+            ),
+        }
+    }
 
     // Ensure database directory exists
     if let Some(db_dir) = config.database_dir() {
@@ -393,93 +380,8 @@ async fn main() -> anyhow::Result<()> {
         scheduler.start().await;
     });
 
-    // Build router - split into public and protected routes
-
-    // Public routes (no authentication required)
-    let public_routes = Router::new()
-        .route("/auth/setup-required", get(handlers::auth::setup_required))
-        .route("/auth/setup", post(handlers::auth::setup))
-        .route("/auth/setup-from-backup", post(handlers::auth::setup_from_backup))
-        .route("/auth/login", post(handlers::auth::login))
-        .route("/auth/totp/validate", post(handlers::totp::validate))
-        .route("/auth/totp/recovery", post(handlers::totp::recovery))
-        .route("/system/health", get(handlers::system::health))
-        .route("/system/version", get(handlers::system::version));
-
-    // Protected routes (authentication required)
-    let protected_routes = Router::new()
-        // Auth routes (protected)
-        .route("/auth/logout", post(handlers::auth::logout))
-        .route("/auth/me", get(handlers::auth::me))
-        .route("/auth/change-password", post(handlers::auth::change_password))
-        // TOTP / 2FA routes (protected)
-        .route("/auth/totp/setup", post(handlers::totp::setup))
-        .route("/auth/totp/enable", post(handlers::totp::enable))
-        .route("/auth/totp/disable", post(handlers::totp::disable))
-        .route("/auth/totp/status", get(handlers::totp::status))
-        // Job routes
-        .route("/jobs", get(handlers::jobs::list_jobs).post(handlers::jobs::create_job))
-        .route("/jobs/:id", get(handlers::jobs::get_job).put(handlers::jobs::update_job).delete(handlers::jobs::delete_job))
-        .route("/jobs/:id/run", post(handlers::jobs::run_job))
-        .route("/jobs/:id/cancel", post(handlers::jobs::cancel_job))
-        .route("/jobs/:id/clone", post(handlers::jobs::clone_job))
-        .route("/jobs/:id/check-space", post(handlers::jobs::check_job_space))
-        // Schedule routes
-        .route("/jobs/:id/schedules", get(handlers::schedules::list_schedules).post(handlers::schedules::create_schedule))
-        .route("/schedules/:id", put(handlers::schedules::update_schedule).delete(handlers::schedules::delete_schedule))
-        // History and logs
-        .route("/jobs/:id/runs", get(handlers::logs::list_runs).delete(handlers::logs::delete_job_runs))
-        .route("/runs", get(handlers::logs::list_recent_runs).delete(handlers::logs::purge_all_runs))
-        .route("/runs/:id", get(handlers::logs::get_run).delete(handlers::logs::delete_run))
-        .route("/runs/:id/logs", get(handlers::logs::get_logs))
-        // System routes
-        .route("/system/drives", get(handlers::system::list_drives))
-        .route("/system/mounts", get(handlers::system::list_mounts))
-        .route("/system/mount", post(handlers::system::mount_drive))
-        .route("/system/unmount", post(handlers::system::unmount_drive))
-        .route("/system/browse", get(handlers::system::browse_path))
-        .route("/system/search", get(handlers::system::search_path))
-        .route("/system/mkdir", post(handlers::system::create_directory))
-        .route("/system/allowed-paths", get(handlers::system::allowed_paths))
-        .route("/system/download", get(handlers::system::download_file))
-        .route("/system/generate-mount-point", post(handlers::system::generate_mount_point))
-        .route("/system/verify-delete-access", post(handlers::system::verify_delete_access))
-        .route("/system/delete", delete(handlers::system::delete_path))
-        .route("/system/dir-sizes", post(handlers::system::dir_sizes))
-        .route("/system/delete-status", get(handlers::system::delete_status))
-        // Settings
-        .route("/settings", get(handlers::settings::get_settings).put(handlers::settings::update_settings))
-        // Config backup/restore
-        .route("/config/export", post(handlers::config_backup::export_config))
-        .route("/config/import", post(handlers::config_backup::import_config))
-        .route("/config/import/preview", post(handlers::config_backup::preview_import))
-        // Credentials
-        .route("/credentials", get(handlers::credentials::list_credentials).post(handlers::credentials::create_credential))
-        .route("/credentials/:id", get(handlers::credentials::get_credential).put(handlers::credentials::update_credential).delete(handlers::credentials::delete_credential))
-        .route("/credentials/:id/usage", get(handlers::credentials::get_credential_usage))
-        // Providers
-        .route("/providers", get(handlers::providers::list_providers))
-        .route("/providers/:type/capabilities", get(handlers::providers::get_provider_capabilities))
-        .route("/providers/test", post(handlers::providers::test_connection))
-        // Apply auth middleware to all protected routes
-        .layer(axum_middleware::from_fn_with_state(state.clone(), middleware::require_auth));
-
-    // WebSocket routes (handle their own auth via query param token)
-    let ws_routes = Router::new()
-        .route("/ws/logs/:run_id", get(handlers::websocket::ws_logs_handler))
-        .route("/ws/status", get(handlers::websocket::ws_status_handler));
-
-    let api_routes = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .merge(ws_routes)
-        // Prevent caching of sensitive API responses
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store, no-cache"),
-        ))
-        // Apply request body size limit to prevent DoS attacks via large payloads
-        .layer(RequestBodyLimitLayer::new(state.config.max_request_body_size));
+    // API routes (shared with the integration tests, see lib.rs)
+    let api_routes = dynamight::build_api_router(state.clone());
 
     // Build security headers layers
     let security_headers = build_security_headers(&config);
@@ -489,8 +391,7 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(ServeDir::new(&config.static_files_dir))
         .layer(TraceLayer::new_for_http())
         .layer(build_cors_layer(&config))
-        .layer(security_headers)
-        .with_state(state);
+        .layer(security_headers);
 
     let addr = format!("{}:{}", config.host, config.port);
     tracing::info!("Starting server on {}", addr);

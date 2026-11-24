@@ -511,3 +511,32 @@ async fn recent_runs_requires_auth_and_lists_runs() {
     let body: Vec<serde_json::Value> = resp.json();
     assert!(body.is_empty());
 }
+
+// ── Schedule validation ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn validate_cron_accepts_valid_and_rejects_invalid() {
+    let app = TestApp::new().await;
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+    let header = axum::http::HeaderValue::from_str(&cookie).unwrap();
+
+    let resp = app
+        .server
+        .post("/schedules/validate")
+        .add_header(axum::http::header::COOKIE, header.clone())
+        .json(&json!({ "cron_expression": "30 2 * * 1-5" }))
+        .await;
+    resp.assert_status_ok();
+    let body: serde_json::Value = resp.json();
+    assert!(body["next_run_at"].is_string());
+
+    let resp = app
+        .server
+        .post("/schedules/validate")
+        .add_header(axum::http::header::COOKIE, header)
+        .json(&json!({ "cron_expression": "not a cron" }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["code"], "INVALID_CRON");
+}

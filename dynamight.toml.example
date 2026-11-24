@@ -81,6 +81,8 @@ url = "sqlite:data/dynamight.db"
 #   "info"                     - Info level for everything
 #   "warn,dynamight=debug"     - Warn globally, debug for dynamight
 #   "error,dynamight=trace"    - Error globally, trace for dynamight
+#
+# The RUST_LOG environment variable overrides this setting.
 level = "info,dynamight=debug"
 
 # -----------------------------------------------------------------------------

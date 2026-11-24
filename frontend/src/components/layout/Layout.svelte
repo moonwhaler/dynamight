@@ -2,6 +2,10 @@
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
   import type { Snippet } from 'svelte';
+  import { loadServerTimezone } from '$lib/stores/serverTimezone';
+
+  // Needed wherever schedule times are shown
+  loadServerTimezone();
 
   let { children }: { children: Snippet } = $props();
 

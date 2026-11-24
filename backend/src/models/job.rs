@@ -41,6 +41,9 @@ pub struct Job {
     pub dest_storage_total: Option<i64>,
     pub dest_storage_updated_at: Option<DateTime<Utc>>,
 
+    /// Last run that completed without errors (dry runs excluded)
+    pub last_success_at: Option<DateTime<Utc>>,
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -217,6 +220,9 @@ pub struct JobResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dest_storage_updated_at: Option<DateTime<Utc>>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<DateTime<Utc>>,
+
     #[serde(default)]
     pub schedules: Vec<Schedule>,
 }
@@ -284,6 +290,7 @@ impl From<Job> for JobResponse {
             dest_storage_free: job.dest_storage_free,
             dest_storage_total: job.dest_storage_total,
             dest_storage_updated_at: job.dest_storage_updated_at,
+            last_success_at: job.last_success_at,
             schedules: vec![],
         }
     }
@@ -335,6 +342,7 @@ mod tests {
             dest_storage_free: None,
             dest_storage_total: None,
             dest_storage_updated_at: None,
+            last_success_at: None,
             created_at: now,
             updated_at: now,
         }

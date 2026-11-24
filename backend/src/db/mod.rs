@@ -139,6 +139,21 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Time of the last successful (non dry-run) backup, for the dashboard.
+    // Kept on the job because old runs are pruned (max_runs_per_job).
+    let added = sqlx::query("ALTER TABLE jobs ADD COLUMN last_success_at DATETIME DEFAULT NULL")
+        .execute(pool)
+        .await;
+    if added.is_ok() {
+        // First start with the column: take it from the runs still kept
+        sqlx::query(
+            "UPDATE jobs SET last_success_at = (SELECT MAX(completed_at) FROM job_runs \
+             WHERE job_runs.job_id = jobs.id AND job_runs.status = 'completed')",
+        )
+        .execute(pool)
+        .await?;
+    }
+
     // Last accepted TOTP time step (prevents replaying a code)
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN totp_last_step INTEGER DEFAULT NULL")
         .execute(pool)

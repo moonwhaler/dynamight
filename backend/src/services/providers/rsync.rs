@@ -283,6 +283,7 @@ impl RsyncProvider {
         args: &[String],
     ) -> Result<u64, ProviderError> {
         let mut cmd = Command::new("rsync");
+        set_rsync_locale(&mut cmd);
         cmd.args(args)
             .arg(format!("{}/", source))
             .arg(format!("{}/", dest))
@@ -789,7 +790,8 @@ impl RsyncProvider {
             }
 
             if !Path::new(source_dir).exists() {
-                ctx.log_warning(&format!("Source directory does not exist: {}", source_dir), "rsync").await;
+                // Counted as an error (the run fails), so logged as one
+                ctx.log_error(&format!("Source directory does not exist: {}", source_dir), "rsync").await;
                 result.error_count += 1;
                 continue;
             }
@@ -823,6 +825,7 @@ impl RsyncProvider {
 
             // Run rsync
             let mut cmd = Command::new("rsync");
+            set_rsync_locale(&mut cmd);
             cmd.args(&rsync_args)
                 .args(&source_exclude_args)
                 .arg(format!("{}/", source_dir))
@@ -915,6 +918,34 @@ impl RsyncProvider {
 
         Ok(())
     }
+}
+
+/// Make rsync print numbers the same way on every system.
+///
+/// rsync formats numbers for the locale ("3.575.620 bytes" in German), and
+/// without a UTF-8 locale it prints non-ASCII file names as `\#303\#234`.
+/// So numbers use the C format while the character set is kept, falling back
+/// to C.UTF-8 when the service has no UTF-8 locale (bare units, containers).
+fn set_rsync_locale(cmd: &mut Command) {
+    let env = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
+    for (key, value) in rsync_locale_env(env("LC_CTYPE").or_else(|| env("LANG"))) {
+        cmd.env(key, value);
+    }
+    cmd.env_remove("LC_ALL");
+}
+
+/// The variables [`set_rsync_locale`] sets, given the character-set locale
+/// rsync would get once LC_ALL is removed.
+fn rsync_locale_env(ctype: Option<String>) -> Vec<(&'static str, &'static str)> {
+    let mut vars = vec![("LC_NUMERIC", "C")];
+    let utf8 = ctype.is_some_and(|v| {
+        let v = v.to_ascii_lowercase();
+        v.contains("utf-8") || v.contains("utf8")
+    });
+    if !utf8 {
+        vars.push(("LC_CTYPE", "C.UTF-8"));
+    }
+    vars
 }
 
 /// Parse rsync `--stats` output lines into the sync result.
@@ -1010,6 +1041,16 @@ mod tests {
         parse_stats_line("Total transferred file size: 5.678.901 bytes", &mut r);
         assert_eq!(r.files_transferred, 1234);
         assert_eq!(r.bytes_transferred, 5_678_901);
+    }
+
+    #[test]
+    fn rsync_locale_keeps_utf8_and_fixes_numbers() {
+        assert_eq!(rsync_locale_env(Some("de_DE.UTF-8".into())), vec![("LC_NUMERIC", "C")]);
+        assert_eq!(rsync_locale_env(Some("en_US.utf8".into())), vec![("LC_NUMERIC", "C")]);
+        let fallback = vec![("LC_NUMERIC", "C"), ("LC_CTYPE", "C.UTF-8")];
+        assert_eq!(rsync_locale_env(None), fallback);
+        assert_eq!(rsync_locale_env(Some("C".into())), fallback);
+        assert_eq!(rsync_locale_env(Some("POSIX".into())), fallback);
     }
 
     #[test]

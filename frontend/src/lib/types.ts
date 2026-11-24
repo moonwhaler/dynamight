@@ -255,6 +255,9 @@ export interface Job {
   dest_storage_total?: number | null;
   dest_storage_updated_at?: string | null;
 
+  /** Last run that completed without errors (dry runs excluded) */
+  last_success_at?: string | null;
+
   schedules?: Schedule[];
 }
 
