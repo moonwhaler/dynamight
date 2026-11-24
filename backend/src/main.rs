@@ -260,9 +260,8 @@ async fn main() -> anyhow::Result<()> {
     .await
     .unwrap_or(None);
 
-    let max_runs_per_job = db_max_runs
-        .and_then(|(value,)| value.parse::<u32>().ok())
-        .or(Some(5));
+    let max_runs_per_job =
+        dynamight::handlers::settings::max_runs_from_setting(db_max_runs.as_ref().map(|(v,)| v.as_str()));
 
     // Check for search_timeout_seconds in database, default to 10 if not set
     let db_search_timeout: Option<(String,)> = sqlx::query_as(

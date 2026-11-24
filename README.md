@@ -80,18 +80,20 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 
 ## Screenshots
 
+All screenshots show the dark theme; light mode, three base tones and six accent colours are available.
+
 | | |
 |---|---|
-| **Overview (dark mode)** — what needs attention, every job with its recent runs | **Job list** — sortable table with filters by state |
-| ![Overview in dark mode](docs/screenshots/overview-dark.png) | ![Job list](docs/screenshots/jobs-list.png) |
-| **Job page** — summary, run history, schedules, sources and destination | **Job settings** — all options in sections, with a save bar |
+| **Overview** — what needs attention and why, every job with its recent runs, what runs next | **Job list** — sortable table, filters by state |
+| ![Overview](docs/screenshots/overview.png) | ![Job list](docs/screenshots/jobs-list.png) |
+| **Job page** — summary sentence, run history, schedules, sources and destination | **Job settings** — all options in sections, with a save bar |
 | ![Job page](docs/screenshots/job-detail.png) | ![Job settings](docs/screenshots/job-editor.png) |
-| **Guided setup** — new jobs step by step | **Activity** — every run, grouped by day |
+| **Guided setup** — new jobs step by step | **Activity** — every run, grouped by day, with the reason of failures |
 | ![Guided setup](docs/screenshots/wizard.png) | ![Activity](docs/screenshots/activity.png) |
-| **Run logs** — search, level filter, copy and download | **File browser** — browse allowed paths and USB drives |
-| ![Run log viewer](docs/screenshots/run-log.png) | ![File browser](docs/screenshots/files.png) |
-| **Settings** — notifications, credentials, account, appearance, data | |
-| ![Settings](docs/screenshots/settings.png) | |
+| **Run log** — live while running; search, level filter, copy, download | **File browser** — allowed paths and USB drives |
+| ![Run log](docs/screenshots/run-log.png) | ![File browser](docs/screenshots/files.png) |
+| **Settings** — notifications, credentials, account, security, appearance, data | **On a phone** — bottom tab bar, cards instead of tables |
+| ![Settings](docs/screenshots/settings.png) | <img src="docs/screenshots/mobile-overview.png" alt="Overview on a phone" width="49%"> <img src="docs/screenshots/mobile-job.png" alt="Job page on a phone" width="49%"> |
 
 ## Supported Providers
 
@@ -425,30 +427,39 @@ sudo ./scripts/install.sh uninstall
 
 ### Creating a Backup Job
 
-1. Click **"New Job"** on the Overview or Jobs page. New jobs are set up step by step; to see all options on one page instead, click **Show all options** or turn off **Settings → General → Guided job setup**
-2. Enter a name and optional description
-3. **Select Provider**: Choose your backup destination type
-4. **Configure Destination**:
-   - **Local/USB**: Set mount point, subdirectory, USB UUID, auto-mount
-   - **S3**: Bucket, region, prefix, endpoint (for S3-compatible)
-   - **Google Drive**: Folder ID, shared drive ID (optional)
-   - **OneDrive**: Folder path, drive ID (optional)
-   - **SFTP**: Host, port, username, remote path, auth type
+Click **New Job** on the Overview or Jobs page. New jobs are set up in five steps:
+
+1. **Name**: a short name and an optional description
+2. **Sources**: one or more folders to back up (browse or type the path). Files or folders to leave out can be added here too
+3. **Destination**: the type and where the copies go
+   - **Local/USB**: mount point and subdirectory; with a USB drive selected, mount it before and unmount it after the backup
+   - **S3**: bucket, region, prefix, endpoint (for S3-compatible services)
+   - **Google Drive**: folder ID, shared drive ID (optional)
+   - **OneDrive**: folder path, drive ID (optional)
+   - **SFTP**: host, port, username, remote path, password or key
    - **WebDAV**: URL, remote path
-5. **Select Credentials** (for cloud providers)
-6. **Source Directories**: Browse or type paths to back up
-7. **Compress Directories** (optional):
-   - Enable to archive each source directory before transfer
-   - Set staging path (temporary directory for archives)
-   - Choose format (tar.gz or zip) and optionally store-only (no compression)
-   - Enable timestamp versioning and set max archives to retain
-   - Optionally set an archive password. Archives are then encrypted with AES-256-CBC and get a `.enc` suffix (`.tar.gz.enc`, `.tar.enc` or `.zip.enc`). Decrypt one with `openssl enc -d -aes-256-cbc -pbkdf2 -in photos_1.tar.gz.enc -out photos_1.tar.gz`
-8. **Sync Options**:
-   - Delete extraneous files
-   - Exclude patterns and directories
-   - Bandwidth limit (local/USB only)
-   - Dry run mode
-9. Click **"Create Job"**
+
+   Remote destinations need stored credentials; pick them here or add new ones. **Test connection** checks the settings before saving
+4. **Schedule**: one or more times (daily, weekly, monthly, an interval or a cron expression). Skip it for a job that only runs when you start it
+5. **Review**: a summary of what the job will do, mirror mode and the space check. **Create job** saves it
+
+**Show all options** switches to the full form at any step, keeping what you entered. To always use the full form, turn off **Settings → General → Guided job setup**. Copies of a job (**Clone** in its menu) open in the full form.
+
+The full form, also used to change a job later (its **Settings** tab), has these sections:
+
+- **General**: name, description, enabled
+- **What to back up**: source folders, exclude patterns and folders, **Archive sources** (see below)
+- **Where it goes**: destination and credentials
+- **When it runs**: schedules
+- **Options**: mirror mode (delete files from the backup that were deleted at the source) and the space check
+- **Advanced**: dry run, checksum comparison, always transfer (ignore timestamps), compress during transfer, log detail, bandwidth limit
+
+**Archive sources** packs each source folder into an archive before the transfer:
+
+- Set a staging path (temporary directory for the archives)
+- Choose the format (tar.gz or zip), optionally without compression
+- Add a timestamp to keep versions, and set how many to keep
+- Optionally set a password. Archives are then encrypted with AES-256-CBC and get a `.enc` suffix (`.tar.gz.enc`, `.tar.enc` or `.zip.enc`). Decrypt one with `openssl enc -d -aes-256-cbc -pbkdf2 -in photos_1.tar.gz.enc -out photos_1.tar.gz`
 
 ### Managing Credentials
 
@@ -493,16 +504,18 @@ Dynamight uses your own OAuth app registration and renews access tokens itself w
 
 ### Scheduling Backups
 
-Add schedules in the job detail page:
+Schedules are part of a job: open the job, go to its **Settings** tab and the **When it runs** section (or click **Edit** next to the schedules on the job's overview).
 
-1. Open job details
-2. Click **"Add Schedule"**
-3. Choose schedule type:
-   - **Daily**: Run every day at specified time
-   - **Weekly**: Run on specific day of week
-   - **Monthly**: Run on specific day of month
-   - **Custom**: Enter cron expression
-4. Click **"Add Schedule"**
+1. Click **Add Schedule**
+2. Choose a type:
+   - **Daily**: every day at a time
+   - **Weekly**: on chosen weekdays at a time
+   - **Monthly**: on a day of the month at a time
+   - **Interval**: every few minutes or hours
+   - **Custom**: a cron expression, checked by the server
+3. Click **Add Schedule**, then **Save changes**
+
+A schedule can be paused with its switch. The same schedule cannot be added twice. Times are in the server's timezone (see below); when your browser is in another zone, the zone is shown next to the times.
 
 ### Two-Factor Authentication
 
@@ -572,8 +585,8 @@ Schedules run according to the server's configured timezone (`server.timezone` i
 ```
 
 - **Backend**: Rust with Axum framework, SQLite databases (main + logs)
-- **Frontend**: Svelte 5 SPA with Tailwind CSS
-- **Communication**: REST API + WebSocket for live logs
+- **Frontend**: Svelte 5 SPA with Tailwind CSS; fonts are bundled, nothing is loaded from other servers
+- **Communication**: REST API + WebSockets for live logs and run start/finish events
 - **Providers**: Trait-based abstraction for multiple destinations
 
 See [docs/project-description.md](docs/project-description.md) for detailed architecture documentation.
@@ -588,6 +601,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 |----------|--------|-------------|
 | `/api/auth/setup-required` | GET | Check if setup needed |
 | `/api/auth/setup` | POST | Initial admin setup |
+| `/api/auth/setup-from-backup` | POST | Initial setup from a configuration backup |
 | `/api/auth/login` | POST | Authenticate user |
 | `/api/auth/logout` | POST | End session |
 | `/api/auth/me` | GET | Get current user |
@@ -616,6 +630,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | `/api/jobs/:id/run` | POST | Run job |
 | `/api/jobs/:id/cancel` | POST | Cancel running job |
 | `/api/jobs/:id/clone` | POST | Clone job |
+| `/api/jobs/:id/check-space` | POST | Check free space at the destination |
 
 ### Schedules
 
@@ -623,6 +638,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 |----------|--------|-------------|
 | `/api/jobs/:id/schedules` | GET | List job schedules |
 | `/api/jobs/:id/schedules` | POST | Create schedule |
+| `/api/schedules/validate` | POST | Check a cron expression and return its next run |
 | `/api/schedules/:id` | PUT | Update schedule |
 | `/api/schedules/:id` | DELETE | Delete schedule |
 
@@ -631,7 +647,10 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/jobs/:id/runs` | GET | List job runs |
-| `/api/runs/:id` | GET | Get run details |
+| `/api/jobs/:id/runs` | DELETE | Delete all runs of a job |
+| `/api/runs` | GET | Recent runs of all jobs (`limit`, `before`, `job_id`, `status`, `from`, `to`) |
+| `/api/runs` | DELETE | Delete all runs |
+| `/api/runs/:id` | GET | Get run details (a failed run's `summary` holds its last error line) |
 | `/api/runs/:id` | DELETE | Delete run |
 | `/api/runs/:id/logs` | GET | Get run logs (`limit`, `offset`, `level` as a comma list, `q` to search) |
 | `/api/ws/logs/:runId` | WS | Stream live logs |
@@ -661,14 +680,33 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/system/health` | GET | Health check |
+| `/api/system/version` | GET | Version and build |
+| `/api/system/info` | GET | Server timezone |
 | `/api/system/drives` | GET | List USB drives |
 | `/api/system/mounts` | GET | List mount points |
 | `/api/system/mount` | POST | Mount drive |
 | `/api/system/unmount` | POST | Unmount drive |
 | `/api/system/browse` | GET | Browse filesystem |
+| `/api/system/search` | GET | Search below a path |
 | `/api/system/mkdir` | POST | Create directory |
 | `/api/system/allowed-paths` | GET | Get allowed paths |
+| `/api/system/download` | GET | Download a file |
+| `/api/system/dir-sizes` | POST | Directory sizes |
+| `/api/system/generate-mount-point` | POST | Suggest a mount point for a drive |
+| `/api/system/verify-delete-access` | POST | Re-enter password (and 2FA code) before deleting |
+| `/api/system/delete` | DELETE | Delete a file or folder |
+| `/api/system/delete-status` | GET | Whether deleting is currently allowed |
+
+### Settings and Configuration Backup
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/settings` | GET/PUT | App settings |
+| `/api/settings/notifications` | GET/PUT | Notification settings |
+| `/api/settings/notifications/test` | POST | Send a test notification |
+| `/api/config/export` | POST | Export the encrypted configuration backup |
+| `/api/config/import/preview` | POST | Preview an import |
+| `/api/config/import` | POST | Import a configuration backup |
 
 ## Security Considerations
 
