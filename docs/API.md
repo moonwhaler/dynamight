@@ -1245,7 +1245,7 @@ POST /providers/test
 }
 ```
 
-**Response (failure):**
+**Response (failure):** HTTP 200 with `success: false`. A failed test is a result, not a request error, so it never answers 401. A saved credential that does not exist answers 404.
 ```json
 {
   "success": false,

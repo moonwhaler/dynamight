@@ -178,6 +178,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         const legacyError = errorData as LegacyErrorResponse;
         errorMessage = String(legacyError.error);
       }
+      // Plain { message } bodies (e.g. connection test results)
+      else if (typeof errorData.message === 'string' && errorData.message) {
+        errorMessage = errorData.message;
+      }
     } catch {
       console.error(`API Error [${response.status}] ${endpoint}:`, text || '(empty response)');
     }

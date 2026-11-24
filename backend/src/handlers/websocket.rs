@@ -10,8 +10,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 use crate::extractors::extract_token_from_headers;
+use crate::services::{RUN_FINISHED_PREFIX, RUN_STARTED_MESSAGE};
 use crate::middleware::check_session;
 use crate::AppState;
 
@@ -51,8 +53,14 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
     let mut log_rx = state.log_tx.subscribe();
 
     // Spawn task to forward logs to client
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = log_rx.recv().await {
+    let mut send_task = tokio::spawn(async move {
+        loop {
+            let msg = match log_rx.recv().await {
+                Ok(msg) => msg,
+                // A slow client missed messages; keep streaming the rest
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
             if msg.run_id == run_id {
                 if let Ok(json) = serde_json::to_string(&msg) {
                     if sender.send(Message::Text(json)).await.is_err() {
@@ -64,7 +72,7 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
     });
 
     // Handle incoming messages (ping/pong, close)
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Close(_) => break,
@@ -77,10 +85,11 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
         }
     });
 
-    // Wait for either task to complete
+    // Wait for either task to complete, then stop the other one. Otherwise the
+    // sender task of a closed socket would wait for messages forever.
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => recv_task.abort(),
+        _ = &mut recv_task => send_task.abort(),
     }
 }
 
@@ -99,21 +108,26 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
     // Subscribe to log broadcasts for status updates
     let mut log_rx = state.log_tx.subscribe();
 
-    // Track which runs we've sent start/complete for
-    let mut active_runs = std::collections::HashSet::new();
-
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = log_rx.recv().await {
-            // Send status updates for job start/complete
-            let status_update = if msg.message.contains("Starting backup job") {
-                active_runs.insert(msg.run_id);
+    let mut send_task = tokio::spawn(async move {
+        loop {
+            let msg = match log_rx.recv().await {
+                Ok(msg) => msg,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
+            if msg.source != "system" {
+                continue;
+            }
+            // Status updates for job start/finish. RUN_FINISHED_PREFIX is logged
+            // by finalize_run after the final status is stored, for every
+            // provider and outcome, so clients that reload see the new status.
+            let status_update = if msg.message.starts_with(RUN_STARTED_MESSAGE) {
                 Some(serde_json::json!({
                     "type": "job_started",
                     "run_id": msg.run_id,
                     "timestamp": msg.timestamp
                 }))
-            } else if msg.message.contains("Backup complete") && active_runs.contains(&msg.run_id) {
-                active_runs.remove(&msg.run_id);
+            } else if msg.message.starts_with(RUN_FINISHED_PREFIX) {
                 Some(serde_json::json!({
                     "type": "job_completed",
                     "run_id": msg.run_id,
@@ -133,7 +147,7 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
         }
     });
 
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if matches!(msg, Message::Close(_)) {
                 break;
@@ -142,8 +156,8 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
     });
 
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => recv_task.abort(),
+        _ = &mut recv_task => send_task.abort(),
     }
 }
 

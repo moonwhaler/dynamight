@@ -63,11 +63,11 @@ impl SchedulerService {
                 s.id as schedule_id,
                 s.job_id,
                 s.cron_expression,
-                j.name as job_name
+                j.name as job_name,
+                j.enabled as job_enabled
             FROM schedules s
             JOIN jobs j ON s.job_id = j.id
             WHERE s.enabled = 1
-              AND j.enabled = 1
               AND s.next_run_at <= ?
             "#,
         )
@@ -83,22 +83,30 @@ impl SchedulerService {
         };
 
         for schedule in schedules {
-            tracing::info!(
-                "Running scheduled job: {} (schedule {})",
-                schedule.job_name,
-                schedule.schedule_id
-            );
-
             // Advance the schedule first, so a skipped or failed start does not
-            // make the same schedule fire again on every tick.
+            // make the same schedule fire again on every tick. Schedules of
+            // disabled jobs are advanced too: otherwise their overdue time
+            // would fire right after the job is enabled again.
+            // last_run_at only changes when the job really starts
             let _ = sqlx::query(
-                "UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?",
+                "UPDATE schedules SET last_run_at = CASE WHEN ? THEN ? ELSE last_run_at END, next_run_at = ? WHERE id = ?",
             )
+            .bind(schedule.job_enabled)
             .bind(now)
             .bind(calculate_next_run(&schedule.cron_expression, self.timezone).ok())
             .bind(schedule.schedule_id)
             .execute(&self.db)
             .await;
+
+            if !schedule.job_enabled {
+                continue;
+            }
+
+            tracing::info!(
+                "Running scheduled job: {} (schedule {})",
+                schedule.job_name,
+                schedule.schedule_id
+            );
 
             // Get full job details
             let job = match sqlx::query_as::<_, crate::models::Job>(
@@ -179,6 +187,7 @@ struct ScheduleWithJob {
     job_id: i64,
     cron_expression: String,
     job_name: String,
+    job_enabled: bool,
 }
 
 fn calculate_next_run(cron_expr: &str, timezone: Tz) -> anyhow::Result<chrono::DateTime<Utc>> {

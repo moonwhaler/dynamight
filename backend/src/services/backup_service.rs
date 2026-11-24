@@ -8,6 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock, Mutex};
 
+/// Logged (source "system") when a run starts; the status WebSocket turns it
+/// into a `job_started` event.
+pub const RUN_STARTED_MESSAGE: &str = "Starting backup job";
+/// Prefix of the message `finalize_run` logs (source "system") once the final
+/// run status is stored; the status WebSocket turns it into `job_completed`.
+pub const RUN_FINISHED_PREFIX: &str = "Run finished";
+
 #[derive(Debug, Default)]
 pub struct JobResult {
     pub exit_code: i32,
@@ -287,7 +294,7 @@ impl BackupService {
         // Create provider based on destination type
         let provider = providers::create_provider(&destination);
 
-        self.log(run_id, LogLevel::Info, "Starting backup job", "system").await;
+        self.log(run_id, LogLevel::Info, RUN_STARTED_MESSAGE, "system").await;
 
         // Validate configuration
         if let Err(e) = provider.validate_config(&destination, credential.as_ref()) {
@@ -383,24 +390,30 @@ impl BackupService {
                     };
 
                     let log_tx = self.log_tx.clone();
+                    // Persist as well, so compression output shows up in History.
+                    // log_fn is synchronous, so lines go through a channel to one
+                    // writer task: History is ordered by insert ID, and a task
+                    // per line could insert them out of order.
+                    let (line_tx, mut line_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<(String, chrono::DateTime<Utc>)>();
                     let logs_db = self.logs_db.clone();
-                    let log_fn = move |msg: String| {
-                        let timestamp = Utc::now();
-                        // Persist as well, so compression output shows up in History
-                        let db = logs_db.clone();
-                        let persisted = msg.clone();
-                        tokio::spawn(async move {
+                    let writer = tokio::spawn(async move {
+                        while let Some((message, timestamp)) = line_rx.recv().await {
                             let _ = sqlx::query(
                                 "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
                             )
                             .bind(run_id)
                             .bind(LogLevel::Info.as_str())
-                            .bind(persisted)
+                            .bind(message)
                             .bind("compress")
                             .bind(timestamp)
-                            .execute(&db)
+                            .execute(&logs_db)
                             .await;
-                        });
+                        }
+                    });
+                    let log_fn = move |msg: String| {
+                        let timestamp = Utc::now();
+                        let _ = line_tx.send((msg.clone(), timestamp));
                         let _ = log_tx.send(LogMessage {
                             run_id,
                             level: LogLevel::Info,
@@ -420,6 +433,10 @@ impl BackupService {
                         is_cancelled_fn,
                     )
                     .await;
+
+                    // log_fn (the only sender) is dropped now: let the writer
+                    // store the remaining lines before the next log entries
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), writer).await;
 
                     let archive_path = match archive_path {
                         Ok(p) => p,
@@ -675,6 +692,7 @@ impl BackupService {
                 .flatten();
 
         let was_cancelled = current_status.as_ref().map(|s| s.0.as_str()) == Some("cancelled");
+        let mut final_status = JobRunStatus::Cancelled;
 
         if was_cancelled {
             let _ = sqlx::query(
@@ -698,6 +716,7 @@ impl BackupService {
                 }
                 Err(_) => JobRunStatus::Failed,
             };
+            final_status = status;
 
             let _ = sqlx::query(
                 "UPDATE job_runs SET status = ?, completed_at = ?, exit_code = ?, files_transferred = ?, bytes_transferred = ?, error_count = ? WHERE id = ?",
@@ -717,6 +736,15 @@ impl BackupService {
                 let _ = self.update_storage_info(job_id, job, storage_info).await;
             }
         }
+
+        // After the status is stored, so clients reloading on this event see it
+        self.log(
+            run_id,
+            LogLevel::Info,
+            &format!("{}: {}", RUN_FINISHED_PREFIX, final_status.as_str()),
+            "system",
+        )
+        .await;
 
         self.cleanup_old_runs(job_id).await;
     }

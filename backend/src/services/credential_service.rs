@@ -443,6 +443,16 @@ impl CredentialService {
         if let Some(data_request) = request.data {
             let mut data: CredentialData = data_request.into();
 
+            // Hold the refresh lock while merging and writing OAuth data: a token
+            // refresh running at the same time would otherwise overwrite this
+            // edit, or this edit would restore a refresh token Microsoft just
+            // rotated out.
+            let _refresh_guard = if matches!(data, CredentialData::OAuth { .. }) {
+                Some(self.refresh_lock.lock().await)
+            } else {
+                None
+            };
+
             // OAuth update: fields left empty keep their stored values, so the
             // client settings can be changed without re-entering tokens (and
             // the other way round).

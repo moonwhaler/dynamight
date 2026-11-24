@@ -682,6 +682,13 @@ pub async fn cancel_job(
 ) -> impl IntoResponse {
     tracing::info!("Cancel request received for job_id: {}", id);
 
+    // Only an active run can be cancelled. Without this check the latest
+    // already cancelled run would be "cancelled" again (stray log entry, and
+    // its ID would stay in the cancel set forever).
+    if !state.backup_service.is_job_running(id).await {
+        return ApiError::new(ErrorCode::NoRunningJob).into_response();
+    }
+
     // Find running job run (check for both 'running' and 'cancelled' status - may still have process running)
     let run: Option<(i64,)> = sqlx::query_as(
         "SELECT id FROM job_runs WHERE job_id = ? AND status IN ('pending', 'running', 'cancelled') ORDER BY id DESC LIMIT 1",

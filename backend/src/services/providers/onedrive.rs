@@ -150,11 +150,45 @@ fn http_error(what: &str, status: reqwest::StatusCode, body: &str) -> ProviderEr
     }
 }
 
-/// Remote state of a destination folder tree, keyed by relative path.
+/// Remote state of a destination folder tree, keyed by relative path (as
+/// named on OneDrive).
+///
+/// OneDrive names are case-insensitive, so lookups by local path ignore case:
+/// after a local rename from `Docs` to `docs`, the remote `Docs` folder is
+/// reused, not deleted as extraneous.
 #[derive(Default)]
 struct RemoteTree {
     folders: HashMap<String, String>,
     files: HashMap<String, RemoteFile>,
+    /// Lower-case path -> key in `folders` / `files`
+    folder_keys: HashMap<String, String>,
+    file_keys: HashMap<String, String>,
+}
+
+impl RemoteTree {
+    fn insert_folder(&mut self, rel: String, id: String) {
+        self.folder_keys.insert(rel.to_lowercase(), rel.clone());
+        self.folders.insert(rel, id);
+    }
+
+    fn insert_file(&mut self, rel: String, file: RemoteFile) {
+        self.file_keys.insert(rel.to_lowercase(), rel.clone());
+        self.files.insert(rel, file);
+    }
+
+    /// Folder ID for a local relative path (case-insensitive)
+    fn folder(&self, rel: &str) -> Option<&String> {
+        self.folders
+            .get(rel)
+            .or_else(|| self.folder_keys.get(&rel.to_lowercase()).and_then(|k| self.folders.get(k)))
+    }
+
+    /// Remote file for a local relative path (case-insensitive)
+    fn file(&self, rel: &str) -> Option<&RemoteFile> {
+        self.files
+            .get(rel)
+            .or_else(|| self.file_keys.get(&rel.to_lowercase()).and_then(|k| self.files.get(k)))
+    }
 }
 
 #[async_trait]
@@ -559,7 +593,7 @@ impl OneDriveProvider {
 
     async fn list_tree(&self, ctx: &SyncContext, base: &str, root_id: &str) -> Result<RemoteTree, ProviderError> {
         let mut tree = RemoteTree::default();
-        tree.folders.insert(String::new(), root_id.to_string());
+        tree.insert_folder(String::new(), root_id.to_string());
         let mut queue = vec![(String::new(), root_id.to_string())];
         while let Some((prefix, id)) = queue.pop() {
             if ctx.check_cancelled() {
@@ -568,10 +602,10 @@ impl OneDriveProvider {
             for child in self.list_children(ctx, base, &id).await? {
                 let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
                 if child.folder.is_some() {
-                    tree.folders.insert(rel.clone(), child.id.clone());
+                    tree.insert_folder(rel.clone(), child.id.clone());
                     queue.push((rel, child.id));
                 } else {
-                    tree.files.insert(
+                    tree.insert_file(
                         rel,
                         RemoteFile {
                             size: child.size.unwrap_or(0),
@@ -642,18 +676,18 @@ impl OneDriveProvider {
                 invalid_dirs.push(dir.rel.clone());
                 continue;
             }
-            if remote.folders.contains_key(&dir.rel) {
+            if remote.folder(&dir.rel).is_some() {
                 continue;
             }
             if dry_run {
                 ctx.log_info(&format!("[DRY RUN] Would create folder: {}/{}", dest_name, dir.rel), "onedrive").await;
                 continue;
             }
-            let Some(parent) = remote.folders.get(parent_rel).cloned() else {
+            let Some(parent) = remote.folder(parent_rel).cloned() else {
                 continue;
             };
             let id = self.create_folder(ctx, base, &parent, name).await?;
-            remote.folders.insert(dir.rel.clone(), id);
+            remote.insert_folder(dir.rel.clone(), id);
         }
 
         let mut skipped = 0u64;
@@ -669,7 +703,7 @@ impl OneDriveProvider {
                 ctx.log_warning(&format!("Skipping file '{}': name {}", file.rel, reason), "onedrive").await;
                 continue;
             }
-            let existing = remote.files.get(&file.rel);
+            let existing = remote.file(&file.rel);
             if !needs_upload(file, existing) {
                 skipped += 1;
                 continue;
@@ -682,7 +716,7 @@ impl OneDriveProvider {
                 result.bytes_transferred += file.size as i64;
                 continue;
             }
-            let Some(parent) = remote.folders.get(parent_rel).cloned() else {
+            let Some(parent) = remote.folder(parent_rel).cloned() else {
                 ctx.log_error(&format!("Missing remote folder for {}", label), "onedrive").await;
                 result.error_count += 1;
                 continue;
@@ -705,7 +739,8 @@ impl OneDriveProvider {
         }
 
         if ctx.options.delete_extraneous {
-            let local_paths = local.rel_paths();
+            // Case-insensitive, like OneDrive itself
+            let local_paths: HashSet<String> = local.rel_paths().iter().map(|p| p.to_lowercase()).collect();
             let mut to_delete: Vec<(String, String, bool)> = remote
                 .files
                 .iter()
@@ -717,7 +752,9 @@ impl OneDriveProvider {
                         .filter(|(rel, _)| !rel.is_empty())
                         .map(|(rel, id)| (rel.clone(), id.clone(), true)),
                 )
-                .filter(|(rel, _, _)| !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options))
+                .filter(|(rel, _, _)| {
+                    !local_paths.contains(&rel.to_lowercase()) && !rel_excluded(source_dir, rel, &ctx.options)
+                })
                 .collect();
             to_delete.sort();
 
@@ -945,6 +982,16 @@ mod tests {
     // Graph limits: chunks must be a multiple of 320 KiB and below 60 MiB
     #[allow(clippy::manual_is_multiple_of)]
     const _: () = assert!(CHUNK_SIZE % (320 * 1024) == 0 && CHUNK_SIZE < 60 * 1024 * 1024);
+
+    #[test]
+    fn remote_tree_lookups_ignore_case() {
+        let mut tree = RemoteTree::default();
+        tree.insert_folder("Docs".into(), "id1".into());
+        tree.insert_file("Docs/Report.PDF".into(), RemoteFile { size: 1, mtime: 0, id: Some("id2".into()) });
+        assert_eq!(tree.folder("docs").map(String::as_str), Some("id1"));
+        assert!(tree.file("docs/report.pdf").is_some());
+        assert!(tree.file("docs/other.pdf").is_none());
+    }
 
     #[test]
     fn next_expected_range_parsed() {

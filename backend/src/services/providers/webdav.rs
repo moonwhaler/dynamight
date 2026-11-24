@@ -121,11 +121,7 @@ impl SyncProvider for WebDavProvider {
         };
 
         // Test URL - use base URL or append remote path
-        let test_url = if remote_path.is_empty() {
-            base_url.trim_end_matches('/').to_string()
-        } else {
-            format!("{}/{}", base_url.trim_end_matches('/'), remote_path.trim_start_matches('/'))
-        };
+        let test_url = collection_url(&base_url, &remote_path);
 
         // Use PROPFIND to test connection (standard WebDAV method)
         let response = self
@@ -269,11 +265,7 @@ impl SyncProvider for WebDavProvider {
             _ => return Ok(StorageInfo::default()),
         };
 
-        let check_url = if remote_path.is_empty() {
-            base_url.trim_end_matches('/').to_string()
-        } else {
-            format!("{}/{}", base_url.trim_end_matches('/'), remote_path.trim_start_matches('/'))
-        };
+        let check_url = collection_url(&base_url, &remote_path);
 
         // RFC 4331 quota properties
         let propfind_body = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -346,6 +338,18 @@ fn extract_xml_value(xml: &str, tag: &str) -> Option<u64> {
         }
     }
     None
+}
+
+/// URL of the remote path below the base URL, percent-encoded per segment
+/// (the same encoding sync uses, so names with `#`, `%` or spaces work).
+fn collection_url(base_url: &str, remote_path: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let encoded = encode_path(remote_path);
+    if encoded.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}/{}", base, encoded)
+    }
 }
 
 /// Join two `/`-separated relative paths.
@@ -731,6 +735,8 @@ mod tests {
         assert_eq!(href_name("https://h/dav/a%23b.txt"), "a#b.txt");
         assert_eq!(join_path("", "a"), "a");
         assert_eq!(join_path("/x/", "a"), "x/a");
+        assert_eq!(collection_url("https://h/dav/", "/my #1/"), "https://h/dav/my%20%231");
+        assert_eq!(collection_url("https://h/dav", ""), "https://h/dav");
     }
 
     #[test]

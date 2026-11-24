@@ -121,7 +121,9 @@ pub async fn test_connection(
             Err(e) if e.to_string().starts_with("Credential not found") => Ok(None),
             Err(e) if e.to_string().starts_with("Token refresh") => {
                 return (
-                    StatusCode::UNAUTHORIZED,
+                    // 200: the test ran and failed. A 401 would make the
+                    // frontend treat it as an expired login session.
+                    StatusCode::OK,
                     Json(TestConnectionResponse {
                         success: false,
                         message: e.to_string(),
@@ -178,7 +180,7 @@ pub async fn test_connection(
             {
                 if let Err(e) = state.credential_service.refresh_unsaved(provider, cred).await {
                     return (
-                        StatusCode::UNAUTHORIZED,
+                        StatusCode::OK,
                         Json(TestConnectionResponse {
                             success: false,
                             message: e.to_string(),
@@ -202,26 +204,22 @@ pub async fn test_connection(
     {
         Ok(result) => Json(TestConnectionResponse::from(result)).into_response(),
         Err(e) => {
-            let (status, message, details) = match &e {
-                providers::ProviderError::ConfigError(msg) => (StatusCode::BAD_REQUEST, msg.clone(), None),
-                providers::ProviderError::CredentialError(msg) => {
-                    (StatusCode::UNAUTHORIZED, msg.clone(), None)
-                }
-                providers::ProviderError::ConnectionError(msg) => {
-                    (StatusCode::BAD_GATEWAY, msg.clone(), None)
-                }
-                providers::ProviderError::HostKeyMismatch { expected, actual } => {
-                    (
-                        StatusCode::CONFLICT,
-                        "SSH host key mismatch! This could indicate a Man-in-the-Middle attack.".to_string(),
-                        Some(format!("Expected: {}\nReceived: {}\n\nIf you're certain this is legitimate (e.g., the server was reinstalled), update the destination with the new fingerprint.", expected, actual))
-                    )
-                }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string(), None),
+            // A failed test is a normal result, not a failed request: answer 200
+            // with success = false so the UI shows the reason (a 401 would also
+            // log the user out of the app).
+            let (message, details) = match &e {
+                providers::ProviderError::ConfigError(msg)
+                | providers::ProviderError::CredentialError(msg)
+                | providers::ProviderError::ConnectionError(msg) => (msg.clone(), None),
+                providers::ProviderError::HostKeyMismatch { expected, actual } => (
+                    "SSH host key mismatch! This could indicate a Man-in-the-Middle attack.".to_string(),
+                    Some(format!("Expected: {}\nReceived: {}\n\nIf you're certain this is legitimate (e.g., the server was reinstalled), update the destination with the new fingerprint.", expected, actual)),
+                ),
+                _ => (e.to_string(), None),
             };
 
             (
-                status,
+                StatusCode::OK,
                 Json(TestConnectionResponse {
                     success: false,
                     message,
