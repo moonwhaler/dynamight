@@ -12,7 +12,8 @@
 //! - Shared drives: <https://developers.google.com/workspace/drive/api/guides/enable-shareddrives>
 
 use super::common::{
-    self, needs_upload, parse_rfc3339, read_chunk, rel_excluded, send_with_retry, LocalEntry, RemoteFile,
+    self, needs_upload, parse_rfc3339, read_chunk, rel_excluded, send_create_with_retry, send_with_retry, Created,
+    LocalEntry, RemoteFile,
 };
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
@@ -469,7 +470,7 @@ impl GoogleDriveProvider {
             None if dry_run => None,
             None => {
                 ctx.log_info(&format!("Creating folder: {}", dest_name), "googledrive").await;
-                Some(self.create_folder(ctx, parent_id, dest_name).await?)
+                Some(self.create_folder(ctx, parent_id, dest_name, drive).await?)
             }
         };
 
@@ -508,7 +509,7 @@ impl GoogleDriveProvider {
             let Some(parent) = remote.folders.get(parent_rel).cloned() else {
                 continue;
             };
-            let id = self.create_folder(ctx, &parent, name).await?;
+            let id = self.create_folder(ctx, &parent, name, drive).await?;
             remote.folders.insert(dir.rel.clone(), id);
         }
 
@@ -538,7 +539,7 @@ impl GoogleDriveProvider {
                 continue;
             };
             let existing_id = existing.and_then(|r| r.id.clone());
-            match self.upload_file(ctx, file, &parent, existing_id.as_deref()).await {
+            match self.upload_file(ctx, file, &parent, existing_id.as_deref(), drive).await {
                 Ok(()) => {
                     let verb = if existing_id.is_some() { "Updated" } else { "Uploaded" };
                     ctx.log_info(&format!("{}: {}", verb, label), "googledrive").await;
@@ -748,31 +749,96 @@ impl GoogleDriveProvider {
         Ok(list.files.into_iter().next().map(|f| f.id))
     }
 
-    async fn create_folder(&self, ctx: &SyncContext, parent_id: &str, name: &str) -> Result<String, ProviderError> {
+    /// ID of a file named `target.name` in `target.parent_id` with this size
+    /// and modification time: one an earlier, seemingly failed attempt uploaded.
+    async fn find_uploaded_file(
+        &self,
+        ctx: &SyncContext,
+        target: &UploadTarget<'_>,
+        size: u64,
+        mtime: i64,
+    ) -> Result<Option<String>, ProviderError> {
+        let query = format!(
+            "name = '{}' and '{}' in parents and trashed = false",
+            escape_query_value(target.name),
+            escape_query_value(target.parent_id),
+        );
+        let token = ctx.oauth_access_token().await?;
+        let response = send_with_retry(Some(ctx), "Check upload", || {
+            let req = self
+                .client
+                .get(format!("{}/files", DRIVE_API_BASE))
+                .bearer_auth(&token)
+                .query(&[
+                    ("q", query.as_str()),
+                    ("fields", "files(id,name,mimeType,size,modifiedTime)"),
+                    ("supportsAllDrives", "true"),
+                    ("includeItemsFromAllDrives", "true"),
+                ]);
+            match target.drive {
+                Some(d) => req.query(&[("corpora", "drive"), ("driveId", d)]),
+                None => req,
+            }
+        })
+        .await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(http_error("Check upload", status, &body));
+        }
+        let list: FileList = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Invalid response: {}", e)))?;
+        Ok(list
+            .files
+            .into_iter()
+            .find(|f| is_uploaded_copy(f, size, mtime))
+            .map(|f| f.id))
+    }
+
+    async fn create_folder(
+        &self,
+        ctx: &SyncContext,
+        parent_id: &str,
+        name: &str,
+        drive: Option<&str>,
+    ) -> Result<String, ProviderError> {
         let metadata = serde_json::json!({
             "name": name,
             "mimeType": FOLDER_MIME,
             "parents": [parent_id],
         });
         let token = ctx.oauth_access_token().await?;
-        let response = send_with_retry(Some(ctx), "Create folder", || {
-            self.client
-                .post(format!("{}/files", DRIVE_API_BASE))
-                .query(&[("supportsAllDrives", "true"), ("fields", "id")])
-                .bearer_auth(&token)
-                .json(&metadata)
-        })
+        // A retried create could add a second folder with the same name, so
+        // look for one created by the failed attempt first.
+        let created = send_create_with_retry(
+            Some(ctx),
+            "Create folder",
+            || {
+                self.client
+                    .post(format!("{}/files", DRIVE_API_BASE))
+                    .query(&[("supportsAllDrives", "true"), ("fields", "id")])
+                    .bearer_auth(&token)
+                    .json(&metadata)
+            },
+            || self.find_child_folder(ctx, parent_id, name, drive),
+        )
         .await?;
+        let response = match created {
+            Created::Existing(id) => return Ok(id),
+            Created::Response(r) => r,
+        };
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(http_error(&format!("Create folder {}", name), status, &body));
         }
         #[derive(Deserialize)]
-        struct Created {
+        struct NewFolder {
             id: String,
         }
-        let created: Created = response
+        let created: NewFolder = response
             .json()
             .await
             .map_err(|e| ProviderError::ConnectionError(format!("Invalid response: {}", e)))?;
@@ -805,6 +871,7 @@ impl GoogleDriveProvider {
         file: &LocalEntry,
         parent_id: &str,
         existing_id: Option<&str>,
+        drive: Option<&str>,
     ) -> Result<(), ProviderError> {
         let name = split_rel(&file.rel).1;
         let mime_type = mime_guess::from_path(&file.abs).first_or_octet_stream().to_string();
@@ -816,7 +883,8 @@ impl GoogleDriveProvider {
         }
 
         if file.size <= SIMPLE_UPLOAD_LIMIT {
-            self.multipart_upload(ctx, file, &metadata, &mime_type, existing_id).await
+            let target = UploadTarget { parent_id, name, existing_id, drive };
+            self.multipart_upload(ctx, file, &metadata, &mime_type, &target).await
         } else {
             self.resumable_upload(ctx, file, &metadata, &mime_type, existing_id).await
         }
@@ -837,9 +905,11 @@ impl GoogleDriveProvider {
         file: &LocalEntry,
         metadata: &serde_json::Value,
         mime_type: &str,
-        existing_id: Option<&str>,
+        target: &UploadTarget<'_>,
     ) -> Result<(), ProviderError> {
+        let existing_id = target.existing_id;
         let data = tokio::fs::read(&file.abs).await?;
+        let size = data.len() as u64;
         let boundary = format!("dynamight_{}", uuid::Uuid::new_v4().simple());
 
         let mut body = Vec::with_capacity(data.len() + 512);
@@ -853,12 +923,23 @@ impl GoogleDriveProvider {
         let body = bytes::Bytes::from(body);
 
         let token = ctx.oauth_access_token().await?;
-        let response = send_with_retry(Some(ctx), "Upload", || {
+        let build = || {
             self.upload_request(existing_id, "multipart", &token)
                 .header("Content-Type", format!("multipart/related; boundary={}", boundary))
                 .body(body.clone())
-        })
-        .await?;
+        };
+        let response = if existing_id.is_some() {
+            // Updating a file in place is safe to repeat
+            send_with_retry(Some(ctx), "Upload", build).await?
+        } else {
+            // Creating is not: a retry after a lost response would add a
+            // second file with the same name. Look for the uploaded file first.
+            let check = || self.find_uploaded_file(ctx, target, size, file.mtime);
+            match send_create_with_retry(Some(ctx), "Upload", build, check).await? {
+                Created::Existing(_) => return Ok(()),
+                Created::Response(r) => r,
+            }
+        };
 
         if response.status().is_success() {
             Ok(())
@@ -996,6 +1077,22 @@ fn committed_offset(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     end.trim().parse::<u64>().ok().map(|n| n + 1)
 }
 
+/// Where a new file goes (or which file it replaces).
+struct UploadTarget<'a> {
+    parent_id: &'a str,
+    name: &'a str,
+    existing_id: Option<&'a str>,
+    drive: Option<&'a str>,
+}
+
+/// True if a listed file is the one we uploaded: same size, and the
+/// modification time we set from the local file.
+fn is_uploaded_copy(f: &DriveFile, size: u64, mtime: i64) -> bool {
+    f.mime_type != FOLDER_MIME
+        && f.size.as_deref().and_then(|s| s.parse::<u64>().ok()) == Some(size)
+        && f.modified_time.as_deref().and_then(parse_rfc3339) == Some(mtime)
+}
+
 /// Split a relative path into (parent, name).
 fn split_rel(rel: &str) -> (&str, &str) {
     match rel.rfind('/') {
@@ -1031,6 +1128,20 @@ mod tests {
     #[test]
     fn chunk_size_is_multiple_of_256k() {
         assert_eq!(CHUNK_SIZE % (256 * 1024), 0);
+    }
+
+    #[test]
+    fn uploaded_copy_needs_same_size_and_mtime() {
+        let f = |size: &str, mtime: &str| DriveFile {
+            id: "id".into(),
+            name: "a.txt".into(),
+            mime_type: "text/plain".into(),
+            size: Some(size.into()),
+            modified_time: Some(mtime.into()),
+        };
+        assert!(is_uploaded_copy(&f("5", "2026-01-01T00:00:00.000Z"), 5, 1767225600));
+        assert!(!is_uploaded_copy(&f("6", "2026-01-01T00:00:00.000Z"), 5, 1767225600));
+        assert!(!is_uploaded_copy(&f("5", "2026-01-02T00:00:00.000Z"), 5, 1767225600));
     }
 
     #[test]

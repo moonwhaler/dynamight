@@ -233,8 +233,8 @@
   "local_auto_mount_help": "Automatically mount the selected USB drive before the backup starts.",
   "local_auto_mount_desc": "Mount the USB drive automatically when the job runs.",
   "local_auto_unmount": "Auto-unmount after backup",
-  "local_auto_unmount_help": "Safely unmount the USB drive after backup completes.",
-  "local_auto_unmount_desc": "Safely unmount the drive when the backup completes.",
+  "local_auto_unmount_help": "Safely unmount the USB drive after backup completes. With auto-mount on, a drive that was already mounted before the backup stays mounted.",
+  "local_auto_unmount_desc": "Safely unmount the drive when the backup completes. With auto-mount on, a drive that was already mounted stays mounted.",
   "local_preview": "Files will be backed up to: {path}",
   "common_optional": "Optional",
 

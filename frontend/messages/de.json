@@ -225,8 +225,8 @@
   "local_auto_mount_help": "Das ausgewählte USB-Laufwerk wird automatisch eingehängt, bevor das Backup startet.",
   "local_auto_mount_desc": "Das USB-Laufwerk automatisch einhängen, wenn die Aufgabe ausgeführt wird.",
   "local_auto_unmount": "Automatisch nach Backup aushängen",
-  "local_auto_unmount_help": "Das USB-Laufwerk nach Abschluss des Backups sicher aushängen.",
-  "local_auto_unmount_desc": "Das Laufwerk sicher aushängen, wenn das Backup abgeschlossen ist.",
+  "local_auto_unmount_help": "Das USB-Laufwerk nach Abschluss des Backups sicher aushängen. Mit automatischem Einhängen bleibt ein Laufwerk, das vor dem Backup schon eingehängt war, eingehängt.",
+  "local_auto_unmount_desc": "Das Laufwerk sicher aushängen, wenn das Backup abgeschlossen ist. Mit automatischem Einhängen bleibt ein schon eingehängtes Laufwerk eingehängt.",
   "local_preview": "Dateien werden gesichert nach: {path}",
   "common_optional": "Optional",
 

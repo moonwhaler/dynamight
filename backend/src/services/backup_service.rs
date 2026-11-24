@@ -307,7 +307,7 @@ impl BackupService {
         }
 
         // --- Compression phase (runs before provider) ---
-        let mut include_only: Option<String> = None;
+        let mut include_only: Vec<String> = Vec::new();
         let effective_source_dirs = if sync_options.compress_dirs_enabled() {
             let compress_opts = sync_options.compress_dirs.as_ref().unwrap();
             let staging_dir = PathBuf::from(&compress_opts.staging_path);
@@ -474,18 +474,10 @@ impl BackupService {
                     // Clean up old archives if retention limit is set (timestamped only)
                     if compress_opts.add_timestamp {
                         if let Some(max) = compress_opts.max_archives_per_dir {
-                            let has_password = compress_opts
-                                .password
-                                .as_deref()
-                                .map(|p| !p.is_empty())
-                                .unwrap_or(false);
                             match compress_service::cleanup_old_archives(
                                 &staging_dir,
                                 &dir_name,
                                 compress_opts.custom_name.as_deref(),
-                                &compress_opts.format,
-                                compress_opts.store_only,
-                                has_password,
                                 max,
                                 job.id,
                             ) {
@@ -519,7 +511,7 @@ impl BackupService {
                 // The staging dir is now the source for the provider. It may hold
                 // other jobs' archives too, so only transfer (and mirror) this
                 // job's archives; archive names end in `_<job id>.<ext>`.
-                include_only = Some(format!("*_{}.*", job.id));
+                include_only = compress_service::job_archive_patterns(job.id);
                 vec![staging_dir.to_string_lossy().to_string()]
             }
         } else {
@@ -589,7 +581,7 @@ impl BackupService {
             _ => None,
         };
 
-        if include_only.is_some() {
+        if !include_only.is_empty() {
             sync_options.include_only = include_only;
             // Temporary files of archives still being written (other jobs)
             sync_options.exclude_patterns.push("*.tmp".to_string());

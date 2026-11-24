@@ -34,13 +34,23 @@ impl SchedulerService {
         }
     }
 
+    /// Recalculate `next_run_at` on startup (the timezone may have changed).
+    ///
+    /// A schedule that came due while the server was down keeps its past
+    /// `next_run_at`, so the first check runs it once (like anacron) instead
+    /// of skipping that backup; the run then advances it as usual.
     async fn update_all_next_runs(&self) -> anyhow::Result<()> {
-        let schedules: Vec<(i64, String)> =
-            sqlx::query_as("SELECT id, cron_expression FROM schedules WHERE enabled = 1")
+        let schedules: Vec<(i64, String, Option<chrono::DateTime<Utc>>)> =
+            sqlx::query_as("SELECT id, cron_expression, next_run_at FROM schedules WHERE enabled = 1")
                 .fetch_all(&self.db)
                 .await?;
 
-        for (id, cron_expr) in schedules {
+        let now = Utc::now();
+        for (id, cron_expr, next_run_at) in schedules {
+            if next_run_at.is_some_and(|t| t <= now) {
+                tracing::info!("Schedule {} was missed while the server was down; running it now", id);
+                continue;
+            }
             if let Ok(next) = calculate_next_run(&cron_expr, self.timezone) {
                 sqlx::query("UPDATE schedules SET next_run_at = ? WHERE id = ?")
                     .bind(next)
@@ -198,4 +208,89 @@ fn calculate_next_run(cron_expr: &str, timezone: Tz) -> anyhow::Result<chrono::D
         .next()
         .map(|dt| dt.with_timezone(&Utc))
         .ok_or_else(|| anyhow::anyhow!("No next run time"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration as ChronoDuration;
+
+    async fn setup() -> (SqlitePool, SchedulerService) {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(crate::services::CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = tokio::sync::broadcast::channel(100);
+        let backup = Arc::new(BackupService::new(db.clone(), logs_db, log_tx, None, credentials));
+        let scheduler = SchedulerService::new(db.clone(), backup, chrono_tz::Tz::UTC);
+        (db, scheduler)
+    }
+
+    async fn add_job(db: &SqlitePool, name: &str, enabled: bool) -> i64 {
+        sqlx::query(
+            "INSERT INTO jobs (name, enabled, mount_point, source_dirs, destination_type, destination_config) \
+             VALUES (?, ?, '', '[]', 'local', '{}')",
+        )
+        .bind(name)
+        .bind(enabled)
+        .execute(db)
+        .await
+        .unwrap()
+        .last_insert_rowid()
+    }
+
+    async fn add_schedule(db: &SqlitePool, job_id: i64, next: Option<chrono::DateTime<Utc>>) -> i64 {
+        sqlx::query("INSERT INTO schedules (job_id, enabled, cron_expression, next_run_at) VALUES (?, 1, '0 3 * * *', ?)")
+            .bind(job_id)
+            .bind(next)
+            .execute(db)
+            .await
+            .unwrap()
+            .last_insert_rowid()
+    }
+
+    async fn next_run(db: &SqlitePool, id: i64) -> Option<chrono::DateTime<Utc>> {
+        sqlx::query_as::<_, (Option<chrono::DateTime<Utc>>,)>("SELECT next_run_at FROM schedules WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn startup_keeps_missed_schedules_and_recalculates_others() {
+        let (db, scheduler) = setup().await;
+        let job = add_job(&db, "a", true).await;
+        let missed_at = Utc::now() - ChronoDuration::hours(5);
+        let missed = add_schedule(&db, job, Some(missed_at)).await;
+        let unset = add_schedule(&db, job, None).await;
+        let future = add_schedule(&db, job, Some(Utc::now() + ChronoDuration::days(30))).await;
+
+        scheduler.update_all_next_runs().await.unwrap();
+
+        assert_eq!(next_run(&db, missed).await.map(|t| t.timestamp()), Some(missed_at.timestamp()));
+        let expected = calculate_next_run("0 3 * * *", chrono_tz::Tz::UTC).unwrap();
+        assert_eq!(next_run(&db, unset).await, Some(expected));
+        assert_eq!(next_run(&db, future).await, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn disabled_job_schedule_is_advanced_without_running() {
+        let (db, scheduler) = setup().await;
+        let job = add_job(&db, "off", false).await;
+        let schedule = add_schedule(&db, job, Some(Utc::now() - ChronoDuration::hours(1))).await;
+
+        scheduler.check_and_run_due_jobs().await;
+
+        assert!(next_run(&db, schedule).await.unwrap() > Utc::now());
+        let (runs,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM job_runs").fetch_one(&db).await.unwrap();
+        assert_eq!(runs, 0);
+        let (last,): (Option<String>,) = sqlx::query_as("SELECT last_run_at FROM schedules WHERE id = ?")
+            .bind(schedule)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert!(last.is_none());
+    }
 }

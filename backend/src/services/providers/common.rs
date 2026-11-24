@@ -62,9 +62,12 @@ pub fn name_excluded(name: &str, options: &SyncOptions) -> bool {
         .any(|p| glob::Pattern::new(p).map(|pat| pat.matches(name)).unwrap_or(false))
 }
 
-/// True if `name` matches the `include_only` glob.
-pub fn include_only_matches(pattern: &str, name: &str) -> bool {
-    glob::Pattern::new(pattern).map(|p| p.matches(name)).unwrap_or(true)
+/// True if `name` matches one of the `include_only` globs (or there are none).
+pub fn include_only_matches(patterns: &[String], name: &str) -> bool {
+    patterns.is_empty()
+        || patterns
+            .iter()
+            .any(|p| glob::Pattern::new(p).map(|pat| pat.matches(name)).unwrap_or(false))
 }
 
 /// True if a path relative to `source_dir` is excluded: one of its components
@@ -77,11 +80,9 @@ pub fn rel_excluded(source_dir: &str, rel: &str, options: &SyncOptions) -> bool 
         return true;
     }
     // In compress mode only this job's archives belong to it; never delete others
-    if let Some(pattern) = &options.include_only {
-        let name = rel.rsplit('/').next().unwrap_or(rel);
-        if !include_only_matches(pattern, name) {
-            return true;
-        }
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    if !include_only_matches(&options.include_only, name) {
+        return true;
     }
     let abs = format!("{}/{}", source_dir.trim_end_matches('/'), rel);
     options
@@ -183,10 +184,8 @@ pub fn walk_source(source_dir: &str, options: &SyncOptions) -> Result<LocalTree,
         if file_type.is_dir() {
             tree.entries.push(local);
         } else if file_type.is_file() {
-            if let Some(pattern) = &options.include_only {
-                if !include_only_matches(pattern, &entry.file_name().to_string_lossy()) {
-                    continue;
-                }
+            if !include_only_matches(&options.include_only, &entry.file_name().to_string_lossy()) {
+                continue;
             }
             files.push(local);
         } else {
@@ -258,9 +257,41 @@ fn backoff(attempt: u32) -> Duration {
 /// `build` is called for every attempt, so request bodies must be cheap to
 /// recreate (e.g. `bytes::Bytes` chunks). Non-retryable responses (including
 /// 4xx errors) are returned to the caller unchanged.
-pub async fn send_with_retry<F>(ctx: Option<&SyncContext>, what: &str, mut build: F) -> Result<reqwest::Response, ProviderError>
+pub async fn send_with_retry<F>(ctx: Option<&SyncContext>, what: &str, build: F) -> Result<reqwest::Response, ProviderError>
 where
     F: FnMut() -> reqwest::RequestBuilder,
+{
+    let no_check = || async { Ok::<Option<String>, ProviderError>(None) };
+    match send_create_with_retry(ctx, what, build, no_check).await? {
+        Created::Response(resp) => Ok(resp),
+        Created::Existing(_) => unreachable!("no existence check was given"),
+    }
+}
+
+/// Outcome of [`send_create_with_retry`].
+pub enum Created {
+    /// The (last) response of the request
+    Response(reqwest::Response),
+    /// An earlier attempt had created the item after all; its ID
+    Existing(String),
+}
+
+/// Like [`send_with_retry`], for requests that create an item and are not
+/// idempotent (a Drive file or folder: Drive allows duplicate names).
+///
+/// A timed-out or failed attempt may still have created the item, so before
+/// each retry `already_created` is asked whether it exists now; if it returns
+/// an ID, that item is used instead of creating a duplicate.
+pub async fn send_create_with_retry<F, C, Fut>(
+    ctx: Option<&SyncContext>,
+    what: &str,
+    mut build: F,
+    mut already_created: C,
+) -> Result<Created, ProviderError>
+where
+    F: FnMut() -> reqwest::RequestBuilder,
+    C: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>, ProviderError>>,
 {
     let mut attempt = 0;
     loop {
@@ -272,7 +303,9 @@ where
             }
             Err(e) if (e.is_connect() || e.is_timeout() || e.is_request()) && attempt < MAX_ATTEMPTS => backoff(attempt),
             _ => {
-                return result.map_err(|e| ProviderError::ConnectionError(format!("{} failed: {}", what, e)));
+                return result
+                    .map(Created::Response)
+                    .map_err(|e| ProviderError::ConnectionError(format!("{} failed: {}", what, e)));
             }
         };
 
@@ -291,6 +324,15 @@ where
             .await;
         }
         tokio::time::sleep(delay).await;
+
+        // A connection that could not be opened sent nothing; anything else
+        // may have reached the server.
+        let maybe_sent = !matches!(&result, Err(e) if e.is_connect());
+        if maybe_sent {
+            if let Some(id) = already_created().await? {
+                return Ok(Created::Existing(id));
+            }
+        }
     }
 }
 
@@ -307,6 +349,7 @@ pub async fn read_chunk(path: &Path, offset: u64, len: usize) -> Result<bytes::B
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn opts(patterns: &[&str], dirs: &[&str]) -> SyncOptions {
         SyncOptions {
@@ -347,12 +390,15 @@ mod tests {
         std::fs::write(tmp.path().join("photos_142.tar.gz"), b"b").unwrap();
         std::fs::write(tmp.path().join("docs_7.zip"), b"c").unwrap();
         let mut o = opts(&[], &[]);
-        o.include_only = Some("*_42.*".to_string());
+        o.include_only = crate::services::compress_service::job_archive_patterns(42);
+        std::fs::write(tmp.path().join("x_42.notes_7.zip"), b"d").unwrap();
         let tree = walk_source(tmp.path().to_str().unwrap(), &o).unwrap();
         let rels: Vec<&str> = tree.entries.iter().map(|e| e.rel.as_str()).collect();
         assert_eq!(rels, vec!["photos_42.tar.gz"]);
         assert!(rel_excluded("/s", "docs_7.zip", &o));
         assert!(rel_excluded("/s", "photos_142.tar.gz", &o));
+        // Another job's archive whose custom name contains "_42."
+        assert!(rel_excluded("/s", "x_42.notes_7.zip", &o));
         assert!(!rel_excluded("/s", "2026-01-01_photos_42.tar.gz", &o));
     }
 
@@ -380,6 +426,56 @@ mod tests {
         assert_eq!(parse_rfc3339("2026-01-01T00:00:00Z"), Some(1767225600));
         assert_eq!(parse_rfc3339("2026-01-01T00:00:00.123Z"), Some(1767225600));
         assert_eq!(parse_http_date("Thu, 01 Jan 2026 00:00:00 GMT"), Some(1767225600));
+    }
+
+    /// A server that answers every request with HTTP 503 and counts requests.
+    async fn failing_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        (format!("http://{}", addr), hits)
+    }
+
+    #[tokio::test]
+    async fn create_retry_uses_item_created_by_failed_attempt() {
+        let (url, hits) = failing_server().await;
+        let client = reqwest::Client::new();
+        let created = send_create_with_retry(None, "Create", || client.post(&url), || async {
+            Ok(Some("existing-id".to_string()))
+        })
+        .await
+        .unwrap();
+        assert!(matches!(created, Created::Existing(ref id) if id == "existing-id"));
+        // No second create request was sent
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn create_retry_retries_when_nothing_was_created() {
+        let (url, hits) = failing_server().await;
+        let client = reqwest::Client::new();
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let created = send_create_with_retry(None, "Create", || client.post(&url), || async {
+            // Found on the second check
+            let n = checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok((n == 1).then(|| "late-id".to_string()))
+        })
+        .await
+        .unwrap();
+        assert!(matches!(created, Created::Existing(ref id) if id == "late-id"));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]

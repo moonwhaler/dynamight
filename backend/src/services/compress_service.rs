@@ -42,6 +42,17 @@ pub fn sanitize_dir_name(name: &str) -> String {
 /// `encrypted` adds a `.enc` suffix (openssl AES-256-CBC). This applies to zip
 /// too: zip's built-in encryption is weak and needs the password on the
 /// command line, so password-protected zips are encrypted with openssl as well.
+/// Every extension `format_extension` can return. Older versions also wrote
+/// password-protected zips as plain `.zip` (zip -P), which is included.
+pub const ARCHIVE_EXTENSIONS: &[&str] = &["tar.gz", "tar.gz.enc", "tar", "tar.enc", "zip", "zip.enc"];
+
+/// Glob patterns that match exactly the archives of one job: names end in
+/// `_<job id>.<archive extension>`. Unlike `*_<id>.*`, these cannot match
+/// another job's archive whose custom name happens to contain `_<id>.`.
+pub fn job_archive_patterns(job_id: i64) -> Vec<String> {
+    ARCHIVE_EXTENSIONS.iter().map(|ext| format!("*_{}.{}", job_id, ext)).collect()
+}
+
 pub fn format_extension(format: &CompressFormat, store_only: bool, encrypted: bool) -> &'static str {
     match format {
         CompressFormat::TarGz => match (store_only, encrypted) {
@@ -454,22 +465,27 @@ pub fn cleanup_old_archives(
     staging_dir: &Path,
     dir_name: &str,
     custom_name: Option<&str>,
-    format: &CompressFormat,
-    store_only: bool,
-    has_password: bool,
     max_count: u32,
     job_id: i64,
 ) -> anyhow::Result<u32> {
-    let ext = format_extension(format, store_only, has_password);
+    // Archives of every format count: archives written before a settings
+    // change (e.g. old password zips named `.zip`, or `.tar.gz` before a
+    // switch to zip) belong to the same directory and are rotated out
+    // instead of being kept forever.
     let sanitized = format!("{}_{}", sanitize_dir_name(dir_name), job_id);
 
-    // The base name without any timestamp prefix: [custom_]sanitized_jobid.ext
-    let base_name = match custom_name {
-        Some(cn) if !cn.is_empty() => format!("{}_{}.{}", cn, sanitized, ext),
-        _ => format!("{}.{}", sanitized, ext),
+    // The stem without any timestamp prefix: [custom_]sanitized_jobid
+    let stem = match custom_name {
+        Some(cn) if !cn.is_empty() => format!("{}_{}", cn, sanitized),
+        _ => sanitized,
     };
-    // The suffix used to match timestamped variants: "_[custom_]sanitized_jobid.ext"
-    let ts_suffix = format!("_{}", base_name);
+    let is_archive_of_dir = |name: &str| {
+        ARCHIVE_EXTENSIONS.iter().any(|ext| {
+            let base_name = format!("{}.{}", stem, ext);
+            // Exact base name (no timestamp) OR timestamp-prefixed variant
+            name == base_name || name.ends_with(&format!("_{}", base_name))
+        })
+    };
 
     let entries = std::fs::read_dir(staging_dir).with_context(|| {
         format!(
@@ -482,9 +498,7 @@ pub fn cleanup_old_archives(
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name();
-            let name_str = name.to_string_lossy().into_owned();
-            // Match exact base name (no timestamp) OR timestamp-prefixed variant
-            name_str == base_name || name_str.ends_with(&ts_suffix)
+            is_archive_of_dir(&name.to_string_lossy())
         })
         .filter_map(|e| {
             let mtime = e.metadata().ok()?.modified().ok()?;
@@ -606,6 +620,45 @@ mod tests {
         assert_eq!(format_extension(&CompressFormat::Zip, true, false), "zip");
         assert_eq!(format_extension(&CompressFormat::Zip, false, true), "zip.enc");
         assert_eq!(format_extension(&CompressFormat::Zip, true, true), "zip.enc");
+    }
+
+    #[test]
+    fn retention_counts_all_formats_of_one_dir_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let base = std::time::SystemTime::now() - std::time::Duration::from_secs(1000);
+        let files = [
+            ("2026-01-01T00-00-00_photos_42.zip", 1),     // legacy password zip
+            ("2026-01-02T00-00-00_photos_42.tar.gz", 2),  // before a format switch
+            ("2026-01-03T00-00-00_photos_42.zip.enc", 3), // current
+            ("2026-01-01T00-00-00_photos_7.zip", 0),      // other job
+            ("2026-01-01T00-00-00_docs_42.zip", 0),       // other directory
+        ];
+        for (name, age) in files {
+            let path = dir.join(name);
+            std::fs::write(&path, b"x").unwrap();
+            let f = std::fs::File::options().write(true).open(&path).unwrap();
+            f.set_modified(base + std::time::Duration::from_secs(age * 10)).unwrap();
+        }
+
+        let deleted = cleanup_old_archives(dir, "photos", None, 1, 42).unwrap();
+        assert_eq!(deleted, 2);
+        assert!(dir.join("2026-01-03T00-00-00_photos_42.zip.enc").exists());
+        assert!(!dir.join("2026-01-01T00-00-00_photos_42.zip").exists());
+        assert!(!dir.join("2026-01-02T00-00-00_photos_42.tar.gz").exists());
+        assert!(dir.join("2026-01-01T00-00-00_photos_7.zip").exists());
+        assert!(dir.join("2026-01-01T00-00-00_docs_42.zip").exists());
+    }
+
+    #[test]
+    fn job_archive_patterns_match_only_that_job() {
+        let patterns = job_archive_patterns(42);
+        let matches = |name: &str| patterns.iter().any(|p| glob::Pattern::new(p).unwrap().matches(name));
+        assert!(matches("2026-01-01T00-00-00_photos_42.tar.gz"));
+        assert!(matches("photos_42.zip.enc"));
+        assert!(!matches("photos_142.tar.gz"));
+        assert!(!matches("x_42.notes_7.zip"));
+        assert!(!matches("photos_42.tar.gz.tmp"));
     }
 
     // --- generate_archive_name tests ---

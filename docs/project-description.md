@@ -343,7 +343,8 @@ Orchestrates backup execution:
 Handles per-directory archiving before provider sync:
 
 - `compress_directory(source_dir, job_id, opts, exclude_paths, log_fn, is_cancelled)` — archives a single source directory into the staging path, honouring cancellation and excluded sub-paths
-- `cleanup_old_archives(staging_path, source_dir, job_id, max_count)` — deletes oldest archives beyond the retention limit, matching by sanitised dir name + job ID
+- `cleanup_old_archives(staging_path, dir_name, custom_name, max_count, job_id)` — deletes oldest archives beyond the retention limit, matching by sanitised dir name + job ID in any archive format (so archives written before a format or password change are rotated out too)
+- `job_archive_patterns(job_id)` — globs (`*_<id>.tar.gz`, `*_<id>.zip.enc`, ...) that pick only this job's archives from a shared staging folder
 - **Archive naming**: `[<timestamp>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>`
   - Job ID is embedded in every filename so multiple jobs can safely share the same staging directory
   - Timestamp format: `YYYY-MM-DDTHH-MM-SS`
@@ -369,6 +370,8 @@ Handles per-directory archiving before provider sync:
 - Calculates next run times using 5-field cron expressions with full timezone support
 - Skips execution if the same job is already running
 - Updates `last_run_at` and `next_run_at` after each invocation
+- Schedules of disabled jobs are advanced without running, so enabling the job again does not start an overdue run
+- A schedule that came due while the server was down runs once at startup (catch-up), not once per missed slot
 - Preserves "cancelled" status (does not overwrite with success/failure)
 
 ### Handler Layer

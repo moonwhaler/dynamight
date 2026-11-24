@@ -118,8 +118,10 @@ impl RsyncProvider {
 
         // Compress mode: transfer only this job's archives. Everything else is
         // excluded, which also protects it from --delete on the destination.
-        if let Some(pattern) = &ctx.options.include_only {
-            args.push(format!("--include={}", pattern));
+        if !ctx.options.include_only.is_empty() {
+            for pattern in &ctx.options.include_only {
+                args.push(format!("--include={}", pattern));
+            }
             args.push("--exclude=*".to_string());
         }
 
@@ -666,8 +668,10 @@ impl SyncProvider for RsyncProvider {
         }
 
         // Unmount if needed - also after cancellation or errors
-        if auto_unmount && usb_uuid.is_some() {
+        if should_unmount(auto_mount, auto_unmount, we_mounted, usb_uuid.is_some()) {
             self.unmount(&ctx, &mount_point).await;
+        } else if auto_unmount && usb_uuid.is_some() {
+            ctx.log_info("Drive was already mounted before the backup; leaving it mounted", "mount").await;
         }
 
         sync_outcome?;
@@ -746,6 +750,16 @@ impl SyncProvider for RsyncProvider {
             _ => Ok(StorageInfo::default()),
         }
     }
+}
+
+/// Whether to unmount the USB drive after a run.
+///
+/// With auto-mount on, the drive is left as it was found: one that was
+/// already mounted before the run (by the user or a desktop automounter, and
+/// possibly in use) stays mounted. With auto-mount off, auto-unmount means
+/// "unmount the drive I mounted myself", so it is unmounted.
+fn should_unmount(auto_mount: bool, auto_unmount: bool, we_mounted: bool, is_usb: bool) -> bool {
+    is_usb && auto_unmount && (we_mounted || !auto_mount)
 }
 
 impl RsyncProvider {
@@ -977,6 +991,17 @@ fn mounted_uuid_matches(uuid: &str, target: &str, found: bool, mounted_uuid: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unmounts_only_drives_it_should() {
+        // auto-mount on: only a drive this run mounted
+        assert!(should_unmount(true, true, true, true));
+        assert!(!should_unmount(true, true, false, true));
+        // auto-mount off: the user asked to unmount their own mount
+        assert!(should_unmount(false, true, false, true));
+        assert!(!should_unmount(true, false, true, true));
+        assert!(!should_unmount(true, true, true, false));
+    }
 
     #[test]
     fn parses_rsync_stats() {

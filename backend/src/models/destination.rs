@@ -226,12 +226,12 @@ pub struct SyncOptions {
     #[serde(default)]
     pub compress_dirs: Option<CompressDirsOptions>,
 
-    /// Runtime only (never stored): when set, providers transfer only files
-    /// whose name matches this glob, and never delete non-matching files on
-    /// the destination. Used in compress mode, where the staging directory
-    /// may also hold other jobs' archives.
+    /// Runtime only (never stored): when not empty, providers transfer only
+    /// files whose name matches one of these globs, and never delete
+    /// non-matching files on the destination. Used in compress mode, where
+    /// the staging directory may also hold other jobs' archives.
     #[serde(skip)]
-    pub include_only: Option<String>,
+    pub include_only: Vec<String>,
 }
 
 impl Default for SyncOptions {
@@ -246,7 +246,7 @@ impl Default for SyncOptions {
             provider_options: None,
             space_check: "warn".to_string(),
             compress_dirs: None,
-            include_only: None,
+            include_only: Vec::new(),
         }
     }
 }
@@ -278,7 +278,7 @@ impl SyncOptions {
             provider_options: Some(provider_options),
             space_check: "warn".to_string(),
             compress_dirs: None,
-            include_only: None,
+            include_only: Vec::new(),
         }
     }
 
