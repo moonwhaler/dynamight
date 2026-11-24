@@ -30,6 +30,17 @@ import * as m from '$lib/paraglide/messages.js';
 
 const API_BASE = '/api';
 
+export interface RunsQuery {
+  limit?: number;
+  /** Only runs with a smaller id (next page) */
+  before?: number;
+  jobId?: number;
+  status?: string[];
+  /** RFC 3339 times limiting started_at */
+  from?: string;
+  to?: string;
+}
+
 // Error response from the backend with error code
 interface ApiErrorResponse {
   code: string;
@@ -347,8 +358,16 @@ export const api = {
   runs: {
     list: (jobId: number, limit = 50, offset = 0) =>
       request<JobRun[]>(`/jobs/${jobId}/runs?limit=${limit}&offset=${offset}`),
-    /** Most recent runs across all jobs, newest first */
-    recent: (limit = 10) => request<JobRun[]>(`/runs?limit=${limit}`),
+    /** Runs across all jobs, newest first, optionally filtered */
+    recent: (query: RunsQuery = {}) => {
+      const params = new URLSearchParams({ limit: String(query.limit ?? 10) });
+      if (query.before != null) params.set('before', String(query.before));
+      if (query.jobId != null) params.set('job_id', String(query.jobId));
+      if (query.status?.length) params.set('status', query.status.join(','));
+      if (query.from) params.set('from', query.from);
+      if (query.to) params.set('to', query.to);
+      return request<JobRun[]>(`/runs?${params}`);
+    },
     get: (id: number) => request<JobRun>(`/runs/${id}`),
     logs: (id: number, limit = 500, offset = 0) =>
       request<PaginatedLogsResponse>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),

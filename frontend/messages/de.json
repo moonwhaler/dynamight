@@ -1028,5 +1028,15 @@
   "common_show_password": "Passwort anzeigen",
   "common_hide_password": "Passwort verbergen",
   "backup_password_placeholder": "Backup-Passwort eingeben",
-  "backup_openssl_compatible": "OpenSSL-kompatibel"
+  "backup_openssl_compatible": "OpenSSL-kompatibel",
+  "history_load_more": "Ältere Läufe laden",
+  "theme_base_paper": "Papier",
+  "theme_base_cloud": "Wolke",
+  "theme_base_slate": "Schiefer",
+  "theme_accent_ocean": "Ozean",
+  "theme_accent_emerald": "Smaragd",
+  "theme_accent_rose": "Rosé",
+  "theme_accent_amber": "Bernstein",
+  "theme_accent_violet": "Violett",
+  "theme_accent_teal": "Petrol"
 }

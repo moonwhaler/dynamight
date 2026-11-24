@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { api } from '../lib/api';
   import { jobsStore } from '../lib/stores/jobs';
   import { historyTablePreferencesStore, HISTORY_FIXED, HISTORY_ALL, HISTORY_DEFAULT_VISIBLE, historySortStore } from '../lib/stores/historyTablePreferences';
@@ -33,9 +33,15 @@
 
   const LOG_PAGE_SIZE = 500;
   const POLL_INTERVAL_MS = 3000;
+  // Runs per request; older runs are loaded on demand ("Load more")
+  const RUNS_PAGE_SIZE = 50;
+
+  let hasMore = $state(false);
+  let loadingMore = $state(false);
+  let loadGeneration = 0;
 
   const logsTotalPages = $derived(Math.max(1, Math.ceil(logsTotal / LOG_PAGE_SIZE)));
-  const hasRunningJobs = $derived(runs.some((r) => r.status === 'running'));
+  const hasRunningJobs = $derived(runs.some((r) => r.status === 'running' || r.status === 'pending'));
 
   const filteredRuns = $derived.by(() => {
     let result = runs;
@@ -113,9 +119,17 @@
     selectedJobId = null;
   }
 
-  onMount(async () => {
-    await jobsStore.load();
-    await loadRuns();
+  onMount(() => {
+    // Job names for the table and the job filter
+    jobsStore.load();
+  });
+
+  // Job, status and date filters are applied by the server, so older
+  // matching runs are found too; reload whenever one of them changes
+  // (this also does the first load)
+  $effect(() => {
+    void [selectedJobId, statusFilters, dateFrom, dateTo];
+    untrack(() => loadRuns());
   });
 
   onDestroy(() => {
@@ -147,26 +161,58 @@
     }
   });
 
+  function runsQuery() {
+    const from = dateFrom ? new Date(dateFrom) : null;
+    from?.setHours(0, 0, 0, 0);
+    const to = dateTo ? new Date(dateTo) : null;
+    to?.setHours(23, 59, 59, 999);
+    return {
+      jobId: selectedJobId ?? undefined,
+      status: statusFilters.size > 0 ? [...statusFilters] : undefined,
+      from: from?.toISOString(),
+      to: to?.toISOString(),
+    };
+  }
+
+  /**
+   * Load the newest page of runs. A silent reload (polling) refreshes the
+   * newest page and keeps the older pages the user already loaded.
+   */
   async function loadRuns(silent = false) {
+    const generation = ++loadGeneration;
     if (!silent) loading = true;
     try {
-      const allRuns: JobRun[] = [];
-      const jobs = selectedJobId
-        ? $jobsStore.jobs.filter((j) => j.id === selectedJobId)
-        : $jobsStore.jobs;
-
-      for (const job of jobs) {
-        const jobRuns = await api.runs.list(job.id, 20);
-        allRuns.push(...jobRuns);
+      const page = await api.runs.recent({ ...runsQuery(), limit: RUNS_PAGE_SIZE });
+      // A newer request (filter change) owns the list now
+      if (generation !== loadGeneration) return;
+      if (silent && page.length === RUNS_PAGE_SIZE) {
+        const oldest = page[page.length - 1].id;
+        runs = [...page, ...runs.filter((r) => r.id < oldest)];
+      } else {
+        runs = page;
+        hasMore = page.length === RUNS_PAGE_SIZE;
       }
-
-      runs = allRuns.sort(
-        (a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime()
-      );
     } catch {
-      // Ignore
+      // Keep what is shown
     } finally {
-      if (!silent) loading = false;
+      if (!silent && generation === loadGeneration) loading = false;
+    }
+  }
+
+  async function loadMore() {
+    if (loadingMore || runs.length === 0) return;
+    const generation = loadGeneration;
+    loadingMore = true;
+    try {
+      const before = runs[runs.length - 1].id;
+      const page = await api.runs.recent({ ...runsQuery(), limit: RUNS_PAGE_SIZE, before });
+      if (generation !== loadGeneration) return;
+      runs = [...runs, ...page];
+      hasMore = page.length === RUNS_PAGE_SIZE;
+    } catch {
+      // The button stays, so the user can try again
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -384,7 +430,7 @@
       {#if runs.length > 0 && selectedJobId}
         <button onclick={confirmPurgeJob} class="btn btn-secondary">{m.history_clear_job()}</button>
       {/if}
-      <button onclick={confirmPurgeAll} disabled={runs.length === 0} class="btn btn-secondary">
+      <button onclick={confirmPurgeAll} disabled={runs.length === 0 && activeFilterCount === 0} class="btn btn-secondary">
         {m.history_clear_all()}
       </button>
     </div>
@@ -401,7 +447,7 @@
           <input type="text" bind:value={searchQuery} placeholder={m.history_search_placeholder()} class="input pl-10" />
         </div>
 
-        <select bind:value={selectedJobId} onchange={() => loadRuns()} class="input lg:w-48">
+        <select bind:value={selectedJobId} class="input lg:w-48">
           <option value={null}>{m.jobs_filter_all()}</option>
           {#each $jobsStore.jobs as job}
             <option value={job.id}>{job.name}</option>
@@ -488,7 +534,7 @@
     <div class="flex justify-center py-12">
       <Spinner size="w-10 h-10" />
     </div>
-  {:else if runs.length === 0}
+  {:else if runs.length === 0 && activeFilterCount === 0}
     <div class="card p-12 text-center">
       <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -614,6 +660,13 @@
         </table>
       </div>
     </div>
+    {#if hasMore}
+      <div class="flex justify-center">
+        <button type="button" onclick={loadMore} disabled={loadingMore} class="btn btn-secondary">
+          {loadingMore ? m.common_loading() : m.history_load_more()}
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -623,7 +676,7 @@
       <div class="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2">
         <div class="min-w-0 flex-1">
           <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
-            {getJobName(selectedRun.job_id)} - Run #{selectedRun.id}
+            {getJobName(selectedRun.job_id)} - {m.runlog_run_number({ id: selectedRun.id })}
           </h3>
           <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{formatDateTime(selectedRun.started_at)}</p>
         </div>

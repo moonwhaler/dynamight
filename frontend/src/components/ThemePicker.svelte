@@ -29,6 +29,20 @@
 
   const baseKeys = Object.keys(bases) as BaseTheme[];
   const accentKeys = Object.keys(accents) as AccentColor[];
+
+  const baseLabels: Record<BaseTheme, () => string> = {
+    paper: m.theme_base_paper,
+    cloud: m.theme_base_cloud,
+    slate: m.theme_base_slate,
+  };
+  const accentLabels: Record<AccentColor, () => string> = {
+    ocean: m.theme_accent_ocean,
+    emerald: m.theme_accent_emerald,
+    rose: m.theme_accent_rose,
+    amber: m.theme_accent_amber,
+    violet: m.theme_accent_violet,
+    teal: m.theme_accent_teal,
+  };
 </script>
 
 <div class="relative" bind:this={panelRef}>
@@ -98,7 +112,7 @@
                 class="group flex-1 flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all {isActive
                   ? 'bg-gray-100 dark:bg-gray-700 ring-2 ring-primary-500'
                   : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}"
-                title={base.label}
+                title={baseLabels[key]()}
               >
                 <div
                   class="w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center {isActive
@@ -112,7 +126,7 @@
                     </svg>
                   {/if}
                 </div>
-                <span class="text-[10px] font-medium {isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}">{base.label}</span>
+                <span class="text-[10px] font-medium {isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}">{baseLabels[key]()}</span>
               </button>
             {/each}
           </div>
@@ -131,7 +145,7 @@
               <button
                 onclick={() => themeStore.setAccent(key)}
                 class="group flex flex-col items-center gap-1.5"
-                title={accent.label}
+                title={accentLabels[key]()}
               >
                 <div
                   class="w-7 h-7 rounded-full transition-all flex items-center justify-center {isActive
@@ -145,7 +159,7 @@
                     </svg>
                   {/if}
                 </div>
-                <span class="text-[9px] font-medium {isActive ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}">{accent.label}</span>
+                <span class="text-[9px] font-medium {isActive ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}">{accentLabels[key]()}</span>
               </button>
             {/each}
           </div>

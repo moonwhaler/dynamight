@@ -47,7 +47,7 @@
   async function loadRecentRuns(silent = false) {
     if (!silent) loadingRuns = true;
     try {
-      recentRuns = await api.runs.recent(10);
+      recentRuns = await api.runs.recent({ limit: 10 });
     } catch {
       // Ignore
     } finally {

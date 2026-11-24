@@ -753,7 +753,7 @@ GET /jobs/:id/runs
 
 ### List Recent Runs
 
-Get the most recent runs across all jobs, newest first.
+Get runs across all jobs, newest first, optionally filtered.
 
 ```
 GET /runs
@@ -766,6 +766,11 @@ GET /runs
 |-----------|------|-------------|
 | `limit` | int | Max results, 1-200 (default: 10) |
 | `offset` | int | Skip results (default: 0) |
+| `before` | int | Only runs with a smaller id; pass the last id of the previous page to load the next one |
+| `job_id` | int | Only runs of this job |
+| `status` | string | Comma-separated statuses, e.g. `failed,cancelled` |
+| `from` | string | RFC 3339 time; only runs started at or after it |
+| `to` | string | RFC 3339 time; only runs started at or before it |
 
 **Response:** Array of run objects (same as [List Job Runs](#list-job-runs)).
 

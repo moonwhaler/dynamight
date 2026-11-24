@@ -1030,5 +1030,15 @@
   "common_show_password": "Show password",
   "common_hide_password": "Hide password",
   "backup_password_placeholder": "Enter backup password",
-  "backup_openssl_compatible": "OpenSSL compatible"
+  "backup_openssl_compatible": "OpenSSL compatible",
+  "history_load_more": "Load older runs",
+  "theme_base_paper": "Paper",
+  "theme_base_cloud": "Cloud",
+  "theme_base_slate": "Slate",
+  "theme_accent_ocean": "Ocean",
+  "theme_accent_emerald": "Emerald",
+  "theme_accent_rose": "Rose",
+  "theme_accent_amber": "Amber",
+  "theme_accent_violet": "Violet",
+  "theme_accent_teal": "Teal"
 }
