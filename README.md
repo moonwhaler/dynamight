@@ -49,11 +49,18 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Log viewer for every run (live while running, stored afterwards) with search, level filter, copy and download
   - Configurable history retention: runs per job, and days to keep full logs (90 by default)
 
-- **File Browser**
-  - Browse allowed local paths and USB drives directly in the UI
-  - Grid and list views, search, sortable columns, file type column
-  - Lazy-loaded directory sizes
-  - Create folders; deleting requires password re-verification
+- **File Manager**
+  - Places sidebar with the allowed paths and USB drives, each with its free space; mount and eject drives there
+  - List or photo grid (image and video thumbnails), sortable; stays fast with tens of thousands of files; folder sizes fill in one by one
+  - The open folder is in the URL: reload, bookmarks and the browser's Back button work; click the path to type one (Ctrl+L); search the folder or its subfolders
+  - Preview panel for images, PDFs, text and logs; videos play in the browser; a music folder plays as a queue with a player bar (media keys and lock screen work)
+  - Row menu (⋯ or right-click): preview, download, rename, copy to…, move to…, copy path, move to trash; full keyboard control
+  - Select several items (checkboxes, Ctrl/Shift-click, Ctrl+A, long-press on touch screens) to download, copy, move or delete them together
+  - Copy and move run in the background with progress and cancel; when a name is taken you choose Replace, Keep both or Skip
+  - Upload files and whole folders (button or drag and drop), several GB each: sent in chunks, they continue after a dropped connection, a reload or a server restart
+  - Downloads stream straight to disk; folders and selections download as one `.tar`
+  - Trash: deleting moves items to a trash folder on their drive, with Undo and a Trash view to restore them; emptied after 30 days (configurable). Deleting permanently asks for your password
+  - Backups never include the trash or unfinished uploads and copies
 
 - **Configuration Backup & Restore**
   - Export jobs, credentials, schedules, and settings as an encrypted `.dmbackup` file
@@ -91,10 +98,12 @@ All screenshots show the dark theme; light mode, three base tones and six accent
 | ![Job page](docs/screenshots/job-detail.png) | ![Job settings](docs/screenshots/job-editor.png) |
 | **Guided setup** — new jobs step by step | **Activity** — every run, grouped by day, with the reason of failures |
 | ![Guided setup](docs/screenshots/wizard.png) | ![Activity](docs/screenshots/activity.png) |
-| **Run log** — live while running; search, level filter, copy, download | **File browser** — allowed paths and USB drives |
-| ![Run log](docs/screenshots/run-log.png) | ![File browser](docs/screenshots/files.png) |
-| **Settings** — notifications, credentials, account, security, appearance, data | **On a phone** — bottom tab bar, cards instead of tables |
-| ![Settings](docs/screenshots/settings.png) | <img src="docs/screenshots/mobile-overview.png" alt="Overview on a phone" width="49%"> <img src="docs/screenshots/mobile-job.png" alt="Job page on a phone" width="49%"> |
+| **Run log** — live while running; search, level filter, copy, download | **Settings** — notifications, credentials, account, security, appearance, data |
+| ![Run log](docs/screenshots/run-log.png) | ![Settings](docs/screenshots/settings.png) |
+| **File manager** — places with free space, list with preview panel | **Photo grid** — thumbnails of images and videos |
+| ![File manager](docs/screenshots/files.png) | ![Photo grid](docs/screenshots/files-grid.png) |
+| **On a phone** — bottom tab bar, cards instead of tables | **Files on a phone** — size and date below each name |
+| <img src="docs/screenshots/mobile-overview.png" alt="Overview on a phone" width="49%"> <img src="docs/screenshots/mobile-job.png" alt="Job page on a phone" width="49%"> | <img src="docs/screenshots/mobile-files.png" alt="Files on a phone" width="49%"> |
 
 ## Supported Providers
 
@@ -236,7 +245,9 @@ Any setting can be overridden via environment variables using SCREAMING_SNAKE_CA
 | `server.port` | `8080` | Port to listen on |
 | `database.url` | `sqlite:data/dynamight.db` | SQLite database location |
 | `security.secure_cookies` | `true` | Require HTTPS for cookies |
-| `security.allowed_browse_paths` | `["/mnt", "/home", "/media"]` | Paths users can browse |
+| `security.allowed_browse_paths` | `["/mnt", "/home", "/media"]` | Paths the file manager may show and change (and job sources and destinations are picked from) |
+| `limits.max_download_size` | `1099511627776` (1 TiB) | Largest single file the file manager downloads; previews and video playback are not limited |
+| `limits.max_request_body_size` | `10485760` (10 MB) | Largest request body; uploads send chunks of up to 8 MB within it |
 | `rate_limit.max_attempts` | `5` | Max failed auth attempts before lockout |
 
 ### Notifications
@@ -537,10 +548,21 @@ Enable 2FA for additional security:
 - **Overview**: what needs attention, all jobs with their recent runs (each bar is one run; click it for its log), and what runs next
 - **Jobs**: all jobs as a table or cards; filter by state and sort by name, status, last good copy or next run. Each job has its own page with **Overview**, **Runs** and **Settings** tabs
 - **Activity**: every run of every job, newest first, grouped by day
-- **Files**: browse allowed paths and USB drives
-- **Settings**: general behaviour, appearance, notifications, credentials, account, two-factor authentication, data (run history and log retention, configuration backup) and version information
+- **Files**: the file manager for the allowed paths and USB drives (see below)
+- **Settings**: general behaviour, appearance, notifications, credentials, account, two-factor authentication, data (run history, log and trash retention, file browser options, configuration backup) and version information
 
 Unsaved changes to a job are kept until you save or discard them; leaving the page asks first.
+
+### Working with Files
+
+- **Places** on the left lists the allowed paths and USB drives with their free space. Click a drive that is not mounted to mount it; ⏏ ejects it. On a phone, tap the place name above the list.
+- **Open** a folder with a click; a file opens in the preview. **Up** (↑), the path (click a part, or the pencil / Ctrl+L to type one) and the browser's Back button take you elsewhere.
+- **More actions** are in each row's ⋯ menu or on right-click. Keys: arrows to move, Enter to open, Backspace to go up, F2 to rename, Delete to move to the trash, Space to select, Shift+F10 for the menu, `/` to search.
+- **Select** with the checkboxes, Ctrl/Shift-click or Ctrl+A (long-press on a phone). A bar above the list then offers Download, Copy to…, Move to…, Rename and Delete for the selection.
+- **Copies, moves and uploads** show their progress behind the ring button in the toolbar, where they can also be cancelled. They keep running while you browse elsewhere in the app.
+- **Upload** with the Upload button (files or a whole folder) or by dropping files on the list. Leaving the page pauses uploads; pick the same files again later and they continue where they stopped.
+- **Trash**: deleted items can be restored from **Trash** in the places list or with Undo right after deleting. Each drive has its own trash folder (`.dynamight-trash`, hidden in the list). Items are deleted for good after the days set in **Settings → Data** (30 by default); **Empty trash** and **Delete permanently** ask for your password.
+- **Thumbnails of videos** need `ffmpeg` on the server (not part of the Docker image); images always work.
 
 ### Backing Up and Restoring the Configuration
 
@@ -591,7 +613,7 @@ Schedules run according to the server's configured timezone (`server.timezone` i
 
 - **Backend**: Rust with Axum framework, SQLite databases (main + logs)
 - **Frontend**: Svelte 5 SPA with Tailwind CSS; fonts are bundled, nothing is loaded from other servers
-- **Communication**: REST API + WebSockets for live logs and run start/finish events
+- **Communication**: REST API + WebSockets for live logs, run start/finish events and file manager progress
 - **Providers**: Trait-based abstraction for multiple destinations
 
 See [docs/project-description.md](docs/project-description.md) for detailed architecture documentation.
@@ -701,12 +723,26 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | `/api/system/verify-delete-access` | POST | Re-enter password (and 2FA code) before deleting |
 | `/api/system/delete` | DELETE | Delete a file or folder |
 | `/api/system/delete-status` | GET | Whether deleting is currently allowed |
+| `/api/files/places` | GET | Allowed paths and USB drives with free space, and the number of items in the trash |
+| `/api/files/raw` | GET | A file with Range support, as download or (`disposition=inline`) shown in the browser |
+| `/api/files/dir-sizes` | POST | Folder sizes, streamed as NDJSON |
+| `/api/files/trash` | GET/POST/DELETE | List the trash, move items to it, delete items for good (needs the password check) |
+| `/api/files/trash/restore` | POST | Restore items from the trash |
+| `/api/files/tasks` | GET/POST | List or start copy and move tasks |
+| `/api/files/tasks/:id/resolve` | POST | Answer a name conflict (replace, keep both, skip) |
+| `/api/files/tasks/:id/cancel` | POST | Cancel a copy or move |
+| `/api/files/rename` | POST | Rename a file or folder |
+| `/api/files/archive` | POST | Prepare a `.tar` download of several items (then GET the returned link) |
+| `/api/files/text` | GET | The first MiB of a text file |
+| `/api/files/thumb` | GET | Thumbnail of an image or video |
+| `/api/files/uploads` | POST | Start or resume an upload |
+| `/api/files/uploads/:id` | GET/PUT/DELETE | Upload progress, send a chunk (`Content-Range`), cancel |
 
 ### Settings and Configuration Backup
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/settings` | GET/PUT | App settings (`max_runs_per_job` and `log_retention_days`: a number, or `null` for no limit; fields left out are not changed) |
+| `/api/settings` | GET/PUT | App settings (`max_runs_per_job`, `log_retention_days` and `trash_retention_days`: a number, or `null` for no limit; fields left out are not changed) |
 | `/api/settings/notifications` | GET/PUT | Notification settings |
 | `/api/settings/notifications/test` | POST | Send a test notification |
 | `/api/config/export` | POST | Export the encrypted configuration backup |
@@ -716,7 +752,8 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 ## Security Considerations
 
 - **Container Privileges**: Requires `SYS_ADMIN` capability for mount operations. Use `no-new-privileges` security option.
-- **Source Mounts**: Mount backup sources as read-only (`:ro`) when possible.
+- **Source Mounts**: Mount backup sources as read-only (`:ro`) when possible. The file manager can only change files in writable mounts.
+- **File Manager**: It can change and delete everything below `allowed_browse_paths`, so keep that list to what you need. Files are checked against it after resolving links; a link pointing outside is never followed. Previewed files are sent with a sandboxing Content-Security-Policy, so HTML or SVG in them cannot run as the app.
 - **HTTPS**: Use a reverse proxy (nginx, Caddy) for HTTPS in production.
 - **2FA**: Enable two-factor authentication for additional security.
 - **Credentials**: All provider credentials are encrypted with AES-256-GCM.
@@ -756,6 +793,14 @@ volumes:
 2. Use "Test Connection" button in job configuration
 3. Check firewall allows outbound HTTPS
 4. For OAuth providers, ensure tokens haven't expired
+
+### Uploads Fail Behind a Reverse Proxy
+
+Uploads send chunks of up to 8 MB. nginx accepts only 1 MB request bodies by default; raise the limit for Dynamight:
+
+```nginx
+client_max_body_size 16m;
+```
 
 ### Rate Limited
 

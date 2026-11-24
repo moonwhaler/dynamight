@@ -109,11 +109,14 @@ max_lockout_secs = 3600
 # -----------------------------------------------------------------------------
 [limits]
 
-# Maximum file download size in bytes.
-# Default: 2GB (2147483648 bytes)
-max_download_size = 2147483648
+# Largest single file the file manager downloads, in bytes. Downloads stream
+# straight to disk, so this only guards against mistakes. Previews and video
+# playback are not limited.
+# Default: 1 TiB (1099511627776 bytes)
+# max_download_size = 1099511627776
 
 # Maximum request body size in bytes.
-# Protects against DoS attacks via oversized payloads.
+# Protects against DoS attacks via oversized payloads. Uploads send chunks of
+# up to 8MB within this limit (a reverse proxy in front must allow them too).
 # Default: 10MB (10485760 bytes)
 max_request_body_size = 10485760

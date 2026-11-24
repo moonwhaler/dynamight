@@ -36,7 +36,7 @@ Dynamight runs on the machine that holds the data (typically a home server or NA
 - **Monitoring**: per-job health (failed, overdue, never backed up), activity history, live logs over WebSocket, notifications via ntfy and webhooks
 - **Directory compression**: optional tar.gz or zip archives of each source folder before the transfer, optionally encrypted
 - **Retention**: runs per job, and days to keep full logs
-- **File browser**: browse, search, download and delete within allowed paths
+- **File manager**: browse, search, preview and play, download, upload (resumable), rename, copy and move (background tasks), trash with restore, within allowed paths
 - **Configuration backup**: encrypted export and import of jobs, credentials, schedules and settings
 - **Security**: Argon2 passwords, TOTP two-factor authentication with recovery codes, encrypted credential storage, rate limiting
 
@@ -141,14 +141,19 @@ dynamight-web/
 │       ├── db/mod.rs           # Migrations for both databases
 │       ├── models/             # job, schedule, log_entry (runs, log lines), destination, credential, user
 │       ├── handlers/           # auth, totp, jobs, schedules, logs (runs), system, settings,
-│       │                       # notifications, config_backup, credentials, providers, websocket
+│       │                       # notifications, config_backup, credentials, providers, websocket,
+│       │                       # files (places, raw, trash, sizes), file_actions (tasks, rename,
+│       │                       # archive), file_preview (text, thumbnails), uploads
 │       └── services/
 │           ├── backup_service.rs        # Run queue, execution, finalizing, retention
 │           ├── scheduler_service.rs     # Cron schedules
 │           ├── log_writer.rs            # Batched log line storage
 │           ├── notification_service.rs  # ntfy / webhook notifications
 │           ├── compress_service.rs      # Archives before the transfer
-│           ├── mount_service.rs         # Drives, mounts, file browser helpers, free space
+│           ├── mount_service.rs         # Drives, mounts, directory listing and sizes, free space
+│           ├── path_guard.rs            # Allowed-path checks, no-replace rename, internal names
+│           ├── trash.rs                 # Trash folders per drive: move, list, restore, purge
+│           ├── file_ops.rs              # Copy/move tasks with conflicts and progress
 │           ├── credential_service.rs    # Credential encryption
 │           ├── oauth_service.rs         # Access token refresh (Drive, OneDrive)
 │           ├── config_backup_service.rs # Encrypted export / import
@@ -174,7 +179,8 @@ dynamight-web/
         │   │                   # providers/ (destination forms), SchedulePicker, SyncOptions, ...
         │   ├── logs/           # RunLogModal, RunLogHost
         │   ├── settings/       # One component per settings section
-        │   ├── filebrowser/    # File list, search, breadcrumbs, dialogs
+        │   ├── filebrowser/    # PlacesPanel, PathBar, FileList (windowed), FilePreview, MusicPlayer,
+        │   │                   # TrashView, FileTasks (transfers), conflict and delete dialogs
         │   └── ui/             # Dialog, Menu, Toggle, Tabs, StatusChip, RunStrip, Toast, ...
         └── lib/
             ├── api.ts          # API client
@@ -245,8 +251,17 @@ Archives source folders before the transfer. See [Directory Compression](#direct
 
 - Lists USB drives (`lsblk -J`) and mounts (`findmnt -J`)
 - Mounts by UUID and unmounts (UI actions)
-- Browses, searches and sizes directories for the file browser (search stops at its deadline)
+- Lists, searches and sizes directories for the file manager (search stops at its deadline; sizes stay on one filesystem and stop when the browser leaves)
 - `fs_space(path)`: free and total bytes via `statvfs`, like `df`
+
+#### File manager (`path_guard.rs`, `trash.rs`, `file_ops.rs`, `handlers/files*.rs`, `handlers/uploads.rs`)
+
+- Every client path is resolved and checked against `allowed_browse_paths` before and after following links; an entry that is a link is acted on itself, never its target.
+- **Trash**: an item moves (rename) to `.dynamight-trash/<id>/` at the nearest allowed root, mount point or filesystem boundary, with a sidecar JSON holding its path relative to that folder (a remounted drive still restores right). Trash folders are recorded in `trash_roots`; the hourly cleanup deletes items older than `trash_retention_days`.
+- **Copy and move** run as tasks, one at a time, on a blocking thread. Files are written as `.<name>.dynamight-part` and renamed without replacing (`renameat2(RENAME_NOREPLACE)`). A taken name pauses the task until the user answers (replace moves the old item to the trash). Moves to another drive copy, then delete each file. Progress goes out on its own broadcast channel and `/api/ws/status`.
+- **Uploads**: chunks are appended to `.<name>.dynamight-upload-<id>`; its length is the offset, so an upload resumes after any interruption. The `uploads` table remembers them across restarts; stale ones are removed after 24 hours.
+- **Downloads** use Range requests (`ServeFile`); inline previews carry a sandbox CSP. Several items download as a streamed `tar`. Thumbnails (images with the `image` crate, videos with `ffmpeg` when present) are cached next to the database.
+- Backups and archives exclude the trash and the part files.
 
 #### CredentialService and OAuth (`credential_service.rs`, `oauth_service.rs`)
 
@@ -274,11 +289,12 @@ Exports jobs, schedules, credentials and settings as YAML, encrypted with AES-25
 | Schedules | `/api/jobs/:id/schedules`, `/api/schedules/*` | Schedule CRUD, cron validation |
 | Runs | `/api/runs/*`, `/api/jobs/:id/runs` | Run history, run details, logs (filter, search), deletion |
 | System | `/api/system/*` | Health, version, drives, mounts, browse, search, download, delete |
+| Files | `/api/files/*` | Places, raw files (Range), folder sizes (NDJSON), trash, copy/move tasks, rename, archive, text preview, thumbnails, uploads |
 | Settings | `/api/settings*` | App settings, notification settings |
 | Config | `/api/config/*` | Configuration export, import, import preview |
 | Credentials | `/api/credentials/*` | Credential CRUD and usage |
 | Providers | `/api/providers/*` | Provider list, capabilities, connection test |
-| WebSocket | `/api/ws/logs/:runId`, `/api/ws/status` | Live log lines, run events |
+| WebSocket | `/api/ws/logs/:runId`, `/api/ws/status` | Live log lines, run events, file task progress |
 
 Handlers report database errors as errors (HTTP 500), never as empty data.
 
@@ -294,6 +310,8 @@ Handlers report database errors as errors (HTTP 500), never as empty data.
 | `job_runs` | Status, times, files and bytes transferred, error count, `summary` (failure reason), `log_pruned` |
 | `credentials` | Encrypted provider credentials |
 | `app_settings` | Key/value settings (retention, notifications, file browser) |
+| `trash_roots` | Trash folders the file manager has used |
+| `uploads` | Uploads in progress (target, size, fingerprint, conflict choice) |
 | `pending_totp_sessions`, `recovery_codes`, `revoked_tokens` | 2FA login, recovery codes, logged-out tokens |
 
 **Logs database (`logs.db`)**
@@ -350,7 +368,7 @@ POST /api/jobs/:id/run            Scheduler (due schedule)
           └── run retention
 ```
 
-The browser follows along through two WebSockets: `/api/ws/status` (run events; the job list refreshes) and `/api/ws/logs/:runId` (log lines of the open run log). Both authenticate with the session cookie.
+The browser follows along through two WebSockets: `/api/ws/status` (run events, so the job list refreshes, and file manager task progress) and `/api/ws/logs/:runId` (log lines of the open run log). Both authenticate with the session cookie.
 
 ---
 
@@ -430,7 +448,7 @@ pub enum DestinationConfig {
 | `/jobs/new` | Guided setup (wizard) or the full form, depending on the preference; `?clone=` copies a job |
 | `/jobs/:id`, `/jobs/:id/runs`, `/jobs/:id/settings` | Job page with Overview, Runs and Settings (editor) tabs |
 | `/activity` | All runs, grouped by day, with filters |
-| `/files` | File browser |
+| `/files` | File manager (`?path=` the open folder, `?view=trash` the trash) |
 | `/settings`, `/settings/:section` | Settings: general, appearance, notifications, credentials, account, security, data, about |
 | `/history`, `/about` | Redirects to `/activity` and `/settings/about` |
 
@@ -482,8 +500,10 @@ Content-Security-Policy (`default-src 'self'`, no external scripts or fonts, `fr
 
 ### File System
 
-- Browsing, searching, downloading, creating and deleting are limited to `allowed_browse_paths`, checked before and after resolving symlinks.
-- Deleting needs a recent password confirmation; allowed roots and anything that is or contains a mount point cannot be deleted.
+- Every file manager action is limited to `allowed_browse_paths`, checked before and after resolving symlinks; paths with `..` are refused.
+- Deleting moves items to the trash; deleting permanently (and emptying the trash) needs a recent password confirmation. Allowed roots and anything that is or contains a mount point cannot be deleted, moved or copied.
+- Renames, finished copies and uploads never replace an existing file unless the user chose Replace, and then the old file goes to the trash.
+- Files shown inline get `Content-Security-Policy: sandbox`; HTML and scripts are sent as plain text.
 - Exclude patterns are validated; rsync, tar and zip get arguments, never a shell.
 
 ### Privileges
@@ -531,7 +551,7 @@ Settings come from `dynamight.toml` (see `dynamight.toml.example`), found via `D
 |----------|-------------|---------|-------------|
 | `security.jwt_secret` | `JWT_SECRET` | (required) | Signs sessions and derives the credential key; at least 32 characters |
 | `security.secure_cookies` | `SECURE_COOKIES` | `true` | `Secure` cookie flag (needs HTTPS) |
-| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` | `["/mnt", "/home", "/media"]` | Paths the file browser may use |
+| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` | `["/mnt", "/home", "/media"]` | Paths the file manager may show and change |
 | `security.cors_origins` | `CORS_ORIGINS` | `[]` | Extra allowed origins (same-origin only when empty) |
 | `security.trusted_proxies` | `TRUSTED_PROXIES` | `[]` | Proxies whose `X-Forwarded-For` is trusted |
 | `server.host` | `HOST` | `0.0.0.0` | Interface to bind |
@@ -545,10 +565,10 @@ Settings come from `dynamight.toml` (see `dynamight.toml.example`), found via `D
 | `rate_limit.window_secs` | `RATE_LIMIT_WINDOW_SECS` | `60` | Counting window |
 | `rate_limit.lockout_secs` | `RATE_LIMIT_LOCKOUT_SECS` | `60` | First lockout |
 | `rate_limit.max_lockout_secs` | `RATE_LIMIT_MAX_LOCKOUT_SECS` | `3600` | Longest lockout |
-| `limits.max_download_size` | `MAX_DOWNLOAD_SIZE` | 2 GiB | File browser download limit |
+| `limits.max_download_size` | `MAX_DOWNLOAD_SIZE` | 1 TiB | Largest single file download (previews are not limited) |
 | `limits.max_request_body_size` | `MAX_REQUEST_BODY_SIZE` | 10 MiB | Request body limit |
 
-Settings changed in the UI (run and log retention, file browser options, notifications) are stored in the database, not in this file.
+Settings changed in the UI (run, log and trash retention, file browser options, notifications) are stored in the database, not in this file.
 
 ---
 

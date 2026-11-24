@@ -34,12 +34,19 @@ backend/src/
     auth.rs / totp.rs        # Auth endpoints
     schedules.rs             # Schedule CRUD
     system.rs                # Browse, drives, mounts
+    files.rs                 # File manager: places, raw (Range), trash, folder sizes
+    file_actions.rs          # Copy/move tasks, rename, .tar archive download
+    file_preview.rs          # Text preview, thumbnails
+    uploads.rs               # Resumable chunked uploads
   services/
     backup_service.rs        # Job execution orchestrator (do_execute)
     compress_service.rs      # Archive creation + retention cleanup
     scheduler_service.rs     # Timezone-aware cron runner
     credential_service.rs    # AES-256-GCM encrypt/decrypt
     mount_service.rs         # USB blkid/mount/umount
+    path_guard.rs            # Allowed-path checks, no-replace rename
+    trash.rs                 # Trash folders per drive
+    file_ops.rs              # Copy/move task runner
     providers/
       mod.rs                 # SyncProvider trait + factory function
       rsync.rs / s3.rs / googledrive.rs / onedrive.rs / sftp.rs / webdav.rs

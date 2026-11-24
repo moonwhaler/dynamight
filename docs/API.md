@@ -18,6 +18,7 @@ Complete REST API documentation for the Dynamight backup management system.
 - [Credentials](#credentials)
 - [Providers](#providers)
 - [System](#system)
+- [Files](#files)
 - [Settings](#settings)
 - [WebSocket](#websocket)
 - [Error Responses](#error-responses)
@@ -1443,25 +1444,30 @@ GET /system/browse
 ```json
 {
   "path": "/home/user",
-  "parent": "/home",
   "entries": [
     {
       "name": "documents",
       "path": "/home/user/documents",
       "is_dir": true,
+      "is_symlink": false,
       "size": null,
-      "modified": "2026-01-01T00:00:00Z"
+      "modified": 1795556800,
+      "extension": null
     },
     {
       "name": "file.txt",
       "path": "/home/user/file.txt",
       "is_dir": false,
+      "is_symlink": false,
       "size": 1024,
-      "modified": "2026-01-01T00:00:00Z"
+      "modified": 1795556800,
+      "extension": "txt"
     }
   ]
 }
 ```
+
+`modified` is in Unix seconds. A symbolic link shows what it points to (`is_symlink: true`). The trash folder and unfinished copies are not listed.
 
 *Note: Only paths within `ALLOWED_BROWSE_PATHS` can be browsed.*
 
@@ -1513,6 +1519,401 @@ GET /system/allowed-paths
 
 ---
 
+## Files
+
+The file manager's own endpoints. Every path must lie within `ALLOWED_BROWSE_PATHS`; it is checked before and after symlinks are resolved.
+
+### Places
+
+```
+GET /files/places
+```
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "places": [{ "path": "/mnt", "total": 2000398934016, "free": 812345678848 }],
+  "drives": [
+    {
+      "uuid": "f91aeb4d-827f-4003-b327-3b28906d1d18",
+      "name": "sdb1",
+      "label": "USB2",
+      "fstype": "ext4",
+      "size": "1.8T",
+      "mountpoint": "/mnt/USB2",
+      "model": "Extreme SSD",
+      "available": "1.2T",
+      "total": 1967925211136,
+      "free": 1310205534208
+    }
+  ],
+  "trash_items": 3
+}
+```
+
+`total` and `free` are bytes (`null` when not known, e.g. a drive that is not mounted).
+
+---
+
+### Get File
+
+A file with Range support (`206 Partial Content`), for downloads and for showing files in the browser.
+
+```
+GET /files/raw?path=/mnt/USB2/photo.jpg&disposition=inline
+```
+
+**Authentication:** Required
+
+| Parameter | Description |
+|-----------|-------------|
+| `path` | The file |
+| `disposition` | `inline` to show the file in the browser; anything else downloads it (`Content-Disposition: attachment`, limited to `MAX_DOWNLOAD_SIZE`) |
+
+With `inline`, images, audio, video and plain text keep their type, PDFs are shown by the browser's viewer, other text (HTML, scripts, source code) is sent as `text/plain`, and binary files are downloaded instead. Inline responses carry `Content-Security-Policy: sandbox`, so nothing in a file can run as the app.
+
+---
+
+### Folder Sizes
+
+```
+POST /files/dir-sizes
+```
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{ "paths": ["/mnt/USB2/photos", "/mnt/USB2/music"] }
+```
+
+**Response:** `application/x-ndjson`, one line per folder as soon as its size is known (in any order):
+```
+{"path":"/mnt/USB2/music","size":4096000}
+{"path":"/mnt/USB2/photos","size":81234567}
+```
+
+Sizes count files only, do not cross into other mounted drives and are cached for 60 seconds. Closing the request stops the walks. Up to 5000 paths; with `show_directory_sizes` off the response is empty.
+
+---
+
+### Move to Trash
+
+```
+POST /files/trash
+```
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{ "paths": ["/mnt/USB2/old", "/mnt/USB2/notes.txt"] }
+```
+
+**Response:**
+```json
+{
+  "moved": [
+    {
+      "id": "8b425d6c7c284fdbaea7f52da31d7ac0",
+      "root": "/mnt/USB2/.dynamight-trash",
+      "name": "old",
+      "original_path": "/mnt/USB2/old",
+      "deleted_at": 1795556852,
+      "is_dir": true,
+      "size": null
+    }
+  ],
+  "failed": [{ "path": "/mnt/USB2/notes.txt", "reason": "not_found" }]
+}
+```
+
+Each item moves to a `.dynamight-trash` folder at the top of its drive (or allowed path), so moving is instant. A symbolic link is moved itself, never its target. `reason` is one of `not_allowed`, `not_found`, `protected` (an allowed path itself, or a mount point), `no_anchor` / `cross_device` (no trash on that drive: delete permanently with `DELETE /system/delete` instead) or `io`.
+
+Backups skip `.dynamight-trash` folders and the file manager's unfinished files (`.*.dynamight-part`, `.*.dynamight-upload-*`).
+
+---
+
+### List Trash
+
+```
+GET /files/trash
+```
+
+**Authentication:** Required
+
+**Response:**
+```json
+{
+  "items": [ { "id": "…", "root": "/mnt/USB2/.dynamight-trash", "name": "old", "original_path": "/mnt/USB2/old", "deleted_at": 1795556852, "is_dir": true, "size": null } ],
+  "roots": [ { "root": "/mnt/USB2/.dynamight-trash", "anchor": "/mnt/USB2", "items": 1 } ]
+}
+```
+
+Only trash folders on attached drives are listed. Items are deleted for good after `trash_retention_days`.
+
+---
+
+### Restore From Trash
+
+```
+POST /files/trash/restore
+```
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{ "items": [{ "root": "/mnt/USB2/.dynamight-trash", "id": "8b425d6c7c284fdbaea7f52da31d7ac0" }], "keep_both": false }
+```
+
+**Response:**
+```json
+{
+  "restored": [{ "id": "8b42…", "path": "/mnt/USB2/old" }],
+  "conflicts": [],
+  "failed": []
+}
+```
+
+An item whose original place is taken comes back in `conflicts` and stays in the trash; send it again with `"keep_both": true` to restore it as `old (1)`. Missing parent folders are created again.
+
+---
+
+### Delete From Trash
+
+Delete items for good. Needs a recent password check (`POST /system/verify-delete-access`).
+
+```
+DELETE /files/trash
+```
+
+**Authentication:** Required
+
+**Request Body:** either items, or whole trash folders:
+```json
+{ "items": [{ "root": "/mnt/USB2/.dynamight-trash", "id": "8b42…" }] }
+```
+```json
+{ "all": true, "roots": ["/mnt/USB2/.dynamight-trash"] }
+```
+
+`"all": true` without `roots` empties every trash folder.
+
+**Response:**
+```json
+{ "purged": 1, "failed": 0 }
+```
+
+---
+
+### Copy and Move
+
+```
+POST /files/tasks
+```
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{ "kind": "copy", "sources": ["/mnt/USB2/photos", "/mnt/USB2/notes.txt"], "target": "/mnt/nas/backup" }
+```
+
+`kind` is `copy` or `move`. The sources go into the existing folder `target`. Refused with `TARGET_INSIDE_SOURCE` (a folder into itself, or a move to where it already is), or `PATH_NOT_ALLOWED` (a mounted drive, or moving an allowed path itself).
+
+**Response:** `202 Accepted` with the task:
+```json
+{
+  "id": 3,
+  "revision": 0,
+  "kind": "copy",
+  "sources": ["/mnt/USB2/photos"],
+  "target": "/mnt/nas/backup",
+  "state": "queued",
+  "total_bytes": 0,
+  "done_bytes": 0,
+  "total_files": 0,
+  "done_files": 0,
+  "current": null,
+  "conflict": null,
+  "errors": [],
+  "failure": null,
+  "created_at": 1795558698,
+  "finished_at": null
+}
+```
+
+Tasks run one at a time. `state` is `queued`, `running`, `conflict`, `done`, `failed` or `cancelled`; `revision` grows with every change, so an older copy of a task can be told apart. Copies are written as `.<name>.dynamight-part` and renamed when complete; links are copied as links. A move on one drive is a rename; to another drive each file is copied and then removed, so skipped or failed files stay at the source. Before copying, the free space on the target is checked. Problems with single files are listed in `errors`; the task goes on.
+
+When a name is taken the task waits in state `conflict`:
+```json
+"conflict": {
+  "path": "/mnt/nas/backup/photos/IMG_1.jpg",
+  "existing": { "is_dir": false, "size": 4100000, "modified": 1795556800 },
+  "incoming": { "is_dir": false, "size": 4200000, "modified": 1795558600 }
+}
+```
+Folders that meet merge: only their files raise conflicts.
+
+---
+
+### List Tasks
+
+```
+GET /files/tasks
+```
+
+Running tasks and those that ended in the last 10 minutes.
+
+---
+
+### Answer a Conflict
+
+```
+POST /files/tasks/:id/resolve
+```
+
+```json
+{ "choice": "keep_both", "apply_to_all": true }
+```
+
+`choice` is `replace` (the existing item goes to the trash first; when its drive has no trash the file is reported as an error instead), `keep_both` (the new item gets a numbered name, `IMG_1 (1).jpg`) or `skip`. With `apply_to_all` later conflicts of the task are answered the same way.
+
+---
+
+### Cancel a Task
+
+```
+POST /files/tasks/:id/cancel
+```
+
+A file being copied is removed again; what was done before stays.
+
+---
+
+### Rename
+
+```
+POST /files/rename
+```
+
+```json
+{ "path": "/mnt/USB2/IMG_1.jpg", "new_name": "Beach.jpg" }
+```
+
+**Response:** `{ "path": "/mnt/USB2/Beach.jpg" }`. Never replaces anything: a taken name gives `409 NAME_TAKEN`. Names must not be empty or contain `/` or `..` (`400 NAME_INVALID`). Changing only the letter case works on drives that ignore it.
+
+---
+
+### Download Several Items
+
+Prepare a download of files and folders as one `.tar` archive, then fetch it with a plain link.
+
+```
+POST /files/archive
+```
+
+```json
+{ "paths": ["/mnt/USB2/photos", "/mnt/USB2/notes.txt"] }
+```
+
+**Response:**
+```json
+{ "url": "/api/files/archive/5f0c…", "filename": "photos-2026-11-24.tar" }
+```
+
+`GET` the `url` (valid 5 minutes) to receive the archive, streamed while it is written (no size limit, no `Content-Length`). Names in it are relative to the folder holding the items; links are stored as links. A tar archive (rather than zip) streams any size and opens on Linux, macOS and Windows 11.
+
+---
+
+### Text Preview
+
+```
+GET /files/text?path=/mnt/USB2/backup.log
+```
+
+**Response:**
+```json
+{ "text": "…", "binary": false, "truncated": true, "size": 5242880 }
+```
+
+The first MiB of the file as text. `binary: true` (and empty `text`) when the file is not text.
+
+---
+
+### Thumbnail
+
+```
+GET /files/thumb?path=/mnt/USB2/IMG_1.jpg
+```
+
+A JPEG of at most 256 × 256 pixels, turned upright by the photo's orientation. Images (jpg, png, webp, gif up to 64 MB) always; videos (mp4, m4v, mov, mkv, webm, avi) when `ffmpeg` is installed. Other files: `404`. Thumbnails are cached next to the database (`thumbs/`, trimmed to 500 MB).
+
+---
+
+### Upload
+
+Uploads are sent in chunks and resume after a dropped connection, a reload of the page or a server restart.
+
+**1. Start (or resume)**
+
+```
+POST /files/uploads
+```
+
+```json
+{
+  "dir": "/mnt/nas/videos",
+  "rel_dir": "holiday/2026",
+  "name": "clip.mp4",
+  "size": 5368709120,
+  "mtime": 1795556800000,
+  "fingerprint": "clip.mp4|5368709120|1795556800000",
+  "on_conflict": "keep_both"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `dir` | Existing folder the file goes into |
+| `rel_dir` | Optional subfolder below `dir` (folder uploads); created as needed |
+| `mtime` | Modification time of the original in Unix milliseconds; kept on the uploaded file |
+| `fingerprint` | Identifies the client's file; the same file (same folder, name, size and fingerprint) resumes instead of starting over |
+| `on_conflict` | `replace` (the existing file goes to the trash) or `keep_both` (`clip (1).mp4`). Without it a taken name gives `409 NAME_TAKEN` with the existing file's `is_dir`, `size` and `modified` in `params` |
+
+**Response:**
+```json
+{ "id": "9f0c…", "offset": 0, "size": 5368709120, "chunk_size": 8388608 }
+```
+
+`offset` is where to continue (above 0 when resuming). An empty file (`size: 0`) is complete right away and the response carries its `path`. Refused with `NOT_ENOUGH_SPACE` when the drive has too little free space.
+
+**2. Send chunks**
+
+```
+PUT /files/uploads/:id
+Content-Range: bytes 0-8388607/5368709120
+```
+
+The body is the chunk (at most `chunk_size` bytes). The chunk must start at the current offset, otherwise `409 UPLOAD_OFFSET_MISMATCH` with the right `offset` in `params`; a chunk cut off by a lost connection is dropped the same way. **Response:** `{ "offset": 8388608, "done": false }`; after the last chunk `{ "offset": …, "done": true, "path": "/mnt/nas/videos/holiday/2026/clip.mp4" }`.
+
+The bytes go to a hidden `.clip.mp4.dynamight-upload-<id>` file next to the target, which is renamed when complete. Only one request at a time may write to an upload (`409 UPLOAD_BUSY`).
+
+**3. After an interruption**
+
+```
+GET /files/uploads/:id
+```
+
+**Response:** `{ "id": "9f0c…", "offset": 16777216, "size": 5368709120 }`; continue from `offset`.
+
+**Cancel:** `DELETE /files/uploads/:id` removes the partial file. Uploads untouched for 24 hours are removed by the hourly cleanup.
+
+---
+
 ## Settings
 
 ### Get Settings
@@ -1530,9 +1931,10 @@ GET /settings
 {
   "max_runs_per_job": 5,
   "log_retention_days": 90,
+  "trash_retention_days": 30,
   "delete_verification_window_minutes": 5,
   "search_timeout_seconds": 10,
-  "show_directory_sizes": false
+  "show_directory_sizes": true
 }
 ```
 
@@ -1540,15 +1942,16 @@ GET /settings
 |-------|-------------|
 | `max_runs_per_job` | Runs kept per job (older ones are deleted); `null` keeps every run |
 | `log_retention_days` | Days a run's log lines are kept; `null` keeps them forever. Each job's newest run and newest failed run always keep their log |
-| `delete_verification_window_minutes` | How long a password check allows deleting files in the file browser (1-60) |
+| `trash_retention_days` | Days items stay in the file browser's trash before they are deleted for good; `null` keeps them until the trash is emptied |
+| `delete_verification_window_minutes` | How long a password check allows deleting files for good in the file browser (1-60) |
 | `search_timeout_seconds` | Time limit of the file browser's subfolder search (3-60) |
-| `show_directory_sizes` | Whether the file browser computes folder sizes |
+| `show_directory_sizes` | Whether the file browser computes folder sizes (on by default) |
 
 ---
 
 ### Update Settings
 
-Update application settings. Only the fields sent are changed. For `max_runs_per_job` and `log_retention_days`, `null` means "no limit".
+Update application settings. Only the fields sent are changed. For `max_runs_per_job`, `log_retention_days` and `trash_retention_days`, `null` means "no limit".
 
 ```
 PUT /settings
@@ -1625,6 +2028,8 @@ WebSocket /ws/status
 | `job_started` | A run starts |
 | `job_completed` | A run ended; its final status and log are stored |
 | `resync` | The connection missed events; reload the job list (no other fields) |
+| `file_task` | A file manager copy or move changed (progress at most 4 times a second); `task` holds the task as returned by `GET /files/tasks` |
+| `file_tasks_resync` | File task events were missed; reload `GET /files/tasks` |
 
 ---
 
