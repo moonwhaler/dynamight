@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+type SortColumn = 'name' | 'status' | 'date';
+
 describe('createTableSortStore', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -8,9 +10,9 @@ describe('createTableSortStore', () => {
 
   it('has default values', async () => {
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
       defaultSortOrder: 'asc',
     });
 
@@ -23,9 +25,9 @@ describe('createTableSortStore', () => {
 
   it('toggles sort direction on same column', async () => {
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort-toggle',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
     });
 
     let state = { sortBy: '', sortOrder: '' };
@@ -41,9 +43,9 @@ describe('createTableSortStore', () => {
 
   it('resets to asc on different column', async () => {
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort-switch',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
       defaultSortOrder: 'desc',
     });
 
@@ -58,9 +60,9 @@ describe('createTableSortStore', () => {
 
   it('persists to localStorage', async () => {
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort-persist',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
     });
 
     store.setSortBy('date');
@@ -72,9 +74,9 @@ describe('createTableSortStore', () => {
     localStorage.setItem('test-sort-load', JSON.stringify({ sortBy: 'size', sortOrder: 'desc' }));
 
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort-load',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
     });
 
     let state = { sortBy: '', sortOrder: '' };
@@ -86,9 +88,9 @@ describe('createTableSortStore', () => {
 
   it('setSortOrder works', async () => {
     const { createTableSortStore } = await import('./tableSortStore');
-    const store = createTableSortStore({
+    const store = createTableSortStore<SortColumn>({
       storageKey: 'test-sort-order',
-      defaultSortBy: 'name' as const,
+      defaultSortBy: 'name',
     });
 
     let state = { sortBy: '', sortOrder: '' };

@@ -18,9 +18,19 @@ use crate::AppState;
 ///
 /// Use with `axum::middleware::from_fn_with_state`:
 /// ```rust
-/// Router::new()
-///     .route("/protected", get(handler))
-///     .layer(middleware::from_fn_with_state(state.clone(), require_auth))
+/// use axum::{middleware, routing::get, Router};
+/// use dynamight::{middleware::require_auth, AppState};
+/// use std::sync::Arc;
+///
+/// async fn handler() -> &'static str {
+///     "protected"
+/// }
+///
+/// fn protected_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
+///     Router::new()
+///         .route("/protected", get(handler))
+///         .layer(middleware::from_fn_with_state(state, require_auth))
+/// }
 /// ```
 pub async fn require_auth(
     State(state): State<Arc<AppState>>,

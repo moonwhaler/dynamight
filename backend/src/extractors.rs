@@ -39,8 +39,12 @@ pub fn extract_token_from_headers(headers: &HeaderMap) -> Option<String> {
 ///
 /// Use this in handler signatures to require authentication and get the user:
 /// ```rust
+/// use axum::response::IntoResponse;
+/// use dynamight::extractors::AuthUser;
+///
 /// async fn my_handler(AuthUser(user): AuthUser) -> impl IntoResponse {
 ///     // user is guaranteed to be authenticated
+///     user.username
 /// }
 /// ```
 pub struct AuthUser(pub User);

@@ -611,15 +611,13 @@ mod tests {
 
     #[test]
     fn test_sync_options_space_check_mode_default_when_empty() {
-        let mut opts = SyncOptions::default();
-        opts.space_check = "".to_string();
+        let opts = SyncOptions { space_check: "".to_string(), ..Default::default() };
         assert_eq!(opts.space_check_mode(), "warn");
     }
 
     #[test]
     fn test_sync_options_space_check_mode_explicit() {
-        let mut opts = SyncOptions::default();
-        opts.space_check = "fail".to_string();
+        let opts = SyncOptions { space_check: "fail".to_string(), ..Default::default() };
         assert_eq!(opts.space_check_mode(), "fail");
     }
 

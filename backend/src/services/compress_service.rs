@@ -230,11 +230,11 @@ fn archive_relative_excludes(source_dir: &Path, dir_name: &str, exclude_paths: &
 /// - `job_id`:        appended to archive filenames (e.g. `photos_42.tar.gz`)
 /// - `run_id`:        used for unique temp file naming
 /// - `opts`:          compression options
-/// - `exclude_paths`: absolute paths to exclude from the archive; only strict children of
-///                    `source_dir` are applied — others are silently skipped
+/// - `exclude_paths`: absolute paths to exclude from the archive; only strict
+///   children of `source_dir` are applied — others are silently skipped
 /// - `log_fn`:        called to emit log lines during compression
 /// - `is_cancelled`:  checked every 500 ms; if it returns `true`, the
-///                    subprocess is killed and an error is returned
+///   subprocess is killed and an error is returned
 ///
 /// When `store_only` is set, files are archived without compression
 /// (tar without `-z`, or `zip -0`).
@@ -242,6 +242,7 @@ fn archive_relative_excludes(source_dir: &Path, dir_name: &str, exclude_paths: &
 /// When a password is set for tar-based formats, a two-step process is used:
 /// 1. Archive to an intermediate temp file
 /// 2. Encrypt with `openssl enc -aes-256-cbc -pbkdf2` (password via stdin)
+///
 /// The final output carries a `.enc` extension (e.g. `archive.tar.gz.enc`).
 ///
 /// Returns the path to the created archive file.

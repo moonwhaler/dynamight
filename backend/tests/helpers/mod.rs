@@ -3,7 +3,6 @@
 //! Provides a `TestApp` that wraps an `axum_test::TestServer` backed by
 //! in-memory SQLite databases, ready for HTTP-level testing.
 
-use axum::Router;
 use axum_test::TestServer;
 use dynamight::{
     build_api_router, AppState, AuthService, BackupService, Config, CredentialService,
@@ -12,15 +11,12 @@ use dynamight::{
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{broadcast, RwLock};
 
 /// A self-contained test application with an in-memory database and HTTP server.
 pub struct TestApp {
     pub server: TestServer,
-    pub db: SqlitePool,
 }
 
 /// Create an in-memory SQLite pool with all migrations applied.
@@ -113,7 +109,7 @@ impl TestApp {
         let rate_limit_service = RateLimitService::new(rate_limit_config);
 
         let state = Arc::new(AppState {
-            db: db.clone(),
+            db,
             logs_db,
             config,
             auth_service,
@@ -132,7 +128,7 @@ impl TestApp {
 
         let server = TestServer::new(router).expect("Failed to create test server");
 
-        Self { server, db }
+        Self { server }
     }
 
     // ── Auth convenience helpers ────────────────────────────────────────

@@ -269,7 +269,7 @@ npm run dev
 
 ```bash
 # Backend (Rust)
-cargo test --lib --tests
+cargo test
 
 # Frontend (Vitest)
 cd frontend

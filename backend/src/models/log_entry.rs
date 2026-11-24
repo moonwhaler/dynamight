@@ -20,8 +20,11 @@ impl LogLevel {
             LogLevel::Error => "error",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+/// Lenient conversion from a stored level; unknown values become `Info`.
+impl From<&str> for LogLevel {
+    fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "debug" => LogLevel::Debug,
             "warning" | "warn" => LogLevel::Warning,
@@ -57,7 +60,7 @@ impl From<LogEntryRow> for LogEntry {
             id: row.id,
             job_run_id: row.job_run_id,
             timestamp: row.timestamp,
-            level: LogLevel::from_str(&row.level),
+            level: LogLevel::from(row.level.as_str()),
             message: row.message,
             source: row.source,
         }
@@ -93,8 +96,11 @@ impl JobRunStatus {
             JobRunStatus::Cancelled => "cancelled",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+/// Lenient conversion from a stored status; unknown values become `Pending`.
+impl From<&str> for JobRunStatus {
+    fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "pending" => JobRunStatus::Pending,
             "running" => JobRunStatus::Running,
@@ -144,7 +150,7 @@ impl From<JobRunRow> for JobRun {
             id: row.id,
             job_id: row.job_id,
             schedule_id: row.schedule_id,
-            status: JobRunStatus::from_str(&row.status),
+            status: JobRunStatus::from(row.status.as_str()),
             started_at: row.started_at,
             completed_at: row.completed_at,
             exit_code: row.exit_code,

@@ -3,7 +3,7 @@
 //! The backup file uses YAML internally (for transparency when decrypted)
 //! and is encrypted with AES-256-CBC using PBKDF2 key derivation,
 //! compatible with OpenSSL CLI:
-//! ```
+//! ```sh
 //! openssl enc -d -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
 //!   -in backup.dmbackup -out backup.yaml
 //! ```
@@ -259,7 +259,30 @@ pub async fn build_export(
     }
 
     // 3. Jobs with schedules
-    let job_rows: Vec<(i64, String, Option<String>, bool, String, Option<String>, Option<String>, Option<String>, Option<i64>)> =
+    #[derive(sqlx::FromRow)]
+    struct JobRow {
+        id: i64,
+        name: String,
+        description: Option<String>,
+        enabled: bool,
+        source_dirs: String,
+        destination_type: Option<String>,
+        destination_config: Option<String>,
+        sync_options: Option<String>,
+        credential_id: Option<i64>,
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct ScheduleRow {
+        enabled: bool,
+        cron_expression: String,
+        schedule_type: Option<String>,
+        time_of_day: Option<String>,
+        day_of_week: Option<i32>,
+        day_of_month: Option<i32>,
+    }
+
+    let job_rows: Vec<JobRow> =
         sqlx::query_as(
             "SELECT id, name, description, enabled, source_dirs, destination_type, destination_config, sync_options, credential_id FROM jobs"
         )
@@ -267,7 +290,18 @@ pub async fn build_export(
         .await?;
 
     let mut jobs = Vec::new();
-    for (job_id, name, description, enabled, source_dirs_json, dest_type, dest_config, sync_opts, cred_id) in job_rows {
+    for job in job_rows {
+        let JobRow {
+            id: job_id,
+            name,
+            description,
+            enabled,
+            source_dirs: source_dirs_json,
+            destination_type: dest_type,
+            destination_config: dest_config,
+            sync_options: sync_opts,
+            credential_id: cred_id,
+        } = job;
         let source_dirs: Vec<String> = serde_json::from_str(&source_dirs_json)
             .map_err(|e| anyhow!("Job '{}': invalid source_dirs JSON: {}", name, e))?;
         let destination_type = dest_type.unwrap_or_else(|| "local".to_string());
@@ -285,7 +319,7 @@ pub async fn build_export(
         let credential_name = cred_id.and_then(|id| cred_id_to_name.get(&id).cloned());
 
         // Fetch schedules for this job
-        let schedule_rows: Vec<(bool, String, Option<String>, Option<String>, Option<i32>, Option<i32>)> =
+        let schedule_rows: Vec<ScheduleRow> =
             sqlx::query_as(
                 "SELECT enabled, cron_expression, schedule_type, time_of_day, day_of_week, day_of_month FROM schedules WHERE job_id = ?"
             )
@@ -295,15 +329,13 @@ pub async fn build_export(
 
         let schedules: Vec<BackupSchedule> = schedule_rows
             .into_iter()
-            .map(|(enabled, cron_expression, schedule_type, time_of_day, day_of_week, day_of_month)| {
-                BackupSchedule {
-                    enabled,
-                    cron_expression,
-                    schedule_type,
-                    time_of_day,
-                    day_of_week,
-                    day_of_month,
-                }
+            .map(|row| BackupSchedule {
+                enabled: row.enabled,
+                cron_expression: row.cron_expression,
+                schedule_type: row.schedule_type,
+                time_of_day: row.time_of_day,
+                day_of_week: row.day_of_week,
+                day_of_month: row.day_of_month,
             })
             .collect();
 

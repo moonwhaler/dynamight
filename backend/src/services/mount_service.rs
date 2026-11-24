@@ -448,13 +448,8 @@ impl MountService {
             .max_depth(max_depth)
             .follow_links(false)
             .into_iter()
-            .filter_entry(|e| {
-                // Skip hidden directories (but not the root)
-                if e.depth() > 0 && e.file_name().to_string_lossy().starts_with('.') {
-                    return false;
-                }
-                true
-            });
+            // Skip hidden directories (but not the root)
+            .filter_entry(|e| !(e.depth() > 0 && e.file_name().to_string_lossy().starts_with('.')));
 
         for entry in walker {
             let entry = match entry {

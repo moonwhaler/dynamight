@@ -25,15 +25,19 @@ impl ProviderType {
             Self::WebDav => "webdav",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for ProviderType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "google_drive" => Some(Self::GoogleDrive),
-            "onedrive" => Some(Self::OneDrive),
-            "s3" => Some(Self::S3),
-            "sftp" => Some(Self::Sftp),
-            "webdav" => Some(Self::WebDav),
-            _ => None,
+            "google_drive" => Ok(Self::GoogleDrive),
+            "onedrive" => Ok(Self::OneDrive),
+            "s3" => Ok(Self::S3),
+            "sftp" => Ok(Self::Sftp),
+            "webdav" => Ok(Self::WebDav),
+            other => Err(format!("Unknown provider type: {}", other)),
         }
     }
 }

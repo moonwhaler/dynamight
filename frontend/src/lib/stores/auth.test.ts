@@ -121,7 +121,7 @@ describe('authStore', () => {
 
   it('logout clears state', async () => {
     const { api } = await import('../api');
-    vi.mocked(api.auth.logout).mockResolvedValue(undefined);
+    vi.mocked(api.auth.logout).mockResolvedValue({ success: true });
 
     const { authStore } = await import('./auth');
     let state = { isAuthenticated: false, user: null as User | null };
