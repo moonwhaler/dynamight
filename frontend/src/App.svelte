@@ -22,6 +22,8 @@
     '/history': lazy(() => import('./routes/History.svelte')),
     '/files': lazy(() => import('./routes/FileBrowser.svelte')),
     '/about': lazy(() => import('./routes/About.svelte')),
+    // Unknown routes (old bookmarks, typos) show the dashboard instead of an empty page
+    '*': lazy(() => import('./routes/Dashboard.svelte')),
   };
 
   // Check authentication on load

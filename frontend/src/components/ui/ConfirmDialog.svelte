@@ -42,6 +42,7 @@
 </script>
 
 <script lang="ts">
+  import * as m from '$lib/paraglide/messages.js';
   let dialogRef = $state<HTMLDivElement | null>(null);
   let open = $state(false);
   let options = $state<ConfirmOptions>({ title: '', message: '' });
@@ -136,10 +137,10 @@
         <!-- Actions -->
         <div class="mt-6 flex gap-3 justify-end">
           <button type="button" onclick={handleCancel} class="btn btn-secondary">
-            {options.cancelText || 'Cancel'}
+            {options.cancelText || m.common_cancel()}
           </button>
           <button type="button" onclick={handleConfirm} class={confirmButtonStyles[options.variant || 'danger']}>
-            {options.confirmText || 'Confirm'}
+            {options.confirmText || m.common_confirm()}
           </button>
         </div>
       </div>

@@ -331,7 +331,7 @@
         type="button"
         onclick={toggleViewMode}
         class="py-2 px-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-        title={browserState.viewMode === 'list' ? 'Grid view' : 'List view'}
+        title={browserState.viewMode === 'list' ? m.jobs_grid_view() : m.jobs_list_view()}
       >
         {#if browserState.viewMode === 'list'}
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -502,7 +502,7 @@
             id="folder-name"
             bind:value={newFolderName}
             class="input"
-            placeholder="New Folder"
+            placeholder={m.filebrowser_new_folder()}
             onkeydown={(e) => e.key === 'Enter' && createNewFolder()}
           />
           {#if newFolderError}

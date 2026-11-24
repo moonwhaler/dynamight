@@ -67,6 +67,11 @@
     }
   }
 
+  // Escape is handled on the dialog element, so it needs focus when it opens
+  function focusOnOpen(node: HTMLElement) {
+    node.focus();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       close();
@@ -303,9 +308,10 @@
 
 {#if open}
   <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 outline-none"
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
+    use:focusOnOpen
     role="dialog"
     aria-modal="true"
     aria-labelledby="settings-title"
@@ -711,7 +717,7 @@
                             type="password"
                             bind:value={disablePassword}
                             class="input"
-                            placeholder="Enter your password"
+                            placeholder={m.auth_password_placeholder()}
                             autocomplete="current-password"
                           />
                         </div>

@@ -314,7 +314,7 @@
           <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directories()}</h3>
           <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
-        <button
+        <button type="button"
           onclick={closeBrowser}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
           aria-label={m.common_close()}
@@ -358,14 +358,14 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
               <span class="hidden sm:inline">{m.path_selector_add_this_directory()}</span>
-              <span class="sm:hidden">Add</span>
+              <span class="sm:hidden">{m.common_add()}</span>
             {/if}
           </button>
           <div class="flex-1"></div>
           {#if selectableDirectories.length > 0}
             <button type="button" onclick={selectAllVisible} class="text-xs sm:text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium px-1.5 sm:px-2">
               <span class="hidden xs:inline">{m.path_selector_select_all()}</span>
-              <span class="xs:hidden">All</span>
+              <span class="xs:hidden">{m.common_all()}</span>
             </button>
           {/if}
           {#if selectedInDialog.size > 0}

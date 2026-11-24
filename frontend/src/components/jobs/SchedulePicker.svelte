@@ -2,6 +2,8 @@
   import { api } from '../../lib/api';
   import type { Schedule, CreateScheduleRequest } from '../../lib/types';
   import HelpTooltip from '../ui/HelpTooltip.svelte';
+  import { showToast } from '../ui/Toast.svelte';
+  import { describeCron } from '$lib/utils/cron';
   import * as m from '$lib/paraglide/messages.js';
 
   let {
@@ -90,8 +92,8 @@
         showAdd = false;
         resetForm();
       }
-    } catch {
-      // Ignore
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
     } finally {
       saving = false;
     }
@@ -105,8 +107,8 @@
     try {
       await api.schedules.delete(id);
       schedules = schedules.filter((s) => s.id !== id);
-    } catch {
-      // Ignore
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
     }
   }
 
@@ -114,8 +116,8 @@
     try {
       const updated = await api.schedules.update(schedule.id, { enabled: !schedule.enabled });
       schedules = schedules.map((s) => (s.id === updated.id ? updated : s));
-    } catch {
-      // Ignore
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
     }
   }
 
@@ -134,46 +136,21 @@
   }
 
   function formatCron(cron: string): string {
-    const parts = cron.split(' ');
-
-    if (parts.length !== 5) return cron;
-
-    const [minute, hour, dom, month, dayOfWeek] = parts;
-
-    // Interval: */N minutes
-    if (minute.startsWith('*/') && hour === '*') {
-      const mins = minute.slice(2);
-      return m.schedule_every_minutes({ count: mins });
+    const d = describeCron(cron);
+    switch (d.kind) {
+      case 'every_minutes':
+        return m.schedule_every_minutes({ count: d.count });
+      case 'every_hours':
+        return m.schedule_every_hours({ count: d.count });
+      case 'daily':
+        return m.schedule_daily_at({ time: d.time });
+      case 'days':
+        return m.schedule_days_at({ days: d.days.map(getDayName).join(', '), time: d.time });
+      case 'monthly':
+        return m.schedule_monthly_on({ day: d.day, time: d.time });
+      default:
+        return cron;
     }
-
-    // Interval: */N hours
-    if (minute === '0' && hour.startsWith('*/')) {
-      const hrs = hour.slice(2);
-      return m.schedule_every_hours({ count: hrs });
-    }
-
-    const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-
-    // Daily
-    if (dom === '*' && month === '*' && dayOfWeek === '*') {
-      return m.schedule_daily_at({ time });
-    }
-
-    // Weekly (specific days)
-    if (dom === '*' && month === '*' && dayOfWeek !== '*') {
-      const days = dayOfWeek.split(',').map(d => getDayName(parseInt(d)));
-      if (days.length === 7) {
-        return m.schedule_daily_at({ time });
-      }
-      return m.schedule_days_at({ days: days.join(', '), time });
-    }
-
-    // Monthly
-    if (dom !== '*' && month === '*' && dayOfWeek === '*') {
-      return m.schedule_monthly_on({ day: dom, time });
-    }
-
-    return cron;
   }
 
   function formatNextRun(date: string | null): string {
@@ -192,7 +169,7 @@
       <HelpTooltip text={m.schedule_help()} />
     </h2>
     {#if !showAdd}
-      <button onclick={() => (showAdd = true)} class="btn btn-secondary text-sm">
+      <button type="button" onclick={() => (showAdd = true)} class="btn btn-secondary text-sm">
         {m.schedule_add()}
       </button>
     {/if}
@@ -373,10 +350,10 @@
       {/if}
 
       <div class="flex gap-2">
-        <button onclick={addSchedule} disabled={saving} class="btn btn-primary">
+        <button type="button" onclick={addSchedule} disabled={saving} class="btn btn-primary">
           {saving ? m.schedule_adding() : m.schedule_add()}
         </button>
-        <button
+        <button type="button"
           onclick={() => {
             showAdd = false;
             resetForm();

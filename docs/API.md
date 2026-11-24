@@ -722,7 +722,7 @@ GET /jobs/:id/runs
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `limit` | int | Max results (default: 20) |
+| `limit` | int | Max results (default: 50) |
 | `offset` | int | Skip results (default: 0) |
 
 **Response:**
@@ -731,23 +731,43 @@ GET /jobs/:id/runs
   {
     "id": 10,
     "job_id": 1,
-    "job_name": "Daily Backup",
-    "status": "completed",
-    "trigger": "scheduled",
     "schedule_id": 1,
+    "status": "completed",
     "started_at": "2026-01-05T02:00:00Z",
     "completed_at": "2026-01-05T02:15:00Z",
+    "exit_code": 0,
     "files_transferred": 150,
     "bytes_transferred": 52428800,
-    "files_deleted": 0,
-    "error_message": null
+    "total_size": 1073741824,
+    "error_count": 0,
+    "summary": null
   }
 ]
 ```
 
 **Status Values:** `pending`, `running`, `completed`, `failed`, `cancelled`
 
-**Trigger Values:** `manual`, `scheduled`
+`schedule_id` is `null` for manual runs.
+
+---
+
+### List Recent Runs
+
+Get the most recent runs across all jobs, newest first.
+
+```
+GET /runs
+```
+
+**Authentication:** Required
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Max results, 1-200 (default: 10) |
+| `offset` | int | Skip results (default: 0) |
+
+**Response:** Array of run objects (same as [List Job Runs](#list-job-runs)).
 
 ---
 

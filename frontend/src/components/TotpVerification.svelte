@@ -1,11 +1,12 @@
 <script lang="ts">
   import { authStore } from '../lib/stores/auth';
+  import { showToast } from './ui/Toast.svelte';
+  import * as m from '$lib/paraglide/messages.js';
 
   let code = $state('');
   let recoveryCode = $state('');
   let useRecoveryCode = $state(false);
   let loading = $state(false);
-  let codesWarning = $state<number | null>(null);
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
@@ -13,8 +14,9 @@
 
     if (useRecoveryCode) {
       const result = await authStore.validateRecoveryCode(recoveryCode);
+      // The login form is gone after a successful login, so warn with a toast
       if (result.success && result.codesRemaining !== undefined && result.codesRemaining < 3) {
-        codesWarning = result.codesRemaining;
+        showToast({ message: m.auth_recovery_codes_low({ count: result.codesRemaining }), variant: 'warning' });
       }
     } else {
       await authStore.validateTotp(code);
@@ -59,12 +61,10 @@
           </svg>
         </div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-          {useRecoveryCode ? 'Recovery Code' : 'Two-Factor Authentication'}
+          {useRecoveryCode ? m.auth_recovery_code() : m.auth_totp_title()}
         </h1>
         <p class="text-gray-600 dark:text-gray-400">
-          {useRecoveryCode
-            ? 'Enter one of your recovery codes'
-            : 'Enter the 6-digit code from your authenticator app'}
+          {useRecoveryCode ? m.auth_recovery_description() : m.auth_totp_description()}
         </p>
       </div>
 
@@ -75,18 +75,11 @@
         </div>
       {/if}
 
-      <!-- Codes warning -->
-      {#if codesWarning !== null}
-        <div class="mb-6 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 px-4 py-3 rounded-xl text-sm">
-          <strong>Warning:</strong> You only have {codesWarning} recovery code{codesWarning !== 1 ? 's' : ''} remaining.
-        </div>
-      {/if}
-
       <form onsubmit={handleSubmit}>
         {#if useRecoveryCode}
           <div class="mb-6">
             <label for="recovery-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Recovery Code
+              {m.auth_recovery_code()}
             </label>
             <input
               id="recovery-code"
@@ -101,7 +94,7 @@
         {:else}
           <div class="mb-6">
             <label for="totp-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Authentication Code
+              {m.auth_totp_code()}
             </label>
             <input
               id="totp-code"
@@ -128,27 +121,29 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Verifying...
+              {m.auth_totp_verifying()}
             </span>
           {:else}
-            Verify
+            {m.auth_totp_verify()}
           {/if}
         </button>
       </form>
 
       <div class="mt-6 flex flex-col items-center gap-3">
         <button
+          type="button"
           onclick={toggleMode}
           class="text-sm text-primary-600 dark:text-primary-400 hover:underline"
         >
-          {useRecoveryCode ? 'Use authenticator app instead' : 'Use a recovery code'}
+          {useRecoveryCode ? m.auth_totp_use_code() : m.auth_totp_use_recovery()}
         </button>
 
         <button
+          type="button"
           onclick={goBack}
           class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
         >
-          Back to login
+          {m.auth_back_to_login()}
         </button>
       </div>
     </div>

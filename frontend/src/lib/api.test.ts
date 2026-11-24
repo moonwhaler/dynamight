@@ -54,14 +54,17 @@ describe('API client', () => {
     await expect(api.system.version()).rejects.toThrow();
   });
 
-  it('redirects to login on 401', async () => {
+  it('reports a 401 to the unauthorized handler', async () => {
+    const mod = await import('./api');
+    const handler = vi.fn();
+    mod.setUnauthorizedHandler(handler);
     mockFetchResponse(401, { code: 'NOT_AUTHENTICATED' });
-    try {
-      await api.auth.me();
-    } catch {
-      // expected
-    }
-    expect(window.location.hash).toBe('#/login');
+    await expect(api.jobs.list()).rejects.toThrow();
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    mockFetchResponse(404, { code: 'JOB_NOT_FOUND' });
+    await expect(api.jobs.get(1)).rejects.toThrow();
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('fetches jobs list', async () => {

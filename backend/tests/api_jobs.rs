@@ -490,3 +490,24 @@ async fn job_preserves_all_fields() {
     assert_eq!(body["bandwidth_limit"], 1000);
     assert_eq!(body["verbosity"], "verbose");
 }
+
+// ── Recent runs ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn recent_runs_requires_auth_and_lists_runs() {
+    let app = TestApp::new().await;
+    app.server.get("/runs").await.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+    let resp = app
+        .server
+        .get("/runs?limit=5")
+        .add_header(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_str(&cookie).unwrap(),
+        )
+        .await;
+    resp.assert_status_ok();
+    let body: Vec<serde_json::Value> = resp.json();
+    assert!(body.is_empty());
+}

@@ -5,28 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dynamight - Backup Manager</title>
-    <script>
-      // Apply theme immediately to prevent flash of wrong theme
-      (function() {
-        var isDark = false;
-        try {
-          var raw = localStorage.getItem('dynamight-theme');
-          if (raw) {
-            var config = JSON.parse(raw);
-            isDark = config.mode === 'dark';
-          }
-        } catch(e) {
-          // Legacy: bare string "dark"
-          isDark = localStorage.getItem('dynamight-theme') === 'dark';
-        }
-        if (isDark || (!localStorage.getItem('dynamight-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-          document.documentElement.classList.add('dark');
-        }
-        // Apply cached CSS variables (base + accent colors)
-        var vars = localStorage.getItem('dynamight-theme-vars');
-        if (vars) document.documentElement.setAttribute('style', vars);
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body class="bg-gray-50 dark:bg-gray-900">
     <div id="app"></div>

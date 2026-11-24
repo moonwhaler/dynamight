@@ -7,6 +7,9 @@
   import type { LogEntry, JobRun } from '../../lib/types';
   import LogViewer from './LogViewer.svelte';
   import { confirm } from '../ui/ConfirmDialog.svelte';
+  import { showToast } from '../ui/Toast.svelte';
+  import { formatStatus, getStatusBadgeClass } from '$lib/i18n/status';
+  import { formatBytes } from '$lib/utils/format';
   import * as m from '$lib/paraglide/messages.js';
 
   let {
@@ -49,7 +52,7 @@
 
   onMount(() => {
     connectWebSocket();
-    loadRunStatus();
+    loadRunStatus(true);
     // Poll for run status updates
     pollInterval = setInterval(loadRunStatus, 2000);
   });
@@ -106,7 +109,7 @@
     }
   }
 
-  async function loadRunStatus() {
+  async function loadRunStatus(initial = false) {
     try {
       run = await api.runs.get(runId);
       // Stop polling if job is no longer running
@@ -116,11 +119,40 @@
           pollInterval = null;
         }
         killing = false;
-        // Load final logs from API (first page)
-        await loadLogsPage(1);
+        // Load the final logs from the API; the last page continues where the live view ended
+        await loadLastLogsPage();
+      } else if (initial) {
+        await loadBacklog();
       }
     } catch {
       // Ignore
+    }
+  }
+
+  // The socket only delivers new lines: when the modal opens on a running
+  // job, fetch what was logged before and put the live lines after it
+  async function loadBacklog() {
+    try {
+      const first = await api.runs.logs(runId, LOG_PAGE_SIZE, 0);
+      let entries = first.entries;
+      if (first.total > LOG_PAGE_SIZE) {
+        entries = (await api.runs.logs(runId, LOG_PAGE_SIZE, first.total - LOG_PAGE_SIZE)).entries;
+      }
+      // Lines that came over the socket while loading can also be in the fetched page
+      const key = (e: LogEntry) => `${e.level}|${e.message}`;
+      const recent = new Set(entries.slice(-200).map(key));
+      logs = [...entries, ...logs.filter((e) => !recent.has(key(e)))].slice(-2000);
+    } catch {
+      // Live lines still arrive over the socket
+    }
+  }
+
+  async function loadLastLogsPage() {
+    try {
+      const { total } = await api.runs.logs(runId, 1, 0);
+      await loadLogsPage(Math.max(1, Math.ceil(total / LOG_PAGE_SIZE)));
+    } catch {
+      await loadLogsPage(1);
     }
   }
 
@@ -161,25 +193,13 @@
     try {
       await api.jobs.cancel(jobId);
       await loadRunStatus();
-    } catch {
-      // Ignore
+    } catch (e) {
+      killing = false;
+      showToast({ message: e instanceof Error ? e.message : m.error_generic(), variant: 'error' });
+      await loadRunStatus();
     }
   }
 
-  function getStatusBadge(status: string): string {
-    switch (status) {
-      case 'completed':
-        return 'badge-success';
-      case 'running':
-        return 'badge-info';
-      case 'failed':
-        return 'badge-error';
-      case 'cancelled':
-        return 'badge-warning';
-      default:
-        return 'badge-gray';
-    }
-  }
 </script>
 
 <div
@@ -196,9 +216,9 @@
             {jobName}
           </h3>
           <div class="flex items-center gap-2 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-            <span>Run #{runId}</span>
+            <span>{m.runlog_run_number({ id: runId })}</span>
             {#if run}
-              <span class="badge {getStatusBadge(run.status)}">{run.status}</span>
+              <span class="badge {getStatusBadgeClass(run.status)}">{formatStatus(run.status)}</span>
             {/if}
           </div>
         </div>
@@ -216,13 +236,13 @@
             disabled={killing}
             class="btn btn-danger text-xs sm:text-sm py-1.5 px-2 sm:px-3"
           >
-            {killing ? 'Killing...' : 'Kill'}
+            {killing ? m.job_btn_stopping() : m.runlog_stop()}
           </button>
         {/if}
         <button
           onclick={onClose}
           class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
-          aria-label="Close"
+          aria-label={m.common_close()}
         >
           <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -240,20 +260,20 @@
     {#if run && run.files_transferred !== null}
       <div class="px-3 sm:px-4 py-2 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700 flex flex-wrap gap-3 sm:gap-6 text-xs sm:text-sm shrink-0">
         <div>
-          <span class="text-gray-500 dark:text-gray-400">Files:</span>
+          <span class="text-gray-500 dark:text-gray-400">{m.history_table_files()}:</span>
           <span class="font-medium text-gray-900 dark:text-white">{run.files_transferred}</span>
         </div>
         {#if run.bytes_transferred !== null}
           <div>
-            <span class="text-gray-500 dark:text-gray-400">Size:</span>
+            <span class="text-gray-500 dark:text-gray-400">{m.history_table_size()}:</span>
             <span class="font-medium text-gray-900 dark:text-white">
-              {(run.bytes_transferred / (1024 * 1024)).toFixed(1)} MB
+              {formatBytes(run.bytes_transferred)}
             </span>
           </div>
         {/if}
         {#if run.error_count > 0}
           <div>
-            <span class="text-gray-500 dark:text-gray-400">Errors:</span>
+            <span class="text-gray-500 dark:text-gray-400">{m.runlog_errors()}:</span>
             <span class="font-medium text-red-600 dark:text-red-400">{run.error_count}</span>
           </div>
         {/if}
@@ -279,7 +299,7 @@
     <!-- Footer -->
     <div class="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-end shrink-0">
       <button onclick={onClose} class="btn btn-secondary text-sm">
-        Close
+        {m.common_close()}
       </button>
     </div>
   </div>

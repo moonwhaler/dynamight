@@ -137,7 +137,7 @@
             {currentPath || rootPath}
           </p>
         </div>
-        <button
+        <button type="button"
           onclick={handleClose}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
           aria-label={m.common_close()}
@@ -184,7 +184,7 @@
           <div class="space-y-0.5">
             {#each entries as entry}
               {#if entry.is_dir}
-                <button
+                <button type="button"
                   onclick={() => handleEntryClick(entry)}
                   class="w-full flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 sm:py-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-left transition-colors active:bg-gray-200 dark:active:bg-gray-700"
                 >

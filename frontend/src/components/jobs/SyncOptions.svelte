@@ -693,7 +693,7 @@
           <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.exclude_dirs_select()}</h3>
           <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{excludeCurrentPath}</p>
         </div>
-        <button
+        <button type="button"
           onclick={closeExcludeBrowser}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
           aria-label={m.common_close()}
@@ -723,7 +723,7 @@
           {#if selectableExcludeEntries.length > 0}
             <button type="button" onclick={selectAllExcludes} class="text-xs sm:text-sm text-primary-600 dark:text-primary-400 hover:underline font-medium px-1.5 sm:px-2">
               <span class="hidden xs:inline">{m.path_selector_select_all()}</span>
-              <span class="xs:hidden">All</span>
+              <span class="xs:hidden">{m.common_all()}</span>
             </button>
           {/if}
           {#if selectedExcludes.size > 0}

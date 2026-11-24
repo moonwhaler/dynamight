@@ -1,6 +1,7 @@
 <script lang="ts">
   import { themeStore } from '../lib/stores/theme';
   import { bases, accents, type BaseTheme, type AccentColor } from '../lib/theme-presets';
+  import * as m from '$lib/paraglide/messages.js';
 
   let open = $state(false);
   let panelRef = $state<HTMLDivElement | null>(null);
@@ -35,8 +36,8 @@
   <button
     onclick={() => open = !open}
     class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-    title="Theme"
-    aria-label="Theme"
+    title={m.theme_title()}
+    aria-label={m.theme_title()}
     aria-expanded={open}
   >
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
@@ -49,13 +50,13 @@
     <div
       class="absolute right-0 mt-2 w-64 origin-top-right rounded-2xl bg-white dark:bg-gray-800 shadow-xl ring-1 ring-gray-200 dark:ring-gray-700 z-50 overflow-hidden"
       role="dialog"
-      aria-label="Theme picker"
+      aria-label={m.theme_title()}
     >
       <div class="p-4 space-y-5">
 
         <!-- Mode toggle -->
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Mode</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{m.theme_mode()}</span>
           <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
             <button
               onclick={() => themeStore.setMode('light')}
@@ -66,7 +67,7 @@
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
-              Light
+              {m.theme_light()}
             </button>
             <button
               onclick={() => themeStore.setMode('dark')}
@@ -77,7 +78,7 @@
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
               </svg>
-              Dark
+              {m.theme_dark()}
             </button>
           </div>
         </div>
@@ -87,7 +88,7 @@
 
         <!-- Base tone -->
         <div>
-          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Style</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{m.theme_style()}</span>
           <div class="flex gap-2 mt-2.5">
             {#each baseKeys as key}
               {@const base = bases[key]}
@@ -122,7 +123,7 @@
 
         <!-- Accent color -->
         <div>
-          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Accent</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{m.theme_accent()}</span>
           <div class="grid grid-cols-6 gap-2 mt-2.5">
             {#each accentKeys as key}
               {@const accent = accents[key]}

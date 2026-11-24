@@ -58,6 +58,11 @@
     if (e.target === e.currentTarget) close();
   }
 
+  // Escape is handled on the dialog element, so it needs focus when it opens
+  function focusOnOpen(node: HTMLElement) {
+    node.focus();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') close();
   }
@@ -160,9 +165,10 @@
 
 {#if open}
   <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 outline-none"
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
+    use:focusOnOpen
     role="dialog"
     aria-modal="true"
     aria-labelledby="backup-title"
@@ -254,7 +260,7 @@
                     type="password"
                     bind:value={exportPassword}
                     class="input"
-                    placeholder="Min. 8 characters"
+                    placeholder={m.settings_new_password_placeholder()}
                     autocomplete="new-password"
                   />
                   <PasswordStrength password={exportPassword} />
@@ -267,7 +273,7 @@
                     type="password"
                     bind:value={exportPasswordConfirm}
                     class="input"
-                    placeholder="Repeat password"
+                    placeholder={m.settings_confirm_password_placeholder()}
                     autocomplete="new-password"
                   />
                 </div>
@@ -302,7 +308,7 @@
                         </svg>
                       </div>
                       <div>
-                        <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OpenSSL Compatible</p>
+                        <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{m.backup_openssl_compatible()}</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400 font-mono break-all">{m.backup_password_hint()}</p>
                       </div>
                     </div>
@@ -349,7 +355,7 @@
                     type="password"
                     bind:value={importPassword}
                     class="input"
-                    placeholder="Enter backup password"
+                    placeholder={m.backup_password_placeholder()}
                     autocomplete="off"
                   />
                 </div>

@@ -255,7 +255,7 @@
           <h3 class="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">{m.path_selector_select_directory()}</h3>
           <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 font-mono truncate mt-0.5">{currentPath}</p>
         </div>
-        <button
+        <button type="button"
           onclick={closeBrowser}
           class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors ml-2 sm:ml-3"
           aria-label={m.common_close()}
@@ -298,7 +298,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
           <span class="hidden sm:inline">{m.path_selector_new_folder()}</span>
-          <span class="sm:hidden">New</span>
+          <span class="sm:hidden">{m.common_new()}</span>
         </button>
         <div class="flex-1"></div>
         <button
@@ -311,7 +311,7 @@
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
           </svg>
           <span class="hidden sm:inline">{m.path_selector_select_this_directory()}</span>
-          <span class="sm:hidden">Select</span>
+          <span class="sm:hidden">{m.common_select()}</span>
         </button>
       </div>
 
@@ -356,7 +356,7 @@
           <div class="space-y-0.5">
             {#each entries as entry}
               {#if entry.is_dir}
-                <button
+                <button type="button"
                   onclick={() => browse(entry.path)}
                   class="w-full flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-left transition-colors active:bg-gray-200 dark:active:bg-gray-700"
                 >

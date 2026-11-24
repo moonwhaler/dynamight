@@ -103,11 +103,15 @@ function createFileBrowserStore() {
 
   // Monotonically increasing counter to invalidate stale dir-size responses
   let dirSizeGeneration = 0;
+  let browseGeneration = 0;
 
   return {
     subscribe,
 
     async browsePath(path: string): Promise<boolean> {
+      // Only the latest navigation may update the listing: a slower earlier
+      // response must not replace the folder the user clicked last
+      const generation = ++browseGeneration;
       let previousPath = '';
       update((s) => {
         previousPath = s.currentPath;
@@ -115,6 +119,7 @@ function createFileBrowserStore() {
       });
       try {
         const result = await api.system.browse(path);
+        if (generation !== browseGeneration) return false;
         update((s) => {
           const sortedEntries = sortEntries(result.entries, s.sortBy, s.sortOrder);
           const newHistory = previousPath && previousPath !== result.path
@@ -127,6 +132,7 @@ function createFileBrowserStore() {
         this.fetchDirSizes(result.entries, dirSizeGeneration);
         return true;
       } catch (e) {
+        if (generation !== browseGeneration) return false;
         const message = e instanceof Error ? e.message : String(m.error_browse_path());
         update((s) => ({ ...s, loading: false, error: message, currentPath: previousPath }));
         return false;

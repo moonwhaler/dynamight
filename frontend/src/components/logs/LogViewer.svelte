@@ -3,6 +3,7 @@
   import { onDestroy, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { preferencesStore } from '../../lib/stores/preferences';
+  import * as m from '$lib/paraglide/messages.js';
 
   interface Props {
     logs: LogEntry[];
@@ -129,11 +130,12 @@
 <div class="p-1.5 sm:p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800 gap-1.5 sm:gap-2 flex-wrap">
   <span class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
     {#if isStreaming}
-      {logs.length.toLocaleString()} entries (live)
+      {m.logs_entries_live({ count: logs.length.toLocaleString() })}
     {:else if total > 0}
-      <span class="hidden xs:inline">{startEntry.toLocaleString()}-{endEntry.toLocaleString()} of</span> {total.toLocaleString()} <span class="hidden xs:inline">entries</span>
+      <span class="hidden xs:inline">{m.logs_entries_range({ from: startEntry.toLocaleString(), to: endEntry.toLocaleString(), total: total.toLocaleString() })}</span>
+      <span class="xs:hidden">{total.toLocaleString()}</span>
     {:else}
-      0 entries
+      {m.logs_entries_count({ count: 0 })}
     {/if}
   </span>
 
@@ -141,19 +143,19 @@
     {#if isStreaming}
       <label class="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm cursor-pointer text-gray-700 dark:text-gray-300">
         <input type="checkbox" checked={autoScrollEnabled} onchange={(e) => toggleAutoScroll(e.currentTarget.checked)} class="rounded text-primary-600 w-3.5 h-3.5 sm:w-4 sm:h-4" />
-        <span class="hidden xs:inline">Auto-scroll</span>
-        <span class="xs:hidden">Auto</span>
+        <span class="hidden xs:inline">{m.logs_auto_scroll()}</span>
+        <span class="xs:hidden">{m.logs_auto_short()}</span>
       </label>
       {#if userScrolledAway && autoScrollEnabled}
         <button
           onclick={jumpToBottom}
           class="p-1.5 sm:px-2 sm:py-1 text-xs bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/60 flex items-center gap-1"
-          title="Jump to latest"
+          title={m.logs_jump_to_latest()}
         >
           <svg class="w-3.5 h-3.5 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
-          <span class="hidden sm:inline">Jump to latest</span>
+          <span class="hidden sm:inline">{m.logs_jump_to_latest()}</span>
         </button>
       {/if}
     {:else if totalPages > 1}
@@ -163,7 +165,7 @@
           onclick={() => goToPage(1)}
           disabled={currentPage === 1 || loading}
           class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-          title="First page"
+          title={m.logs_first_page()}
         >
           <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
@@ -173,7 +175,7 @@
           onclick={() => goToPage(currentPage - 1)}
           disabled={currentPage === 1 || loading}
           class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-          title="Previous page"
+          title={m.logs_previous_page()}
         >
           <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -181,14 +183,14 @@
         </button>
 
         <span class="px-1 sm:px-2 text-gray-600 dark:text-gray-400 tabular-nums">
-          <span class="hidden xs:inline">Page</span> {currentPage}<span class="hidden xs:inline"> of {totalPages}</span><span class="xs:hidden">/{totalPages}</span>
+          <span class="hidden xs:inline">{m.logs_page_of({ page: currentPage, total: totalPages })}</span><span class="xs:hidden">{currentPage}/{totalPages}</span>
         </span>
 
         <button
           onclick={() => goToPage(currentPage + 1)}
           disabled={currentPage === totalPages || loading}
           class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-          title="Next page"
+          title={m.logs_next_page()}
         >
           <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
@@ -198,7 +200,7 @@
           onclick={() => goToPage(totalPages)}
           disabled={currentPage === totalPages || loading}
           class="p-1 sm:px-2 sm:py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
-          title="Last page"
+          title={m.logs_last_page()}
         >
           <svg class="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
@@ -221,7 +223,7 @@
             disabled={loading}
             class="px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
           >
-            Go
+            {m.logs_go()}
           </button>
         </div>
       </div>
@@ -241,7 +243,7 @@
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-400"></div>
     </div>
   {:else if logs.length === 0}
-    <p class="text-gray-500">No log entries.</p>
+    <p class="text-gray-500">{m.logs_no_logs()}</p>
   {:else}
     {#each logs as entry (entry.id)}
       <!-- Desktop: horizontal layout | Mobile: compact stacked layout -->

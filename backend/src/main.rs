@@ -391,7 +391,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/schedules/:id", put(handlers::schedules::update_schedule).delete(handlers::schedules::delete_schedule))
         // History and logs
         .route("/jobs/:id/runs", get(handlers::logs::list_runs).delete(handlers::logs::delete_job_runs))
-        .route("/runs", delete(handlers::logs::purge_all_runs))
+        .route("/runs", get(handlers::logs::list_recent_runs).delete(handlers::logs::purge_all_runs))
         .route("/runs/:id", get(handlers::logs::get_run).delete(handlers::logs::delete_run))
         .route("/runs/:id/logs", get(handlers::logs::get_logs))
         // System routes

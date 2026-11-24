@@ -40,6 +40,25 @@ pub async fn list_runs(
     Json(response)
 }
 
+/// Most recent runs across all jobs, newest first (dashboard "recent runs").
+pub async fn list_recent_runs(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ListRunsQuery>,
+) -> impl IntoResponse {
+    // A negative LIMIT means "no limit" in SQLite
+    let limit = query.limit.unwrap_or(10).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+
+    let runs: Vec<JobRunRow> = sqlx::query_as("SELECT * FROM job_runs ORDER BY id DESC LIMIT ? OFFSET ?")
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+    Json(runs.into_iter().map(JobRun::from).collect::<Vec<_>>())
+}
+
 pub async fn get_run(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,

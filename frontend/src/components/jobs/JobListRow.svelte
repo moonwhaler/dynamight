@@ -11,6 +11,7 @@
   import { formatRelativeTime, formatTimeUntil } from '$lib/i18n/relativeTime';
   import { getStatusIndicator } from '$lib/i18n/status';
   import { getDestinationLabel } from '$lib/utils/jobUtils';
+  import { describeCron } from '$lib/utils/cron';
   import * as m from '$lib/paraglide/messages.js';
 
   let { job, onShowLogs }: { job: Job; onShowLogs: (runId: number) => void } = $props();
@@ -37,46 +38,24 @@
     return DAY_NAMES[dow]?.() ?? '?';
   }
 
-  function toTime(h: string, min: string): string {
-    const hh = parseInt(h, 10);
-    const mm = parseInt(min, 10);
-    if (!isFinite(hh) || !isFinite(mm)) return `${h}:${min}`;
-    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-  }
-
   function parseCronToHuman(expr: string): string {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return m.jobs_sched_custom({ cron: expr });
-    const [min, hour, dom, month, dow] = parts;
-
-    if (min.startsWith('*/') && hour === '*' && dom === '*' && month === '*' && dow === '*') {
-      return m.jobs_sched_interval_minutes({ count: min.slice(2) });
+    const d = describeCron(expr);
+    switch (d.kind) {
+      case 'every_minutes':
+        return m.jobs_sched_interval_minutes({ count: d.count });
+      case 'every_hours':
+        return m.jobs_sched_interval_hours({ count: d.count });
+      case 'daily':
+        return m.jobs_sched_daily({ time: d.time });
+      case 'days':
+        if (d.days.join(',') === '1,2,3,4,5') return m.jobs_sched_weekdays({ time: d.time });
+        if (d.days.join(',') === '0,6') return m.jobs_sched_weekends({ time: d.time });
+        return m.jobs_sched_weekly({ day: d.days.map(dayName).join(', '), time: d.time });
+      case 'monthly':
+        return m.jobs_sched_monthly({ day: d.day, time: d.time });
+      default:
+        return m.jobs_sched_custom({ cron: expr });
     }
-    if ((min === '0' || min === '*') && hour.startsWith('*/') && dom === '*' && month === '*' && dow === '*') {
-      return m.jobs_sched_interval_hours({ count: hour.slice(2) });
-    }
-
-    const hNum = parseInt(hour, 10);
-    const mNum = parseInt(min, 10);
-    const hasExactTime = isFinite(hNum) && isFinite(mNum);
-    if (!hasExactTime) return m.jobs_sched_custom({ cron: expr });
-    const time = toTime(hour, min);
-
-    if (dom === '*' && month === '*' && dow === '1-5') return m.jobs_sched_weekdays({ time });
-    if (dom === '*' && month === '*' && (dow === '0,6' || dow === '6,0')) return m.jobs_sched_weekends({ time });
-
-    const dowNum = parseInt(dow, 10);
-    if (dom === '*' && month === '*' && isFinite(dowNum) && dowNum >= 0 && dowNum <= 6 && dow === String(dowNum)) {
-      return m.jobs_sched_weekly({ day: dayName(dowNum), time });
-    }
-
-    const domNum = parseInt(dom, 10);
-    if (dow === '*' && month === '*' && isFinite(domNum) && dom === String(domNum)) {
-      return m.jobs_sched_monthly({ day: domNum, time });
-    }
-    if (dom === '*' && month === '*' && dow === '*') return m.jobs_sched_daily({ time });
-
-    return m.jobs_sched_custom({ cron: expr });
   }
 
   function formatSchedule(sched: Schedule): string {

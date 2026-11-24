@@ -48,6 +48,7 @@
   let running = $state(false);
   let checkingSpace = $state(false);
   let capabilities = $state<ProviderCapabilities | null>(null);
+  let loadError = $state<string | null>(null);
 
   // Form state
   let name = $state('');
@@ -99,15 +100,15 @@
   async function loadData() {
     loading = true;
 
-    try {
-      // Load USB drives and credentials in parallel
-      const [drivesResult, credentialsResult] = await Promise.all([
-        api.system.drives(),
-        api.credentials.list(),
-      ]);
-      drives = drivesResult;
-      credentials = credentialsResult;
+    // Drives and credentials only fill pickers: a failure must not block editing
+    const [drivesResult, credentialsResult] = await Promise.allSettled([
+      api.system.drives(),
+      api.credentials.list(),
+    ]);
+    drives = drivesResult.status === 'fulfilled' ? drivesResult.value : [];
+    if (credentialsResult.status === 'fulfilled') credentials = credentialsResult.value;
 
+    try {
       // Check if this is a clone operation
       const cloneId = getCloneIdFromUrl();
       if (isNew && cloneId) {
@@ -124,6 +125,7 @@
           .map(s => s.cron_expression);
       } else if (!isNew && params.id && params.id !== loadedJobId) {
         loadedJobId = params.id;
+        loadError = null;
         const job = await api.jobs.get(parseInt(params.id));
         loadJob(job);
         schedules = await api.schedules.list(job.id);
@@ -133,7 +135,14 @@
       await loadCapabilities(destinationType);
     } catch (e) {
       console.error('[JobDetail] Error:', e);
-      showToast({ message: e instanceof Error ? e.message : m.error_failed_load(), variant: 'error' });
+      const message = e instanceof Error ? e.message : m.error_failed_load();
+      if (isNew) {
+        showToast({ message, variant: 'error' });
+      } else {
+        // Never show an editable form with another job's (or default) values:
+        // saving it would overwrite this job
+        loadError = message;
+      }
     } finally {
       loading = false;
     }
@@ -364,7 +373,7 @@
     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
       {isNew ? m.jobs_title_new() : m.jobs_title_edit()}
     </h1>
-    {#if !isNew}
+    {#if !isNew && !loadError}
       <div class="flex gap-2">
         {#if destinationType === 'local'}
           <button onclick={handleCheckSpace} disabled={checkingSpace} class="btn btn-secondary flex-1 sm:flex-none">
@@ -385,6 +394,11 @@
   {#if loading}
     <div class="flex justify-center py-12">
       <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600"></div>
+    </div>
+  {:else if loadError}
+    <div class="card p-8 text-center space-y-4">
+      <p class="text-gray-700 dark:text-gray-300">{loadError}</p>
+      <a href="#/jobs" class="btn btn-secondary">{m.job_back_to_jobs()}</a>
     </div>
   {:else}
     <!-- Job Status Toggle -->

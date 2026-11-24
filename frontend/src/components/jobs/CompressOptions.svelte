@@ -222,7 +222,7 @@
             type="button"
             onclick={() => (showPassword = !showPassword)}
             class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            aria-label={showPassword ? m.common_hide_password() : m.common_show_password()}
           >
             {#if showPassword}
               <!-- eye-off icon -->

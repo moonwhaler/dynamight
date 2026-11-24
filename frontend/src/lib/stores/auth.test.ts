@@ -12,6 +12,7 @@ vi.mock('../api', () => ({
       setup: vi.fn(),
     },
   },
+  setUnauthorizedHandler: vi.fn(),
 }));
 
 describe('authStore', () => {
@@ -116,6 +117,45 @@ describe('authStore', () => {
     const result = await authStore.login('admin', 'wrong');
     expect(result).toBe('error');
     expect(state.error).toBe('Invalid credentials');
+    unsub();
+  });
+
+  it('failed login keeps the login form mounted (no global loading state)', async () => {
+    const { api } = await import('../api');
+    vi.mocked(api.auth.setupRequired).mockResolvedValue({ setup_required: false });
+    vi.mocked(api.auth.me).mockRejectedValue(new Error('401'));
+    let resolveLogin: (v: never) => void = () => {};
+    vi.mocked(api.auth.login).mockReturnValue(new Promise((_, reject) => { resolveLogin = reject; }));
+
+    const { authStore } = await import('./auth');
+    await authStore.checkAuth();
+    const seen: boolean[] = [];
+    const unsub = authStore.subscribe((s) => seen.push(s.loading));
+
+    const pending = authStore.login('admin', 'wrong');
+    resolveLogin(new Error('Invalid credentials') as never);
+    await pending;
+    expect(seen.every((l) => l === false)).toBe(true);
+    unsub();
+  });
+
+  it('sessionExpired logs out and returns to the previous page after login', async () => {
+    const { api } = await import('../api');
+    const mockUser = { id: 1, username: 'admin' } as User;
+    vi.mocked(api.auth.login).mockResolvedValue({ success: true, user: mockUser });
+
+    const { authStore } = await import('./auth');
+    await authStore.login('admin', 'pw');
+    window.location.hash = '#/jobs/3';
+
+    authStore.sessionExpired();
+    let state = { isAuthenticated: true, error: null as string | null };
+    const unsub = authStore.subscribe((s) => { state = { isAuthenticated: s.isAuthenticated, error: s.error }; });
+    expect(state.isAuthenticated).toBe(false);
+    expect(state.error).toBeTruthy();
+
+    await authStore.login('admin', 'pw');
+    expect(window.location.hash).toBe('#/jobs/3');
     unsub();
   });
 

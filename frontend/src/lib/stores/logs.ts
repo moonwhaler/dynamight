@@ -7,24 +7,25 @@ interface StatusUpdate {
   timestamp: string;
 }
 
+const RECONNECT_DELAY_MS = 5000;
+
 function createStatusStore() {
   const { subscribe, update } = writable<StatusUpdate[]>([]);
   let ws: WebSocket | null = null;
-  let intentionalDisconnect = false;
+  // Number of mounted components that want live updates. Pages connect on
+  // mount and disconnect on destroy; when switching pages the new page can
+  // mount before the old one is destroyed, so a plain on/off flag would
+  // close the socket the new page just asked for.
+  let users = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function connect() {
-    // Already connected or connecting
-    if (ws) return;
-
-    intentionalDisconnect = false;
-
+  function open() {
     // Authenticated by the session cookie, which the browser sends with the handshake
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}/api/ws/status`);
+    const socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/status`);
+    ws = socket;
 
-    ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
       try {
         const status: StatusUpdate = JSON.parse(event.data);
         update((updates) => [...updates.slice(-99), status]);
@@ -33,33 +34,42 @@ function createStatusStore() {
       }
     };
 
-    ws.onclose = () => {
+    socket.onclose = () => {
+      // A socket closed on purpose (or replaced) must not clear or reconnect the current one
+      if (ws !== socket) return;
       ws = null;
-      // Only reconnect if not intentionally disconnected
-      if (!intentionalDisconnect && !reconnectTimer) {
+      if (users > 0 && !reconnectTimer) {
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
-          connect();
-        }, 5000);
+          if (users > 0 && !ws) open();
+        }, RECONNECT_DELAY_MS);
       }
     };
+  }
+
+  function close() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (ws) {
+      const socket = ws;
+      ws = null;
+      socket.close();
+    }
   }
 
   return {
     subscribe,
 
-    connect,
+    connect() {
+      users++;
+      if (!ws && !reconnectTimer) open();
+    },
 
     disconnect() {
-      intentionalDisconnect = true;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
+      users = Math.max(0, users - 1);
+      if (users === 0) close();
     },
   };
 }

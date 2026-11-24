@@ -83,6 +83,11 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     JOB_NOT_FOUND: () => m.error_job_not_found(),
     JOB_ALREADY_RUNNING: () => m.error_job_already_running(),
     JOB_NAME_EXISTS: () => m.error_job_name_exists(),
+    NO_RUNNING_JOB: () => m.error_no_running_job(),
+    JOB_CREATE_FAILED: () => m.job_error_save(),
+    JOB_UPDATE_FAILED: () => m.job_error_save(),
+    JOB_DELETE_FAILED: () => m.job_error_delete(),
+    JOB_CLONE_FAILED: () => m.job_error_clone(),
 
     // Schedule errors
     SCHEDULE_NOT_FOUND: () => m.error_schedule_not_found(),
@@ -106,10 +111,22 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
     },
     EXCLUDE_DIR_NOT_IN_SOURCE: () => m.error_exclude_dir_not_in_source(),
     CREDENTIALS_REQUIRED: () => m.job_validation_credentials_required(),
+    VALIDATION_INVALID_PATTERN: () =>
+      m.error_invalid_pattern({ pattern: String(params?.pattern ?? ''), reason: String(params?.reason ?? '') }),
+
+    // Compression validation errors
+    COMPRESS_STAGING_PATH_REQUIRED: () => m.compress_dirs_staging_path_required(),
+    COMPRESS_STAGING_PATH_NOT_ALLOWED: () => m.error_compress_staging_not_allowed({ path: String(params?.path ?? '') }),
+    COMPRESS_STAGING_OVERLAPS_SOURCE: () => m.error_compress_staging_overlaps_source({ path: String(params?.path ?? '') }),
+    COMPRESS_INVALID_CUSTOM_NAME: () => m.error_compress_invalid_custom_name(),
+    COMPRESS_MAX_ARCHIVES_INVALID: () => m.error_compress_max_archives_invalid(),
 
     // System errors
     PATH_NOT_ALLOWED: () => m.error_path_not_allowed(),
     PATH_TRAVERSAL_NOT_ALLOWED: () => m.error_path_not_allowed(),
+    MOUNT_POINT_NOT_ALLOWED: () => m.error_path_not_allowed(),
+    INVALID_UUID_FORMAT: () => m.error_invalid_uuid(),
+    TOTP_ALREADY_ENABLED: () => m.error_totp_already_enabled(),
 
     // File Browser errors
     FILE_NOT_FOUND: () => m.error_file_not_found(),
@@ -144,6 +161,14 @@ function translateErrorCode(code: string, params?: Record<string, string | numbe
   return m.error_generic();
 }
 
+// Called when the server answers 401 (session expired or revoked). Set by the
+// auth store; a callback avoids a circular import between api and auth.
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: () => void) {
+  onUnauthorized = handler;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
@@ -156,7 +181,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     if (response.status === 401) {
-      window.location.hash = '#/login';
+      onUnauthorized?.();
     }
     const text = await response.text();
     let errorMessage: string = String(m.error_generic());
@@ -322,6 +347,8 @@ export const api = {
   runs: {
     list: (jobId: number, limit = 50, offset = 0) =>
       request<JobRun[]>(`/jobs/${jobId}/runs?limit=${limit}&offset=${offset}`),
+    /** Most recent runs across all jobs, newest first */
+    recent: (limit = 10) => request<JobRun[]>(`/runs?limit=${limit}`),
     get: (id: number) => request<JobRun>(`/runs/${id}`),
     logs: (id: number, limit = 500, offset = 0) =>
       request<PaginatedLogsResponse>(`/runs/${id}/logs?limit=${limit}&offset=${offset}`),

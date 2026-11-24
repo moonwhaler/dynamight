@@ -17,7 +17,9 @@
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   const POLL_INTERVAL_MS = 3000;
 
-  const hasRunningJobs = $derived($jobsStore.jobs.some((j) => j.last_run_status === 'running'));
+  const hasRunningJobs = $derived(
+    $jobsStore.jobs.some((j) => j.last_run_status === 'running' || j.last_run_status === 'pending')
+  );
 
   function startPolling() {
     if (pollInterval) return;
@@ -45,15 +47,7 @@
   async function loadRecentRuns(silent = false) {
     if (!silent) loadingRuns = true;
     try {
-      const jobs = await api.jobs.list();
-      const allRuns: JobRun[] = [];
-      for (const job of jobs.slice(0, 5)) {
-        const runs = await api.runs.list(job.id, 3);
-        allRuns.push(...runs);
-      }
-      recentRuns = allRuns.sort(
-        (a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime()
-      ).slice(0, 10);
+      recentRuns = await api.runs.recent(10);
     } catch {
       // Ignore
     } finally {
