@@ -12,8 +12,8 @@
 <section class="card p-5 sm:p-6">
   <div class="flex items-start justify-between gap-4">
     <div class="min-w-0">
-      <h2 class="text-base font-semibold text-gray-900 dark:text-white">{title}</h2>
-      {#if description}<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{description}</p>{/if}
+      <h2 class="text-base leading-8 font-semibold text-gray-900 dark:text-white">{title}</h2>
+      {#if description}<p class="text-sm text-gray-500 dark:text-gray-400">{description}</p>{/if}
     </div>
     {#if actions}<div class="shrink-0">{@render actions()}</div>{/if}
   </div>

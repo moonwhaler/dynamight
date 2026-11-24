@@ -106,7 +106,7 @@
 
 <Dialog bind:open title={m.filebrowser_select_folder()} size="lg" onclose={reset} bodyClass="p-0 flex flex-col h-[60dvh] sm:h-[32rem]">
   {#snippet header()}
-    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath || rootPath}>
+    <span class="hidden sm:block max-w-[16rem] truncate font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath || rootPath}>
       {currentPath || rootPath}
     </span>
   {/snippet}

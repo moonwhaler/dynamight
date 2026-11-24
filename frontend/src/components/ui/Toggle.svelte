@@ -33,7 +33,7 @@
 <div class="flex items-start justify-between gap-4 {disabled ? 'opacity-60' : ''}">
   <div class="min-w-0">
     <div class="flex items-center gap-1">
-      <label for={id} id="{id}-label" class="text-sm font-medium text-gray-900 dark:text-gray-100 {disabled ? '' : 'cursor-pointer'}">
+      <label for={id} id="{id}-label" class="text-sm leading-6 font-medium text-gray-900 dark:text-gray-100 {disabled ? '' : 'cursor-pointer'}">
         {label}
       </label>
       {#if extra}{@render extra()}{/if}

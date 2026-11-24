@@ -100,7 +100,7 @@
       <div class="shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center justify-center">
         <Icon name="trash" />
       </div>
-      <p class="text-sm text-gray-600 dark:text-gray-300 pt-1">
+      <p class="text-sm text-gray-600 dark:text-gray-300 pt-2.5">
         {#if isDirectory}
           {m.filebrowser_delete_confirm_message_folder({ name: entryName })}
         {:else}

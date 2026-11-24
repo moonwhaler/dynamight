@@ -94,16 +94,19 @@
         {size === 'full' ? 'h-full max-h-none rounded-none sm:rounded-2xl' : ''}"
     >
       <header class="flex items-start gap-3 px-5 sm:px-6 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700">
-        <div class="min-w-0 flex-1 pt-1">
-          <h2 id={titleId} class="text-base font-semibold text-gray-900 dark:text-white truncate">{title}</h2>
+        <!-- The title line and the controls share one 36px row, centred on each other -->
+        <div class="min-w-0 flex-1">
+          <h2 id={titleId} class="text-base leading-9 font-semibold text-gray-900 dark:text-white truncate">{title}</h2>
           {#if description}
-            <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{description}</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400 -mt-1">{description}</p>
           {/if}
         </div>
-        {#if header}{@render header()}{/if}
-        <button type="button" class="btn btn-ghost btn-icon -mr-2" onclick={requestClose} aria-label={m.common_close()}>
-          <Icon name="x" />
-        </button>
+        <div class="flex items-center gap-2 h-9 shrink-0 -mr-2">
+          {#if header}{@render header()}{/if}
+          <button type="button" class="btn btn-ghost btn-icon" onclick={requestClose} aria-label={m.common_close()}>
+            <Icon name="x" />
+          </button>
+        </div>
       </header>
 
       <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain {bodyClass}">

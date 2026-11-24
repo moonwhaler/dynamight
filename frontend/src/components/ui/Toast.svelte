@@ -120,10 +120,10 @@
 >
   {#if visible}
     <div
-      class="flex items-start gap-3 pl-4 pr-2 py-3 rounded-xl shadow-xl border bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
+      class="flex items-center gap-3 pl-4 pr-2 py-2 min-h-[3rem] rounded-xl shadow-xl border bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
     >
-      <span class="shrink-0 mt-0.5 {styles[variant].tone}"><Icon name={styles[variant].icon} /></span>
-      <p class="flex-1 text-sm text-gray-800 dark:text-gray-100 pt-0.5">{message}</p>
+      <span class="shrink-0 {styles[variant].tone}"><Icon name={styles[variant].icon} /></span>
+      <p class="flex-1 text-sm text-gray-800 dark:text-gray-100 py-1">{message}</p>
       <button type="button" onclick={dismissToast} class="btn btn-ghost btn-icon btn-sm shrink-0" aria-label={m.common_close()}>
         <Icon name="x" class="w-4 h-4" />
       </button>

@@ -276,7 +276,7 @@
 >
   {#snippet header()}
     {#if run}
-      <span class="badge {getStatusBadgeClass(run.status)} self-center hidden sm:inline-flex">{formatStatus(run.status)}</span>
+      <span class="badge {getStatusBadgeClass(run.status)} hidden sm:inline-flex">{formatStatus(run.status)}</span>
     {/if}
   {/snippet}
 

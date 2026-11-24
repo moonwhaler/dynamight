@@ -354,7 +354,7 @@
                 {/if}
               </td>
               <td class="whitespace-nowrap">
-                <span class="inline-flex items-center gap-1.5 {tone[run.status]}">
+                <span class="inline-flex items-center gap-1.5 align-middle {tone[run.status]}">
                   <Icon name={icon[run.status]} class="w-4 h-4 {run.status === 'running' ? 'animate-spin [animation-duration:2.5s]' : ''}" />
                   <span class="text-gray-700 dark:text-gray-300">{formatStatus(run.status)}</span>
                 </span>

@@ -160,11 +160,11 @@
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 h-6 px-2 rounded-full text-xs font-medium whitespace-nowrap;
+    @apply inline-flex items-center gap-1.5 h-6 px-2 rounded-full text-xs font-medium whitespace-nowrap align-middle;
   }
 
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium align-middle;
   }
 
   .badge-success {

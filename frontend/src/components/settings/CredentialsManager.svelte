@@ -190,13 +190,16 @@
                       </p>
                     {/if}
                   </div>
+                  <div class="-mt-1 -mr-2 shrink-0">
                   <Menu
                     label={m.common_actions()}
+                    triggerClass="btn btn-ghost btn-icon btn-sm"
                     items={[
                       { label: m.common_edit(), icon: 'edit', onclick: () => handleEdit(credential) },
                       { label: m.common_delete(), icon: 'trash', danger: true, onclick: () => handleDeleteClick(credential) },
                     ]}
                   />
+                  </div>
                 </li>
               {/each}
             </ul>

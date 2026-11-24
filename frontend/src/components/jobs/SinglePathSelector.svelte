@@ -237,7 +237,7 @@
   bodyClass="p-0 flex flex-col h-[70dvh] sm:h-[34rem]"
 >
   {#snippet header()}
-    <span class="hidden sm:block max-w-[16rem] truncate self-center font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath}>{currentPath}</span>
+    <span class="hidden sm:block max-w-[16rem] truncate font-mono text-xs text-gray-500 dark:text-gray-400" title={currentPath}>{currentPath}</span>
   {/snippet}
       <!-- Error Message -->
       {#if browseError}

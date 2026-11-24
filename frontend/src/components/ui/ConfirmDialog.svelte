@@ -85,7 +85,7 @@
       <Icon name={variant === 'info' ? 'info' : 'warning'} />
     </div>
     <div class="min-w-0 flex-1 space-y-3">
-      <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line">{options.message}</p>
+      <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line pt-2.5">{options.message}</p>
       {#if options.requireText}
         <div>
           <label for="confirm-typed" class="label">{m.confirm_type_to_continue({ text: options.requireText })}</label>
