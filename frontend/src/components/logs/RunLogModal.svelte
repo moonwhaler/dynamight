@@ -21,6 +21,8 @@
 
   const PAGE = 500;
   const LIVE_MAX = 2000;
+  /** Live lines are added to the view at most this often (ms) */
+  const FLUSH_EVERY = 250;
   type LevelFilter = 'all' | 'warnings' | 'errors';
 
   let open = $state(true);
@@ -38,6 +40,10 @@
   let ws: WebSocket | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Live lines received since the last update of the view */
+  let pending: LogEntry[] = [];
+  let pendingCount = 0;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let scroller = $state<HTMLDivElement | null>(null);
 
   const jobName = $derived($jobsStore.jobs.find((j) => j.id === jobId)?.name ?? `#${jobId}`);
@@ -73,6 +79,7 @@
     disconnect();
     if (poll) clearInterval(poll);
     if (searchTimer) clearTimeout(searchTimer);
+    if (flushTimer) clearTimeout(flushTimer);
   });
 
   async function loadRun() {
@@ -112,9 +119,7 @@
           message: msg.message,
           source: msg.source,
         };
-        lines = lines.length >= LIVE_MAX ? [...lines.slice(1), entry] : [...lines, entry];
-        total = Math.max(total + 1, lines.length);
-        if (follow) scrollToEnd();
+        queueLine(entry);
       } catch {
         // Not a log line
       }
@@ -127,9 +132,38 @@
     return subscribed;
   }
 
+  /**
+   * Collect a live line. A busy run sends thousands of lines per second;
+   * updating the view for each one froze the browser, so lines are added
+   * in one go a few times per second.
+   */
+  function queueLine(entry: LogEntry) {
+    pending.push(entry);
+    pendingCount++;
+    if (pending.length > LIVE_MAX) pending = pending.slice(-LIVE_MAX);
+    flushTimer ??= setTimeout(flushLines, FLUSH_EVERY);
+  }
+
+  function flushLines() {
+    flushTimer = null;
+    if (pending.length === 0) return;
+    const added = pending;
+    const count = pendingCount;
+    pending = [];
+    pendingCount = 0;
+    if (filtered) return;
+    lines = lines.length + added.length > LIVE_MAX ? [...lines, ...added].slice(-LIVE_MAX) : [...lines, ...added];
+    total = Math.max(total + count, lines.length);
+    if (follow) scrollToEnd();
+  }
+
   function disconnect() {
     ws?.close();
     ws = null;
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = null;
+    pending = [];
+    pendingCount = 0;
   }
 
   /** While running: what was logged so far, then live lines after it */
@@ -140,6 +174,7 @@
       const page = await api.runs.logs(runId, PAGE, start);
       // Lines that came over the socket meanwhile may be in the page too
       const key = (e: LogEntry) => `${e.level}|${e.message}`;
+      flushLines();
       const seen = new Set(page.entries.slice(-200).map(key));
       lines = [...page.entries, ...lines.filter((e) => !seen.has(key(e)))].slice(-LIVE_MAX);
       total = Math.max(page.total, lines.length);
@@ -374,7 +409,7 @@
     onscroll={onScroll}
     class="flex-1 min-h-0 overflow-auto bg-gray-950 text-gray-200 font-mono text-[12.5px] leading-relaxed py-2"
     role="log"
-    aria-live={live ? 'polite' : 'off'}
+    aria-live="off"
   >
     {#if loading && lines.length === 0}
       <div class="flex justify-center py-12 text-gray-400"><Spinner size="w-6 h-6" /></div>
