@@ -1,54 +1,55 @@
-# Dynamight - Project Architecture Documentation
+# Dynamight - Project Architecture
 
-> A web-based multi-destination backup manager with Rust backend and Svelte frontend, supporting local rsync, cloud storage (S3, Google Drive, OneDrive), SFTP, and WebDAV destinations.
+> A self-hosted backup manager: a Rust (Axum) server with a Svelte web UI that backs up folders to local and USB drives (rsync), S3, Google Drive, OneDrive, SFTP and WebDAV.
+
+This document describes how Dynamight is built, as of version 2.1. For installation and day-to-day use see the [README](../README.md); for every endpoint see the [API reference](API.md).
 
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Technology Stack](#technology-stack)
-3. [Architecture Diagram](#architecture-diagram)
+3. [Architecture](#architecture)
 4. [Directory Structure](#directory-structure)
-5. [Backend Architecture](#backend-architecture)
-6. [Frontend Architecture](#frontend-architecture)
+5. [Backend](#backend)
+6. [Running a Backup](#running-a-backup)
 7. [Provider System](#provider-system)
-8. [Data Flow](#data-flow)
+8. [Frontend](#frontend)
 9. [Security Model](#security-model)
-10. [Docker Deployment](#docker-deployment)
-11. [Native Linux Deployment](#native-linux-deployment)
-12. [Configuration Reference](#configuration-reference)
-13. [File Reference](#file-reference)
-14. [Directory Compression](#directory-compression)
-15. [Job List Column Preferences](#job-list-column-preferences)
+10. [Deployment](#deployment)
+11. [Configuration Reference](#configuration-reference)
+12. [Directory Compression](#directory-compression)
+13. [Testing](#testing)
+14. [Key Design Decisions](#key-design-decisions)
+15. [Extension Points](#extension-points)
 
 ---
 
 ## Overview
 
-Dynamight is a self-hosted backup management application that provides a web UI for configuring and executing backups to multiple destinations. It supports local rsync-based backups with USB mount automation, as well as cloud storage providers like AWS S3, Google Drive, OneDrive, SFTP servers, and WebDAV endpoints.
+Dynamight runs on the machine that holds the data (typically a home server or NAS) and is operated by one administrator through the browser. A *job* describes what to back up (one or more source folders), where to (one destination) and when (any number of cron schedules). Runs happen on schedule or on demand, one at a time, and every run keeps its statistics and full log.
 
 ### Core Capabilities
 
-- **Multi-Provider Support**: Backup to local drives, S3, Google Drive, OneDrive, SFTP, or WebDAV
-- **Job Management**: Create, edit, delete, clone, and execute backup jobs
-- **USB Mount Support**: Auto-detect USB drives by UUID, mount/unmount automatically
-- **Scheduling**: Timezone-aware cron-based job scheduling (daily, weekly, monthly, custom)
-- **Directory Compression**: Archive source directories (tar.gz or zip) before transfer, with optional encryption, versioned retention, and excluded path support
-- **Real-time Logs**: WebSocket streaming of backup progress
-- **Credential Management**: Encrypted storage for cloud provider credentials
-- **Two-Factor Authentication**: TOTP-based 2FA with recovery codes
-- **Rate Limiting**: Protection against brute-force attacks
-- **Customizable Job Table**: Persistent per-browser column visibility, order, and resize
+- **Destinations**: local folders and USB drives (rsync, with automatic mounting by UUID), S3 and S3-compatible storage, Google Drive, OneDrive, SFTP and WebDAV
+- **Scheduling**: timezone-aware cron schedules; missed schedules run once after downtime
+- **Run queue**: one backup at a time; further runs wait in line
+- **Monitoring**: per-job health (failed, overdue, never backed up), activity history, live logs over WebSocket, notifications via ntfy and webhooks
+- **Directory compression**: optional tar.gz or zip archives of each source folder before the transfer, optionally encrypted
+- **Retention**: runs per job, and days to keep full logs
+- **File browser**: browse, search, download and delete within allowed paths
+- **Configuration backup**: encrypted export and import of jobs, credentials, schedules and settings
+- **Security**: Argon2 passwords, TOTP two-factor authentication with recovery codes, encrypted credential storage, rate limiting
 
 ### Supported Providers
 
 | Provider | Description | Authentication |
 |----------|-------------|----------------|
-| Local/USB | Rsync to local or mounted drives | None (filesystem) |
-| AWS S3 | S3 and S3-compatible (MinIO, Backblaze B2, DigitalOcean Spaces) | Access Key + Secret |
-| Google Drive | Google Drive folders and shared drives | OAuth2 |
-| OneDrive | Microsoft OneDrive personal and business | OAuth2 |
-| SFTP | SSH/SFTP servers | Password or SSH Key |
-| WebDAV | Nextcloud, ownCloud, generic WebDAV | Username + Password |
+| Local/USB | rsync to a local folder or a mounted drive | None (filesystem) |
+| S3 | AWS S3 and S3-compatible services (MinIO, Backblaze B2, SeaweedFS, ...) | Access key + secret |
+| Google Drive | My Drive folders and shared drives | OAuth2 (own app registration, refresh token) |
+| OneDrive | Personal and business OneDrive | OAuth2 (own app registration, refresh token) |
+| SFTP | SSH servers | Password or SSH key, host key pinned on first use |
+| WebDAV | Nextcloud, ownCloud, generic WebDAV | Username + password |
 
 ---
 
@@ -56,66 +57,56 @@ Dynamight is a self-hosted backup management application that provides a web UI 
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| Backend Framework | Axum 0.7 | Async web framework with tower middleware |
-| Runtime | Tokio | Async runtime for Rust |
-| Database | SQLite + sqlx | Embedded database with compile-time checked queries |
-| Authentication | Argon2 + JWT | Password hashing and stateless sessions |
-| 2FA | totp-rs | TOTP authentication with QR code generation |
-| Credential Encryption | AES-256-GCM | Secure storage for provider credentials |
-| Cloud Storage | aws-sdk-s3 | S3 and S3-compatible storage |
+| Web framework | Axum 0.7, tower-http | HTTP, WebSockets, static files, compression, security headers |
+| Runtime | Tokio | Async runtime, process spawning, timers |
+| Database | SQLite via sqlx 0.8 (WAL mode) | Main and logs databases |
+| Authentication | argon2, jsonwebtoken | Password hashing, session tokens |
+| 2FA | totp-rs, qrcode | TOTP codes and QR codes |
+| Credential encryption | aes-gcm, argon2 | AES-256-GCM with Argon2id key derivation |
+| Config backup encryption | aes + cbc, pbkdf2 | OpenSSL-compatible AES-256-CBC |
+| S3 | aws-sdk-s3 | S3 and compatible storage |
 | SFTP | russh, russh-sftp | SSH/SFTP client |
-| HTTP Client | reqwest | WebDAV, Google Drive, OneDrive APIs |
-| Frontend Framework | Svelte 5 | Reactive UI with runes ($state, $derived, $effect) |
-| Build Tool | Vite 6 | Fast frontend bundling |
-| Styling | Tailwind CSS 4 | Utility-first CSS |
-| Containerization | Docker + Alpine | Minimal runtime image |
+| HTTP client | reqwest (rustls) | WebDAV, Google Drive, OneDrive, notifications |
+| Scheduling | cron, chrono-tz | Cron parsing in the configured timezone |
+| External tools | rsync, mount/umount, findmnt, lsblk, tar, zip, openssl, pigz (optional) | Local backups, drives, archives |
+| Frontend | Svelte 5 (runes), TypeScript | Single-page application |
+| Build | Vite 5 | Bundling (hashed asset names) |
+| Styling | Tailwind CSS 3 with CSS variables | Theming (3 base tones × 6 accents, light/dark) |
+| Routing | svelte-spa-router | Hash-based routes |
+| Translations | Paraglide JS 2 | English and German |
+| Tests | cargo test, axum-test, Vitest | Unit and API tests |
+| Container | Alpine 3.22 | Runtime image |
 
 ---
 
-## Architecture Diagram
+## Architecture
 
 ```
-+-------------------------------------------------------------------------+
-|                          Docker Container / Host                          |
-|  +-------------------------------------------------------------------+  |
-|  |                       Dynamight Binary                             |  |
-|  |  +----------------+  +------------------+  +-------------------+   |  |
-|  |  |   Axum Router  |  |    Services      |  |    Scheduler      |   |  |
-|  |  |                |  |                  |  |   (Background)    |   |  |
-|  |  |  /api/*        |  |  - Auth          |  |                   |   |  |
-|  |  |  /ws/*         |  |  - Backup        |  |  Checks cron      |   |  |
-|  |  |  /* (static)   |  |  - Compress      |  |  every 60s        |   |  |
-|  |  |                |  |  - Credential    |  |  Timezone-aware   |   |  |
-|  |  |                |  |  - Mount         |  |                   |   |  |
-|  |  |                |  |  - RateLimit     |  |                   |   |  |
-|  |  |                |  |  - TOTP          |  |                   |   |  |
-|  |  +----------------+  +------------------+  +-------------------+   |  |
-|  |         |                    |                     |               |  |
-|  |         v                    v                     v               |  |
-|  |  +-----------------------------------------------------------+    |  |
-|  |  |                    Provider Layer                          |    |  |
-|  |  |  +--------+ +------+ +-------+ +------+ +------+ +------+  |    |  |
-|  |  |  | Rsync  | |  S3  | | GDrive| |OneDrv| | SFTP | |WebDAV|  |    |  |
-|  |  |  +--------+ +------+ +-------+ +------+ +------+ +------+  |    |  |
-|  |  +-----------------------------------------------------------+    |  |
-|  |         |                    |                     |               |  |
-|  |         v                    v                     v               |  |
-|  |  +-----------------------------------------------------------+    |  |
-|  |  |              SQLite Databases (WAL mode)                   |    |  |
-|  |  |  Main: users | jobs | schedules | credentials | settings   |    |  |
-|  |  |  Logs: job_runs | log_entries                              |    |  |
-|  |  +-----------------------------------------------------------+    |  |
-|  +-------------------------------------------------------------------+  |
-|                              |                                          |
-+------------------------------|-----------------------------------------+
-                               v
-+-------------------------------------------------------------------------+
-|                         External Services                                 |
-|  Local: rsync, mount/umount, blkid, lsblk                               |
-|  Cloud: S3 API, Google Drive API, Microsoft Graph API                   |
-|  Remote: SFTP servers, WebDAV servers                                   |
-+-------------------------------------------------------------------------+
+┌──────────────────────┐   REST + WebSocket   ┌─────────────────────────────────────────────┐
+│ Browser (Svelte SPA) │◀────────────────────▶│ Axum server                                 │
+└──────────────────────┘                      │  /api/*   handlers (auth middleware)        │
+                                              │  /api/ws/* live logs, run events            │
+                                              │  /*        static files (cached, compressed)│
+                                              └───────┬─────────────────────────────────────┘
+                                                      │
+       ┌──────────────────────┬───────────────────────┼─────────────────────┬────────────────┐
+       ▼                      ▼                       ▼                     ▼                ▼
+┌──────────────┐   ┌────────────────────┐   ┌──────────────────┐  ┌─────────────────┐ ┌──────────────┐
+│ Scheduler    │──▶│ BackupService      │──▶│ Provider layer   │  │ Notifier        │ │ Auth, TOTP,  │
+│ (each minute)│   │  run queue (1 slot)│   │ rsync, S3, Drive,│  │ ntfy / webhook  │ │ credentials, │
+└──────────────┘   │  cancel tokens     │   │ OneDrive, SFTP,  │  └─────────────────┘ │ rate limits  │
+                   │  log writer, events│   │ WebDAV           │                      └──────────────┘
+                   │  log retention     │   └──────────────────┘
+                   └─────────┬──────────┘
+                             ▼
+              ┌──────────────────────────────┐   ┌──────────────────────────┐
+              │ dynamight.db (main)          │   │ logs.db                  │
+              │ users, jobs, schedules,      │   │ log_entries              │
+              │ job_runs, credentials, ...   │   │ (one row per log line)   │
+              └──────────────────────────────┘   └──────────────────────────┘
 ```
+
+Everything runs in one process. Run log lines go to their own database, so a verbose backup writing thousands of lines does not slow down the main database.
 
 ---
 
@@ -123,344 +114,243 @@ Dynamight is a self-hosted backup management application that provides a web UI 
 
 ```
 dynamight-web/
-├── Cargo.toml                 # Rust workspace definition
-├── Dockerfile                 # Multi-stage build (node -> rust -> alpine)
-├── docker-compose.yml         # Container orchestration
-├── .env.example               # Environment variable template
-├── project-description.md     # This file
+├── Cargo.toml                  # Workspace
+├── Dockerfile                  # node → rust (musl) → alpine
+├── docker-compose.yml
+├── dynamight.toml.example      # Configuration template
+├── migrations/                 # Base SQL schema (later changes live in db/mod.rs)
+├── docs/                       # API reference, this document, screenshots
+├── scripts/
+│   ├── dev.sh                  # Backend + Vite dev server
+│   ├── build.sh                # Release package (and Docker image)
+│   ├── install.sh              # Install / uninstall as a systemd service
+│   ├── update.sh               # Update with backup and automatic rollback
+│   ├── version.sh              # Set the version everywhere
+│   └── dynamight.service       # systemd unit
 │
-├── scripts/                   # Build and deployment scripts
-│   ├── dev.sh                 # Development server (backend + frontend)
-│   ├── build.sh               # Production build and packaging
-│   └── install.sh             # System service installation
-│
-├── migrations/
-│   ├── 001_initial.sql        # Base schema (users, jobs, schedules)
-│   ├── 002_logs.sql           # Logs database schema
-│   └── 003_providers.sql      # Provider and credential support
-│
-├── backend/                   # Rust backend application
-│   ├── Cargo.toml             # Backend dependencies
+├── backend/
+│   ├── build.rs                # Embeds git hash and build date
+│   ├── tests/                  # API tests (axum-test) and live provider tests
 │   └── src/
-│       ├── main.rs            # Entry point, server setup, router
-│       ├── config.rs          # Environment configuration
-│       ├── errors.rs          # Error types
-│       ├── extractors.rs      # Axum extractors
-│       ├── middleware.rs      # Auth middleware
-│       │
-│       ├── db/
-│       │   └── mod.rs         # Database initialization, migrations
-│       │
-│       ├── models/            # Data structures
-│       │   ├── mod.rs
-│       │   ├── user.rs        # User, LoginRequest
-│       │   ├── job.rs         # Job, CreateJobRequest
-│       │   ├── schedule.rs    # Schedule, CreateScheduleRequest
-│       │   ├── log_entry.rs   # LogEntry, LogMessage, JobRun
-│       │   ├── credential.rs  # Credential types for providers
-│       │   └── destination.rs # DestinationConfig variants
-│       │
-│       ├── handlers/          # HTTP request handlers
-│       │   ├── mod.rs
-│       │   ├── auth.rs        # Login, logout, setup, password
-│       │   ├── totp.rs        # 2FA setup, validate, recovery
-│       │   ├── jobs.rs        # CRUD + run, cancel, clone
-│       │   ├── schedules.rs   # Schedule CRUD
-│       │   ├── logs.rs        # Run history and logs
-│       │   ├── system.rs      # Drives, mounts, browse, health
-│       │   ├── settings.rs    # App settings
-│       │   ├── credentials.rs # Credential CRUD
-│       │   ├── providers.rs   # Provider info, test connection
-│       │   └── websocket.rs   # WebSocket handlers
-│       │
-│       └── services/          # Business logic layer
-│           ├── mod.rs
-│           ├── auth_service.rs      # Password hashing, JWT
-│           ├── totp_service.rs      # TOTP generation/validation
-│           ├── backup_service.rs    # Job execution orchestration
-│           ├── compress_service.rs  # Directory compression and retention
-│           ├── mount_service.rs     # USB mount/unmount
-│           ├── scheduler_service.rs # Cron job runner (timezone-aware)
-│           ├── credential_service.rs # Credential encryption
-│           ├── rate_limit_service.rs # Rate limiting
-│           │
-│           └── providers/           # Sync provider implementations
-│               ├── mod.rs           # SyncProvider trait, factory
-│               ├── rsync.rs         # Local/USB rsync
-│               ├── s3.rs            # AWS S3 and compatible
-│               ├── googledrive.rs   # Google Drive API
-│               ├── onedrive.rs      # Microsoft OneDrive
-│               ├── sftp.rs          # SFTP/SSH
-│               └── webdav.rs        # WebDAV
+│       ├── main.rs             # Startup, background tasks, outer layers, shutdown
+│       ├── lib.rs              # AppState and the API router (shared with tests)
+│       ├── config.rs           # dynamight.toml + environment overrides
+│       ├── errors.rs           # ApiError and error codes
+│       ├── extractors.rs       # AuthClaims, token from cookie/header
+│       ├── middleware.rs       # require_auth, session checks
+│       ├── db/mod.rs           # Migrations for both databases
+│       ├── models/             # job, schedule, log_entry (runs, log lines), destination, credential, user
+│       ├── handlers/           # auth, totp, jobs, schedules, logs (runs), system, settings,
+│       │                       # notifications, config_backup, credentials, providers, websocket
+│       └── services/
+│           ├── backup_service.rs        # Run queue, execution, finalizing, retention
+│           ├── scheduler_service.rs     # Cron schedules
+│           ├── log_writer.rs            # Batched log line storage
+│           ├── notification_service.rs  # ntfy / webhook notifications
+│           ├── compress_service.rs      # Archives before the transfer
+│           ├── mount_service.rs         # Drives, mounts, file browser helpers, free space
+│           ├── credential_service.rs    # Credential encryption
+│           ├── oauth_service.rs         # Access token refresh (Drive, OneDrive)
+│           ├── config_backup_service.rs # Encrypted export / import
+│           ├── auth_service.rs          # Passwords, JWT
+│           ├── totp_service.rs          # 2FA
+│           ├── rate_limit_service.rs    # Login rate limiting
+│           └── providers/
+│               ├── mod.rs               # SyncProvider trait, SyncContext, factory
+│               ├── common.rs            # Shared helpers for remote providers
+│               ├── rsync.rs, s3.rs, googledrive.rs, onedrive.rs, sftp.rs, webdav.rs
 │
-└── frontend/                  # Svelte SPA
-    ├── package.json
-    ├── vite.config.ts
-    ├── svelte.config.js
-    ├── tailwind.config.js
-    │
+└── frontend/
+    ├── messages/               # en.json, de.json (Paraglide)
     └── src/
-        ├── main.ts
-        ├── app.css
-        ├── App.svelte
-        │
-        ├── lib/
-        │   ├── types.ts             # TypeScript interfaces
-        │   ├── api.ts               # API client
-        │   │
-        │   └── stores/
-        │       ├── auth.ts          # Auth state
-        │       ├── jobs.ts          # Jobs state
-        │       ├── logs.ts          # WebSocket status
-        │       ├── theme.ts         # Dark/light theme
-        │       ├── tablePreferences.ts  # Job list column visibility/order/widths
-        │       ├── viewPreferences.ts
-        │       ├── preferences.ts
-        │       ├── fileBrowser.ts   # Directory browser state
-        │       └── language.ts      # UI language selection
-        │
+        ├── App.svelte          # Auth gate and routes
+        ├── main.ts             # Fonts, leave guard, mount
+        ├── app.css             # Theme variables and component classes
+        ├── routes/             # Overview, Jobs, JobView, JobNew, Activity, FileBrowser, Settings,
+        │                       # Login, Setup, Redirect
         ├── components/
-        │   ├── layout/
-        │   │   ├── Layout.svelte
-        │   │   ├── Navbar.svelte
-        │   │   └── Sidebar.svelte
-        │   │
-        │   ├── jobs/
-        │   │   ├── JobCard.svelte
-        │   │   ├── JobListRow.svelte          # Dynamic row renderer
-        │   │   ├── ColumnSelector.svelte      # Column visibility/order popover
-        │   │   ├── ProviderSelector.svelte    # Provider selection UI
-        │   │   ├── CredentialSelector.svelte  # Credential picker (used inside providers/)
-        │   │   ├── TestConnection.svelte      # Connection tester (used inside providers/)
-        │   │   ├── CompressOptions.svelte     # Directory compression settings
-        │   │   ├── SyncOptions.svelte         # Unified sync options
-        │   │   ├── RsyncOptions.svelte        # Rsync-specific options
-        │   │   ├── SchedulePicker.svelte
-        │   │   ├── PathSelector.svelte
-        │   │   ├── SinglePathSelector.svelte
-        │   │   │
-        │   │   └── providers/                 # Provider-specific forms
-        │   │       ├── LocalDestination.svelte
-        │   │       ├── S3Destination.svelte
-        │   │       ├── GoogleDriveDestination.svelte
-        │   │       ├── OneDriveDestination.svelte
-        │   │       ├── SftpDestination.svelte
-        │   │       └── WebDavDestination.svelte
-        │   │
-        │   ├── settings/
-        │   │   ├── CredentialsManager.svelte  # Credential management
-        │   │   └── CredentialEditModal.svelte
-        │   │
-        │   ├── logs/
-        │   │   ├── LogViewer.svelte
-        │   │   └── RunLogModal.svelte
-        │   │
-        │   ├── ui/
-        │   │   ├── ConfirmDialog.svelte
-        │   │   ├── Toast.svelte
-        │   │   └── HelpTooltip.svelte
-        │   │
-        │   ├── SettingsModal.svelte
-        │   ├── TotpSetup.svelte
-        │   ├── TotpVerification.svelte
-        │   └── PasswordStrength.svelte
-        │
-        └── routes/
-            ├── Login.svelte
-            ├── Setup.svelte
-            ├── Dashboard.svelte
-            ├── Jobs.svelte
-            ├── JobDetail.svelte
-            └── History.svelte
+        │   ├── shell/          # AppShell, Sidebar (rail on tablets), BottomTabs (phones)
+        │   ├── jobs/           # JobTable, JobRow, JobTile, editor/ (JobEditor, JobWizard, ...),
+        │   │                   # providers/ (destination forms), SchedulePicker, SyncOptions, ...
+        │   ├── logs/           # RunLogModal, RunLogHost
+        │   ├── settings/       # One component per settings section
+        │   ├── filebrowser/    # File list, search, breadcrumbs, dialogs
+        │   └── ui/             # Dialog, Menu, Toggle, Tabs, StatusChip, RunStrip, Toast, ...
+        └── lib/
+            ├── api.ts          # API client
+            ├── types.ts        # Shared types
+            ├── jobDraft.svelte.ts  # Editable job state (editor and wizard)
+            ├── jobActions.ts   # Run, stop, enable, clone, delete
+            ├── leaveGuard.ts   # Unsaved-changes guard
+            ├── stores/         # auth, jobs (live), logs (status socket), runLog, preferences, theme, ...
+            ├── utils/          # jobStatus, backupHealth, cron, format, path, ...
+            └── i18n/           # Schedule text, job summary sentence, relative time
 ```
 
 ---
 
-## Backend Architecture
+## Backend
 
-### Entry Point (`main.rs`)
+### Startup (`main.rs`)
 
-Application bootstrap order:
+1. Answer `--version` / `--help` and exit, if given
+2. Set up logging (`RUST_LOG` wins over `[logging] level`)
+3. Load the configuration
+4. Open both SQLite databases (WAL, `synchronous=NORMAL`, 30 s busy timeout) and run migrations
+5. Read the stored settings (run retention, log retention, search timeout, directory sizes)
+6. Create the services; upgrade credentials still in the legacy encryption format
+7. Mark runs left `pending` or `running` by a crash as failed ("Interrupted by server restart")
+8. Start background tasks:
+   - hourly cleanup of expired 2FA sessions and revoked tokens; log retention every 6 hours (also right at startup)
+   - the scheduler
+9. Build the app: the API under `/api`, static files, response compression, tracing, CORS, security headers
+10. Serve until `SIGTERM`/`SIGINT`, then shut down (see [Shutdown](#shutdown))
 
-1. Initialize tracing (logging)
-2. Load configuration from environment
-3. Connect to SQLite databases (main + logs)
-4. Run migrations
-5. Initialize services (Auth, Backup, Mount, Credential, RateLimit, TOTP)
-6. Start SchedulerService in background task
-7. Build Axum router with routes
-8. Start HTTP server
-
-### Service Layer
-
-#### AuthService (`services/auth_service.rs`)
-
-- `hash_password(password)` - Argon2 hash
-- `verify_password(password, hash)` - Verification
-- `generate_token(user_id)` - JWT (24h expiry)
-- `validate_token(token)` - JWT validation
-
-#### TOTPService (`services/totp_service.rs`)
-
-- `generate_secret()` - New TOTP secret
-- `generate_qr_code(secret, username)` - QR code for authenticator apps
-- `validate_code(secret, code)` - Verify TOTP code
-- `generate_recovery_codes()` - Generate backup codes
+### Services
 
 #### BackupService (`services/backup_service.rs`)
 
-Orchestrates backup execution:
+The center of the application. It owns:
 
-1. Load job configuration from database
-2. Resolve provider based on destination type
-3. Retrieve and decrypt credentials if needed
-4. **Compression phase** (if `compress_dirs` enabled): compress each source directory into an archive in the staging path, then use the staging path as the effective source for the sync. Retention cleanup runs after each archive is created. Dry-run mode logs what would be compressed without writing files.
-5. **Space pre-flight check** (Local provider only, skipped when compression is active)
-6. Create `SyncContext` with effective source directories
-7. Call provider's `sync()` method
-8. Stream logs via WebSocket broadcast
-9. Store logs in database
-10. Handle cancellation (checked before each compression step and throughout provider sync)
-
-#### CredentialService (`services/credential_service.rs`)
-
-- **Encryption**: AES-256-GCM
-- **Key Derivation**: SHA-256(JWT_SECRET + salt)
-- `create()` - Encrypt and store
-- `get_decrypted()` - Retrieve and decrypt
-- `update()` / `delete()` - Manage credentials
-
-#### MountService (`services/mount_service.rs`)
-
-- `get_device_by_uuid(uuid)` - Device lookup via `blkid`
-- `mount_by_uuid(uuid, mount_point)` - Mount USB
-- `unmount(mount_point)` - Sync and unmount
-- `list_usb_drives()` - Parse `lsblk -J`
-- `browse_path(path)` - Directory listing
-
-#### CompressService (`services/compress_service.rs`)
-
-Handles per-directory archiving before provider sync:
-
-- `compress_directory(source_dir, job_id, opts, exclude_paths, log_fn, is_cancelled)` — archives a single source directory into the staging path, honouring cancellation and excluded sub-paths
-- `cleanup_old_archives(staging_path, dir_name, custom_name, max_count, job_id)` — deletes oldest archives beyond the retention limit, matching by sanitised dir name + job ID in any archive format (so archives written before a format or password change are rotated out too)
-- `job_archive_patterns(job_id)` — globs (`*_<id>.tar.gz`, `*_<id>.zip.enc`, ...) that pick only this job's archives from a shared staging folder
-- **Archive naming**: `[<timestamp>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>`
-  - Job ID is embedded in every filename so multiple jobs can safely share the same staging directory
-  - Timestamp format: `YYYY-MM-DDTHH-MM-SS`
-- **Supported formats**:
-  - `tar_gz`: gzip-compressed tar (`.tar.gz`); or uncompressed with `store_only` (`.tar`)
-  - `zip`: ZIP archive (`.zip`)
-- **Encryption**:
-  - `tar_gz` + password: two-step process — create tar, then pipe through `openssl enc -aes-256-cbc -pbkdf2`; output has `.enc` suffix (e.g. `.tar.gz.enc`). Password is passed via stdin, not on the command line.
-  - `zip` + password: same two-step process as tar (zip, then openssl); output has `.zip.enc` suffix. Zip's built-in encryption is not used (weak ZipCrypto, password visible in the process list).
-- **Excluded directories**: `archive_relative_excludes()` converts absolute `exclude_dirs` to archive-relative paths so they are honoured during compression, not just during provider sync
-- **GNU tar required**: Alpine's default BusyBox tar lacks `--numeric-owner`; the Dockerfile installs the GNU `tar` package
-
-#### RateLimitService (`services/rate_limit_service.rs`)
-
-- Track failed auth attempts per IP
-- Exponential backoff lockouts
-- Automatic cleanup of old records
+- **The run queue**: a semaphore with one slot (`MAX_PARALLEL_RUNS = 1`), FIFO. Each job has at most one running and one waiting run.
+- **Cancellation**: one `CancellationToken` per active run. Providers check it while working; waits (`select!`) end as soon as it fires.
+- **Run guards**: a `RunGuard` holds a run's place (its waiting/running flag, its token, its slot) and releases everything when dropped, on every path including errors and panics.
+- **Log writing**: lines go to the WebSocket broadcast and to the `LogWriter`, which stores them in batches.
+- **Run events**: a small broadcast channel (`Queued`, `Started`, `Completed`) for the status WebSocket, separate from the log lines.
+- **Finalizing**: final status, statistics, failure summary, last good copy time, storage info, notifications, run retention.
+- **Overdue checks**: jobs without a recent good copy are marked overdue and notified once.
+- **Log retention**: see [Retention](#retention).
 
 #### SchedulerService (`services/scheduler_service.rs`)
 
-- Background tokio task, checks schedules every 60 seconds
-- Timezone-aware cron parsing — timezone configured via `server.timezone` in `dynamight.toml` or the `TZ` environment variable
-- Calculates next run times using 5-field cron expressions with full timezone support
-- Skips execution if the same job is already running
-- Updates `last_run_at` and `next_run_at` after each invocation
-- Schedules of disabled jobs are advanced without running, so enabling the job again does not start an overdue run
-- A schedule that came due while the server was down runs once at startup (catch-up), not once per missed slot
-- Preserves "cancelled" status (does not overwrite with success/failure)
+- Ticks one second after every full minute (cron has minute resolution); the first check runs at startup.
+- Due schedules (`next_run_at <= now`) are advanced first, then the job is handed to `start_run`. Schedules of disabled jobs are advanced without running.
+- At startup, `next_run_at` is recalculated (the timezone may have changed), except for schedules that came due while the server was down: those keep their past time and run once.
+- Runs the overdue check every 10 minutes.
+- Times use the configured timezone (`server.timezone` or `TZ`).
 
-### Handler Layer
+#### LogWriter (`services/log_writer.rs`)
 
-| Endpoint Group | Path | Purpose |
-|----------------|------|---------|
-| Auth | `/api/auth/*` | Login, logout, setup, password change |
-| TOTP | `/api/auth/totp/*` | 2FA setup, validation, recovery |
-| Jobs | `/api/jobs/*` | Job CRUD, run, cancel, clone |
-| Schedules | `/api/jobs/:id/schedules/*` | Schedule management |
-| Logs | `/api/runs/*` | Run history and logs |
-| System | `/api/system/*` | Drives, mounts, browse, health |
-| Settings | `/api/settings` | App configuration |
-| Credentials | `/api/credentials/*` | Credential CRUD |
-| Providers | `/api/providers/*` | Provider info, test connection |
-| WebSocket | `/api/ws/*` | Real-time log streaming |
+A single task that stores log lines in batches (up to 500 lines or 100 ms) inside one transaction. Writers wait only when its queue (8192 lines) is full. `flush()` waits until everything queued so far is stored; `finalize_run` uses it so the "Run finished" line and the stored log are complete when clients reload.
 
-### Database Schema
+#### Notifier (`services/notification_service.rs`)
 
-**Main Database:**
-```sql
-users           -- User accounts (id, username, password_hash, totp_secret)
-jobs            -- Backup jobs with destination_type, destination_config, sync_options
-schedules       -- Cron schedules linked to jobs
-credentials     -- Encrypted provider credentials
-app_settings    -- Application configuration
-sessions        -- JWT token tracking
-```
+Sends ntfy and webhook notifications for failed, overdue, recovered and (optionally) every successful run. Settings are one JSON value in `app_settings`, so they travel with the configuration backup. Secrets are never sent back to the browser.
 
-**Logs Database:**
-```sql
-job_runs        -- Execution history (status, timestamps, stats)
-log_entries     -- Individual log lines from sync output
-```
+#### CompressService (`services/compress_service.rs`)
+
+Archives source folders before the transfer. See [Directory Compression](#directory-compression).
+
+#### MountService (`services/mount_service.rs`)
+
+- Lists USB drives (`lsblk -J`) and mounts (`findmnt -J`)
+- Mounts by UUID and unmounts (UI actions)
+- Browses, searches and sizes directories for the file browser (search stops at its deadline)
+- `fs_space(path)`: free and total bytes via `statvfs`, like `df`
+
+#### CredentialService and OAuth (`credential_service.rs`, `oauth_service.rs`)
+
+- Encrypts credentials with AES-256-GCM; the key is derived from `jwt_secret` with Argon2id and a random salt per credential (format `DM1\0 + salt + nonce + ciphertext`). Key derivation runs on a blocking thread.
+- Older credentials (SHA-256 derived key) are upgraded at startup.
+- `get_fresh` renews an expired OAuth access token before a run; `OAuthTokenSource` renews it during long runs.
+
+#### ConfigBackupService (`config_backup_service.rs`)
+
+Exports jobs, schedules, credentials and settings as YAML, encrypted with AES-256-CBC and PBKDF2 (600,000 iterations), compatible with the `openssl enc` command. Import supports *merge* and *replace all*, with a preview.
+
+#### AuthService, TOTP, RateLimitService
+
+- Argon2 password hashing; JWT session tokens (24 hours, with a unique `jti`)
+- TOTP secrets, QR codes, recovery codes; a used time step cannot be replayed
+- Failed logins tracked per client IP with exponential lockouts
+
+### Handlers
+
+| Group | Paths | Purpose |
+|-------|-------|---------|
+| Auth | `/api/auth/*` | Setup, login, logout, password change, current user |
+| 2FA | `/api/auth/totp/*` | Setup, enable, disable, validate, recovery |
+| Jobs | `/api/jobs/*` | CRUD, run, cancel, clone, space check |
+| Schedules | `/api/jobs/:id/schedules`, `/api/schedules/*` | Schedule CRUD, cron validation |
+| Runs | `/api/runs/*`, `/api/jobs/:id/runs` | Run history, run details, logs (filter, search), deletion |
+| System | `/api/system/*` | Health, version, drives, mounts, browse, search, download, delete |
+| Settings | `/api/settings*` | App settings, notification settings |
+| Config | `/api/config/*` | Configuration export, import, import preview |
+| Credentials | `/api/credentials/*` | Credential CRUD and usage |
+| Providers | `/api/providers/*` | Provider list, capabilities, connection test |
+| WebSocket | `/api/ws/logs/:runId`, `/api/ws/status` | Live log lines, run events |
+
+Handlers report database errors as errors (HTTP 500), never as empty data.
+
+### Database
+
+**Main database (`dynamight.db`)**
+
+| Table | Contents |
+|-------|----------|
+| `users` | The admin account, password hash, 2FA secret and state, `password_changed_at` |
+| `jobs` | Job settings (`destination_type`, `destination_config` and `sync_options` as JSON), `last_success_at`, `alert_state`, destination free space |
+| `schedules` | Cron expression, enabled, `last_run_at`, `next_run_at` |
+| `job_runs` | Status, times, files and bytes transferred, error count, `summary` (failure reason), `log_pruned` |
+| `credentials` | Encrypted provider credentials |
+| `app_settings` | Key/value settings (retention, notifications, file browser) |
+| `pending_totp_sessions`, `recovery_codes`, `revoked_tokens` | 2FA login, recovery codes, logged-out tokens |
+
+**Logs database (`logs.db`)**
+
+| Table | Contents |
+|-------|----------|
+| `log_entries` | One row per log line: run ID, time, level, message, source |
+
+The base schema is in `migrations/`; later columns and tables are added by `db/mod.rs` at startup (idempotent).
+
+### Retention
+
+- **Runs**: `max_runs_per_job` (default 5, or unlimited). After each run, older runs of that job and their log lines are deleted.
+- **Logs**: `log_retention_days` (default 90, or forever). Every 6 hours, the log lines of runs that finished longer ago are deleted and the run is marked `log_pruned`; each job's newest finished run and newest failed run keep their log. When at least a quarter of `logs.db` is then free pages, it is compacted (`VACUUM`), but only while no backup runs (it holds the run slot) and with enough free disk space.
+
+### Shutdown
+
+On `SIGTERM`/`SIGINT` no new runs start; active and waiting runs are stored as cancelled ("server shutting down") and their tokens fire. Runs get 20 seconds to stop (rsync is killed, drives are unmounted), the log writer is flushed, then open HTTP connections get 5 more seconds. systemd's `TimeoutStopSec` and the compose file's `stop_grace_period` are 30 seconds.
 
 ---
 
-## Frontend Architecture
-
-### State Management
-
-Uses Svelte 5 runes for local state and custom stores for global state.
-
-#### Stores
-
-- **authStore**: User session, login/logout
-- **jobsStore**: Cached job list with CRUD
-- **statusStore**: WebSocket for global job updates
-- **themeStore**: Light/dark theme
-- **viewPreferencesStore**: Grid/list view preference
-- **preferencesStore**: User preferences
-
-### Routing
-
-Uses `svelte-spa-router` with hash-based routing:
-
-- `/` - Dashboard
-- `/jobs` - Job list
-- `/jobs/new` - Create job
-- `/jobs/:id` - Edit job
-- `/history` - Run history
-
-### Component Hierarchy
+## Running a Backup
 
 ```
-App.svelte
-├── (unauthenticated) Login.svelte
-│   └── TotpVerification.svelte (if 2FA enabled)
-├── (first-time) Setup.svelte
-│   └── TotpSetup.svelte (optional)
-└── (authenticated) Layout.svelte
-    ├── Navbar.svelte
-    │   └── SettingsModal.svelte
-    │       └── CredentialsManager.svelte
-    ├── Sidebar.svelte
-    └── Router → [Dashboard|Jobs|JobDetail|History]
-        ├── Jobs.svelte
-        │   ├── ColumnSelector.svelte    # Column visibility/order popover
-        │   ├── JobListRow.svelte        # One per job; dynamic column rendering
-        │   └── RunLogModal.svelte       # Live log viewer (lifted state from rows)
-        └── JobDetail.svelte
-            ├── ProviderSelector.svelte
-            ├── [Provider]Destination.svelte  # Includes CredentialSelector + TestConnection
-            ├── PathSelector.svelte           # Multi-source directory picker
-            ├── CompressOptions.svelte        # Directory compression settings
-            ├── SyncOptions.svelte
-            ├── SchedulePicker.svelte
-            └── RunLogModal.svelte            # Live log viewer (also used here)
+POST /api/jobs/:id/run            Scheduler (due schedule)
+          │                                │
+          └──────────────┬─────────────────┘
+                         ▼
+          BackupService::start_run(job, schedule_id)
+          ├── reserve the job (refused: job already active; a schedule may queue one follow-up)
+          ├── INSERT job_runs (status = pending), create the cancel token
+          ├── slot free?  no → log "Waiting for another backup to finish", event job_queued
+          └── spawn the run task, return { runId, queued }
+                         │
+                         ▼  (waits for the slot, or for cancellation)
+          status = running, event job_started, reload the job (edits made while waiting apply)
+                         │
+                         ▼
+          do_execute
+          ├── load and refresh credentials
+          ├── validate the destination
+          ├── [archives] compress each source folder into the staging folder
+          ├── last completed run's transfer size (quick space check)
+          └── provider.sync(SyncContext)  ── log lines ─▶ WebSocket + LogWriter
+                         │
+                         ▼
+          finalize_run
+          ├── final status (cancelled stays cancelled), statistics
+          ├── failed: store the last error line as summary
+          ├── completed (not dry run): last_success_at
+          ├── destination free space
+          ├── "Run finished: <status>" (after the log is flushed), event job_completed
+          ├── notification (failed / recovered / success)
+          └── run retention
 ```
+
+The browser follows along through two WebSockets: `/api/ws/status` (run events; the job list refreshes) and `/api/ws/logs/:runId` (log lines of the open run log). Both authenticate with the session cookie.
 
 ---
 
@@ -468,26 +358,28 @@ App.svelte
 
 ### SyncProvider Trait
 
-All providers implement:
-
 ```rust
+#[async_trait]
 pub trait SyncProvider: Send + Sync {
     fn provider_type(&self) -> &'static str;
     fn capabilities(&self) -> ProviderCapabilities;
-    fn validate_config(&self, dest: &DestinationConfig, cred: Option<&CredentialData>) -> Result<()>;
-    async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult>;
-    async fn test_connection(&self, dest: &DestinationConfig, cred: Option<&CredentialData>) -> Result<TestConnectionResult>;
+    fn validate_config(&self, destination: &DestinationConfig, credential: Option<&CredentialData>) -> Result<(), ProviderError>;
+    async fn sync(&self, ctx: Arc<SyncContext>) -> Result<SyncResult, ProviderError>;
+    async fn test_connection(&self, destination: &DestinationConfig, credential: Option<&CredentialData>) -> Result<TestConnectionResult, ProviderError>;
+    async fn get_storage_info(&self, destination: &DestinationConfig, credential: Option<&CredentialData>) -> Result<StorageInfo, ProviderError>;
 }
 ```
 
-### Provider Capabilities
+`SyncContext` carries the run ID, the source folders, the destination, the sync options, the credential, the log channels, the run's cancellation token (and a `check_cancelled()` shortcut), the OAuth token source and the last run's transfer size.
 
-| Capability | Local | S3 | GDrive | OneDrive | SFTP | WebDAV |
-|------------|-------|-----|--------|----------|------|--------|
-| Delete extraneous | Yes | Yes | Yes | Yes | Yes | Yes |
-| Compression | Yes | No | No | No | Yes | No |
-| Checksum | Yes | Yes | No | No | No | No |
-| Bandwidth limit | Yes | No | No | No | Yes | No |
+### Capabilities
+
+| Capability | Local | S3 | Google Drive | OneDrive | SFTP | WebDAV |
+|------------|:-----:|:--:|:------------:|:--------:|:----:|:------:|
+| Delete extraneous files | Yes | Yes | Yes (trash) | Yes (recycle bin) | Yes | Yes |
+| Compression during transfer | Yes | No | No | No | No | No |
+| Checksum comparison | Yes | No | No | No | No | No |
+| Bandwidth limit | Yes | No | No | No | No | No |
 | Exclude patterns | Yes | Yes | Yes | Yes | Yes | Yes |
 | Incremental | Yes | Yes | Yes | Yes | Yes | Yes |
 | Dry run | Yes | Yes | Yes | Yes | Yes | Yes |
@@ -497,488 +389,223 @@ pub trait SyncProvider: Send + Sync {
 
 ```rust
 pub enum DestinationConfig {
-    Local {
-        mount_point: String,
-        backup_subdir: String,
-        usb_uuid: Option<String>,
-        auto_mount: bool,
-        auto_unmount: bool,
-    },
-    GoogleDrive {
-        folder_id: String,
-        shared_drive_id: Option<String>,
-    },
-    OneDrive {
-        folder_path: String,
-        drive_id: Option<String>,
-    },
-    S3 {
-        bucket: String,
-        prefix: String,
-        region: String,
-        endpoint: Option<String>,
-        storage_class: Option<String>,
-    },
-    Sftp {
-        host: String,
-        port: u16,
-        username: String,
-        remote_path: String,
-        key_based_auth: bool,
-        host_key_fingerprint: Option<String>, // TOFU-based MITM protection ("SHA256:...")
-    },
-    WebDav {
-        url: String,
-        remote_path: String,
-    },
+    Local { mount_point: String, backup_subdir: String, usb_uuid: Option<String>, auto_mount: bool, auto_unmount: bool },
+    GoogleDrive { folder_id: String, shared_drive_id: Option<String> },
+    OneDrive { folder_path: String, drive_id: Option<String> },
+    S3 { bucket: String, prefix: String, region: String, endpoint: Option<String>, storage_class: Option<String> },
+    Sftp { host: String, port: u16, username: String, remote_path: String, key_based_auth: bool, host_key_fingerprint: Option<String> },
+    WebDav { url: String, remote_path: String },
 }
 ```
 
+### Local and USB (`rsync.rs`)
+
+- **Mounting**: with a USB drive and auto-mount, `findmnt` decides what is mounted at the mount point (not `mount`'s translated messages). An empty mount point is mounted with `mount -U`; a different device there is refused; the expected drive already there is used and left mounted afterwards. Before copying, the drive is verified again, so rsync never writes into the empty mount-point directory.
+- **Space check** (mode `warn`, `fail` or `none`): first the quick check, which compares free space with the last completed run's transfer size plus 5 %. Only when that does not clearly fit, or there is no estimate, one rsync dry run (`--out-format=%l --stats`) measures the transfer and the source size. The **Check space** button always measures; it is refused while the job runs.
+- **rsync**: one process per source folder in its own process group, with arguments for the filesystem (`-a`, or `-rltD` on exFAT/NTFS/FAT), `--delete`, `--checksum`, `-z`, `--ignore-times`, `--bwlimit`, excludes. Numbers are printed in the C locale so `--stats` can be parsed. stdout and stderr are read concurrently; progress redraws (`\r`) are reduced to their final state. Exit code 24 (files vanished) is a warning.
+- **Cancel**: the run's token kills the process group at once.
+- **Unmount**: `umount` (it flushes the drive), retried once after 2 s if busy.
+
+### Remote Providers (`common.rs`)
+
+- **Local tree**: `walk_source` walks a source folder on a blocking thread without following symlinks. `ExcludeMatcher` compiles the exclude patterns, excluded folders and (in compress mode) the include-only list once per run.
+- **Change detection**: `needs_upload` uploads a file when the destination has none, a different size, or an older modification/upload time (the rule `aws s3 sync` uses).
+- **Listing**: `walk_remote` lists the destination tree with up to 4 folders in flight (SFTP, WebDAV, Google Drive, OneDrive).
+- **Uploading**: `upload_parallel` uploads up to 4 files at a time (3 for Google Drive) and stops at once on cancel. Files are streamed; S3 uses multipart upload above 64 MiB, Google Drive and OneDrive use resumable chunked uploads.
+- **Retries**: `send_with_retry` retries throttled (429) and temporary server errors, honoring `Retry-After`. `send_create_with_retry` avoids duplicates when a create request timed out but succeeded.
+- **Deletes**: with *delete extraneous*, remote files missing locally are deleted (Drive: trash, OneDrive: recycle bin); excluded paths are never deleted.
+
 ---
 
-## Data Flow
+## Frontend
 
-### Job Execution Flow
+### Shell and Routes
 
-```
-User clicks "Run" button
-        |
-        v
-POST /api/jobs/:id/run
-        |
-        v
-jobs::run_job handler
-├── Creates job_run record (status: pending)
-├── Spawns async task
-│   ├── Updates status to "running"
-│   ├── Loads job with destination config
-│   ├── Decrypts credentials if needed
-│   ├── [If compress_dirs enabled]
-│   │   ├── For each source_dir:
-│   │   │   ├── compress_service::compress_directory()
-│   │   │   │   ├── Honours exclude_dirs (archive-relative paths)
-│   │   │   │   └── Streams progress logs
-│   │   │   └── cleanup_old_archives() (if max_archives_per_dir set)
-│   │   └── staging_path becomes effective source for sync
-│   ├── Creates provider via factory
-│   ├── Calls provider.sync(context)
-│   │   ├── Provider-specific sync logic
-│   │   └── Streams logs -> broadcast channel
-│   └── Updates job_run with results
-└── Returns { runId } immediately
-        |
-        v
-Frontend connects to WS /api/ws/logs/:runId
-        |
-        v
-LogViewer displays streaming logs
-```
+`App.svelte` shows Setup (first start), Login (with the 2FA step) or the app shell. `AppShell` has a sidebar on desktops (an icon rail on tablets) and a bottom tab bar on phones.
 
-### Credential Storage Flow
+| Route | Page |
+|-------|------|
+| `/` | Overview: jobs needing attention, all jobs with recent runs, upcoming runs, recent activity |
+| `/jobs` | Job list (table or cards), filters by state, sorting |
+| `/jobs/new` | Guided setup (wizard) or the full form, depending on the preference; `?clone=` copies a job |
+| `/jobs/:id`, `/jobs/:id/runs`, `/jobs/:id/settings` | Job page with Overview, Runs and Settings (editor) tabs |
+| `/activity` | All runs, grouped by day, with filters |
+| `/files` | File browser |
+| `/settings`, `/settings/:section` | Settings: general, appearance, notifications, credentials, account, security, data, about |
+| `/history`, `/about` | Redirects to `/activity` and `/settings/about` |
 
-```
-User adds credential (UI)
-        |
-        v
-POST /api/credentials
-        |
-        v
-CredentialService.create()
-├── Validate credential data
-├── Generate random nonce (12 bytes)
-├── Derive key: SHA256(JWT_SECRET + salt)
-├── Encrypt: AES-256-GCM(key, nonce, data)
-├── Store: nonce || ciphertext
-└── Return credential ID
-```
+### State and Data
 
-### 2FA Authentication Flow
+- **`jobsStore`** (`stores/jobs.ts`): jobs and the recent runs. While a page shows live data it refreshes on every status event (debounced) and every 30 s as a fallback, and when the tab becomes visible again.
+- **`statusStore`** (`stores/logs.ts`): the `/api/ws/status` connection, reconnecting after drops.
+- **`runLog`**: opens the run log dialog from anywhere (`RunLogHost` is mounted in the shell).
+- **Preferences, theme, language, view and table preferences**: in `localStorage`.
+- **`jobStatus.ts`**: one state per job (running, queued, failed, overdue, never, ok, disabled) for chips, filters and the overview.
+- **`jobDraft.svelte.ts`**: the editable job shared by the editor and the wizard: change tracking, validation per section, request building, schedule changes.
+- **`leaveGuard.ts`**: asks before leaving a page with unsaved changes (in-app navigation and reloads).
 
-```
-User enters username + password
-        |
-        v
-POST /api/auth/login
-        |
-        v
-If TOTP enabled:
-├── Return { totp_required: true, totp_token }
-│           |
-│           v
-│   User enters 6-digit code
-│           |
-│           v
-│   POST /api/auth/totp/validate { totp_token, code }
-│           |
-│           v
-│   Return { token } (JWT cookie set)
-│
-If TOTP not enabled:
-└── Return { token } (JWT cookie set)
-```
+### UI Building Blocks
+
+`components/ui/` holds the shared parts: `Dialog` (native `<dialog>`, focus trap, Escape), `Menu` (keyboard navigation), `Toggle`, `Tabs`, `PageHeader`, `StatusChip`, `RunStrip`, `Toast` (shown above open dialogs), `ConfirmDialog` (optionally with typed confirmation), `EmptyState`, `PathText`.
+
+Styling uses Tailwind with CSS variables for the gray and primary scales, so the three base tones and six accents switch without rebuilding. Fonts (Archivo, JetBrains Mono) are bundled; nothing loads from other servers.
+
+### Translations
+
+Texts are in `frontend/messages/en.json` and `de.json` and compiled by Paraglide into `src/lib/paraglide/`. Unit tests use the mock in `src/__mocks__/paraglide-messages.ts`, which needs an entry for every key.
 
 ---
 
 ## Security Model
 
-### Authentication
+### Sessions
 
-- **Password Storage**: Argon2id (memory-hard)
-- **Session Tokens**: JWT with 24-hour expiry
-- **Cookie Flags**: `HttpOnly`, `SameSite=Strict`, optionally `Secure`
-- **2FA**: TOTP (RFC 6238) with SHA-1, 6-digit codes
+- Login sets an `HttpOnly`, `SameSite=Strict` cookie (`Secure` unless `secure_cookies = false`) with a JWT valid for 24 hours.
+- Every request checks the token, whether it was revoked by logout (`revoked_tokens`), and whether it was issued before the last password change.
+- WebSockets authenticate with the same cookie during the handshake.
+- With 2FA, login returns a short-lived `pending_session_id`; the session cookie is set only after a valid TOTP or recovery code.
 
 ### Rate Limiting
 
-- Track failed attempts per IP address
-- Default: 5 attempts per 60 seconds
-- Lockout: 60 seconds initial, exponential backoff
-- Maximum lockout: 1 hour
-- Applied to: login, TOTP validation, recovery codes
+Failed logins, TOTP and recovery attempts are counted per client IP (default 5 per 60 s), with lockouts starting at 60 s and doubling up to 1 hour. `X-Forwarded-For` is only trusted from `trusted_proxies`.
 
-### Credential Encryption
+### Stored Secrets
 
-- **Algorithm**: AES-256-GCM
-- **Key**: SHA-256(JWT_SECRET + "credential_encryption_salt")
-- **Nonce**: 12-byte random per encryption
-- **Storage**: Nonce prepended to ciphertext
+- Passwords: Argon2
+- Provider credentials: AES-256-GCM, key from `jwt_secret` via Argon2id with a per-credential salt. Changing `jwt_secret` makes stored credentials unreadable.
+- Configuration backups: AES-256-CBC with PBKDF2, protected by a password chosen at export
+- Archive passwords: stored in the job's options; passed to openssl through its environment, never on a command line
 
-### Container Security
+### HTTP Hardening
 
-- Runs as root (required for mount operations)
-- `SYS_ADMIN` capability only (not full privileged)
-- `no-new-privileges` security option
-- Read-only source directory mounts recommended
+Content-Security-Policy (`default-src 'self'`, no external scripts or fonts, `frame-ancestors 'none'`), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS with secure cookies, a request body limit, and same-origin CORS unless `cors_origins` is set. API responses are `no-store`.
 
-### Input Validation
+### File System
 
-- Path traversal prevented via canonicalization
-- SQL injection prevented via sqlx parameterized queries
-- Mount operations validate UUID format
-- URL validation for WebDAV
+- Browsing, searching, downloading, creating and deleting are limited to `allowed_browse_paths`, checked before and after resolving symlinks.
+- Deleting needs a recent password confirmation; allowed roots and anything that is or contains a mount point cannot be deleted.
+- Exclude patterns are validated; rsync, tar and zip get arguments, never a shell.
+
+### Privileges
+
+The service runs as root, because mounting drives needs it. The container needs `CAP_SYS_ADMIN` and the devices; source folders are best mounted read-only.
 
 ---
 
-## Docker Deployment
+## Deployment
 
-### Build Stages
+### Docker
 
-1. **frontend-builder** (node:20-alpine)
-   - Installs npm dependencies
-   - Runs `vite build` -> outputs to `dist/`
+Build stages: `node:22-alpine` builds the frontend, `rust:1-alpine` builds a static musl binary, and `alpine:3.22` is the runtime with rsync, util-linux, GNU tar, zip, openssl, filesystem tools (ext4, NTFS, exFAT), CA certificates and time zones. The image serves on port 8080.
 
-2. **backend-builder** (rust:1.83-alpine)
-   - Builds release binary with musl (static linking)
-   - Includes migrations
+`docker-compose.yml` mounts `dynamight.toml` read-only, keeps the databases in a volume, shares `/mnt` with `rshared` propagation (so mounts are visible on the host), adds `SYS_ADMIN` and `/dev`, and gives runs 30 s to stop.
 
-3. **runtime** (alpine:3.20)
-   - Installs rsync, mount utilities, NTFS/exFAT support
-   - Copies binary and static files
-   - Exposes port 8080
-
-### Docker Compose
-
-```yaml
-services:
-  dynamight:
-    build: .
-    container_name: dynamight
-    restart: unless-stopped
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev:/dev
-    ports:
-      - "8080:8080"
-    volumes:
-      - dynamight-data:/app/data
-      - dynamight-logs:/app/logs
-      - /mnt:/mnt:rshared
-      # Add source directories:
-      # - /home:/source/home:ro
-    environment:
-      - TZ=${TZ:-UTC}
-      - RUST_LOG=${RUST_LOG:-info,dynamight=debug}
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
-      - ALLOWED_BROWSE_PATHS=${ALLOWED_BROWSE_PATHS:-/mnt,/home,/media}
-    security_opt:
-      - no-new-privileges:true
-```
-
-### Required Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JWT_SECRET` | Yes | Secret for JWT signing and credential encryption |
-| `TZ` | No | Timezone (default: UTC) |
-| `RUST_LOG` | No | Log level (default: info,dynamight=debug) |
-| `ALLOWED_BROWSE_PATHS` | No | Comma-separated paths for browsing |
-
----
-
-## Native Linux Deployment
-
-### Development
+### Native Installation
 
 ```bash
-./scripts/dev.sh
-```
-
-Starts:
-- Backend on http://localhost:8080
-- Frontend dev server on http://localhost:5173 (hot-reload)
-
-### Production Build
-
-```bash
-./scripts/build.sh
-```
-
-Creates `dist/dynamight-<version>.tar.gz` containing:
-- Compiled release binary
-- Frontend static files
-- Database migrations
-- Installation scripts
-
-### System Service Installation
-
-```bash
-# On target server
-tar -xzf dynamight-*.tar.gz
-cd dynamight-*
+tar -xzf dynamight-<version>.tar.gz
+cd dynamight-<version>
 sudo ./scripts/install.sh
 ```
 
-Installation layout:
-- `/opt/dynamight/` - Binary and static files
-- `/etc/dynamight/.env` - Configuration
-- `/var/lib/dynamight/` - Database and data
-- Logs via journald
+| Path | Contents |
+|------|----------|
+| `/opt/dynamight/` | Binary, static files, scripts |
+| `/etc/dynamight/dynamight.toml` | Configuration |
+| `/var/lib/dynamight/` | Databases |
+| journald (`journalctl -u dynamight`) | Server log |
 
-Service management:
-```bash
-sudo systemctl enable dynamight    # Auto-start on boot
-sudo systemctl start dynamight     # Start now
-sudo systemctl status dynamight    # Check status
-journalctl -u dynamight -f         # View logs
-```
+`scripts/update.sh` checks the new binary, stops the service, backs up the program and both databases to `/opt/dynamight-backups/<timestamp>` (keeping 3), installs, waits for `/api/system/health` to report the new version, and rolls back automatically if it does not. `update.sh rollback` returns to the previous version.
 
-### Systemd Security
+### Development
 
-The service includes:
-- Dedicated `dynamight` system user
-- `NoNewPrivileges=true`
-- `ProtectSystem=strict`
-- `ProtectHome=read-only`
-- `PrivateTmp=true`
-- `CAP_SYS_ADMIN` capability for mount operations
+`./scripts/dev.sh` starts the backend and the Vite dev server (hot reload, API proxied to the backend).
 
 ---
 
 ## Configuration Reference
 
-Configuration is primarily via `dynamight.toml` (copy from `dynamight.toml.example`). Any setting can be overridden by an environment variable using SCREAMING_SNAKE_CASE. Environment variables take highest priority.
+Settings come from `dynamight.toml` (see `dynamight.toml.example`), found via `DYNAMIGHT_CONFIG`, `./dynamight.toml` or `/etc/dynamight/dynamight.toml`. Environment variables override the file.
 
-### Configuration Search Paths
+| TOML key | Environment | Default | Description |
+|----------|-------------|---------|-------------|
+| `security.jwt_secret` | `JWT_SECRET` | (required) | Signs sessions and derives the credential key; at least 32 characters |
+| `security.secure_cookies` | `SECURE_COOKIES` | `true` | `Secure` cookie flag (needs HTTPS) |
+| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` | `["/mnt", "/home", "/media"]` | Paths the file browser may use |
+| `security.cors_origins` | `CORS_ORIGINS` | `[]` | Extra allowed origins (same-origin only when empty) |
+| `security.trusted_proxies` | `TRUSTED_PROXIES` | `[]` | Proxies whose `X-Forwarded-For` is trusted |
+| `server.host` | `HOST` | `0.0.0.0` | Interface to bind |
+| `server.port` | `PORT` | `8080` | Port |
+| `server.static_files_dir` | `STATIC_FILES_DIR` | `static` | Frontend files |
+| `server.timezone` | `TZ` | `UTC` | Timezone for schedules |
+| `database.url` | `DATABASE_URL` | `sqlite:data/dynamight.db` | Main database |
+| `database.logs_url` | `LOGS_DATABASE_URL` | `logs.db` next to the main database | Logs database |
+| `logging.level` | `RUST_LOG` | `info,dynamight=debug` | Log filter |
+| `rate_limit.max_attempts` | `RATE_LIMIT_MAX_ATTEMPTS` | `5` | Failed attempts before a lockout |
+| `rate_limit.window_secs` | `RATE_LIMIT_WINDOW_SECS` | `60` | Counting window |
+| `rate_limit.lockout_secs` | `RATE_LIMIT_LOCKOUT_SECS` | `60` | First lockout |
+| `rate_limit.max_lockout_secs` | `RATE_LIMIT_MAX_LOCKOUT_SECS` | `3600` | Longest lockout |
+| `limits.max_download_size` | `MAX_DOWNLOAD_SIZE` | 2 GiB | File browser download limit |
+| `limits.max_request_body_size` | `MAX_REQUEST_BODY_SIZE` | 10 MiB | Request body limit |
 
-1. `DYNAMIGHT_CONFIG` environment variable (if set)
-2. `./dynamight.toml` (current directory)
-3. `/etc/dynamight/dynamight.toml` (system-wide)
-
-### Required Settings
-
-| TOML key | Env var | Description |
-|----------|---------|-------------|
-| `security.jwt_secret` | `JWT_SECRET` | Secret for JWT signing and credential encryption. Generate with `openssl rand -base64 32` |
-
-### Database Settings
-
-| TOML key | Env var | Default | Description |
-|----------|---------|---------|-------------|
-| `database.url` | `DATABASE_URL` | `sqlite:data/dynamight.db` | Main database location |
-| — | `LOGS_DATABASE_URL` | (derived from DATABASE_URL) | Logs database location |
-
-### Server Settings
-
-| TOML key | Env var | Default | Description |
-|----------|---------|---------|-------------|
-| `server.host` | `HOST` | `0.0.0.0` | Network interface to bind |
-| `server.port` | `PORT` | `8080` | Port to listen on |
-| `server.timezone` | `TZ` | `UTC` | Timezone for scheduled jobs (e.g. `Europe/Berlin`) |
-| — | `STATIC_FILES_DIR` | `static` | Frontend files directory |
-
-### Logging
-
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `RUST_LOG` | `info,dynamight=debug` | Log level configuration |
-
-### Security Settings
-
-| TOML key | Env var | Default | Description |
-|----------|---------|---------|-------------|
-| `security.allowed_browse_paths` | `ALLOWED_BROWSE_PATHS` | `["/mnt","/home","/media"]` | Paths users can browse (comma-separated in env) |
-| — | `CORS_ORIGINS` | (same-origin) | Allowed CORS origins |
-| `security.secure_cookies` | `SECURE_COOKIES` | `true` | Require HTTPS for cookies |
-
-### Rate Limiting
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts before lockout |
-| `RATE_LIMIT_WINDOW_SECS` | `60` | Time window for tracking attempts |
-| `RATE_LIMIT_LOCKOUT_SECS` | `60` | Initial lockout duration |
-| `RATE_LIMIT_MAX_LOCKOUT_SECS` | `3600` | Maximum lockout duration |
-
----
-
-## File Reference
-
-### Backend Files
-
-| File | Purpose |
-|------|---------|
-| `main.rs` | Application entry, router setup |
-| `config.rs` | Environment variable parsing |
-| `middleware.rs` | Authentication middleware |
-| `services/auth_service.rs` | Argon2 hashing, JWT |
-| `services/totp_service.rs` | 2FA implementation |
-| `services/backup_service.rs` | Job execution orchestration |
-| `services/credential_service.rs` | AES-256-GCM encryption |
-| `services/compress_service.rs` | Directory archiving and retention |
-| `services/mount_service.rs` | USB device operations |
-| `services/scheduler_service.rs` | Timezone-aware cron scheduler |
-| `services/rate_limit_service.rs` | Auth rate limiting |
-| `services/providers/mod.rs` | Provider trait and factory |
-| `services/providers/rsync.rs` | Local rsync provider |
-| `services/providers/s3.rs` | AWS S3 provider |
-| `services/providers/googledrive.rs` | Google Drive provider |
-| `services/providers/onedrive.rs` | OneDrive provider |
-| `services/providers/sftp.rs` | SFTP provider |
-| `services/providers/webdav.rs` | WebDAV provider |
-| `handlers/auth.rs` | Auth endpoints |
-| `handlers/totp.rs` | 2FA endpoints |
-| `handlers/jobs.rs` | Job CRUD endpoints |
-| `handlers/credentials.rs` | Credential endpoints |
-| `handlers/providers.rs` | Provider info endpoints |
-
-### Frontend Files
-
-| File | Purpose |
-|------|---------|
-| `lib/types.ts` | TypeScript interfaces |
-| `lib/api.ts` | API client with all endpoints |
-| `lib/stores/tablePreferences.ts` | Job list column visibility, order, and widths |
-| `components/jobs/ProviderSelector.svelte` | Provider selection tiles |
-| `components/jobs/CredentialSelector.svelte` | Credential picker (embedded in provider forms) |
-| `components/jobs/TestConnection.svelte` | Connection tester (embedded in provider forms) |
-| `components/jobs/CompressOptions.svelte` | Directory compression settings UI |
-| `components/jobs/ColumnSelector.svelte` | Column visibility/order popover |
-| `components/jobs/JobListRow.svelte` | Dynamic table row with column-aware rendering |
-| `components/jobs/SyncOptions.svelte` | Sync configuration (exclude dirs grouped by source) |
-| `components/jobs/providers/*.svelte` | Provider-specific forms (include credential selector) |
-| `components/settings/CredentialsManager.svelte` | Credential management |
-| `components/logs/RunLogModal.svelte` | Live log viewer (used in Jobs and JobDetail) |
-| `components/TotpSetup.svelte` | 2FA setup wizard |
-| `components/TotpVerification.svelte` | 2FA login prompt |
-| `routes/Jobs.svelte` | Job list with column management, drag/resize |
-| `routes/JobDetail.svelte` | Job create/edit with provider selection |
+Settings changed in the UI (run and log retention, file browser options, notifications) are stored in the database, not in this file.
 
 ---
 
 ## Directory Compression
 
-When `sync_options.compress_dirs.enabled` is true, each source directory is archived before being transferred to the destination.
+When `sync_options.compress_dirs.enabled` is set, each source folder is archived into the staging folder before the transfer, and the provider transfers the staging folder instead.
 
-### Workflow
+1. For each source folder, `compress_directory` writes `<name>.<run>.tmp` and renames it when complete. Excluded folders are converted to archive-relative paths.
+2. With a timestamp and `max_archives_per_dir`, older archives of that folder and job are removed (any format, so archives from before a format or password change rotate out too).
+3. The provider then transfers only this job's archives (`include_only` globs `*_<job id>.<ext>`), so several jobs can share one staging folder; other files there are never transferred or deleted.
+4. The space check is skipped (the compression ratio is unknown); dry runs only log what would be archived.
 
-1. For each source directory, `CompressService.compress_directory()` creates an archive in `staging_path/`
-2. Excluded directories (`exclude_dirs`) are honoured during archiving — they are converted to archive-relative paths so they are excluded from the tar/zip contents
-3. If `max_archives_per_dir` is set, `cleanup_old_archives()` removes the oldest archives after each run
-4. The provider then syncs the staging directory instead of the original source directories
-5. Space pre-flight checks are skipped when compression is active (unpredictable ratio)
+**Archive names**: `[<YYYY-MM-DDTHH-MM-SS>_][<custom_name>_]<folder>_<job id>.<ext>`, for example `2026-03-01T14-30-00_photos_42.tar.gz`.
 
-### Archive Naming
-
-```
-[<YYYY-MM-DDTHH-MM-SS>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>
-```
-
-Examples:
-- `2026-03-01T14-30-00_photos_42.tar.gz` (timestamp + default name)
-- `backup_home_christian_42.zip` (custom name "backup", no timestamp)
-- `documents_42.tar.gz.enc` (tar.gz encrypted)
-
-The job ID embedded in every filename ensures multiple jobs can share the same staging directory without collisions.
-
-### Formats and Encryption
-
-| Format | store_only | Password | Extension |
-|--------|-----------|----------|-----------|
-| tar.gz | No | No | `.tar.gz` |
-| tar.gz | No | Yes | `.tar.gz.enc` (openssl AES-256-CBC, password via stdin) |
+| Format | Store only | Password | File |
+|--------|:----------:|:--------:|------|
+| tar.gz | No | No | `.tar.gz` (pigz on all cores when installed, else gzip) |
+| tar.gz | No | Yes | `.tar.gz.enc` |
 | tar.gz | Yes | No | `.tar` |
 | tar.gz | Yes | Yes | `.tar.enc` |
-| zip | — | No | `.zip` |
-| zip | — | Yes | `.zip.enc` (openssl AES-256-CBC, password via stdin) |
+| zip | – | No | `.zip` |
+| zip | – | Yes | `.zip.enc` |
 
-Note: tar encryption uses `openssl enc -aes-256-cbc -pbkdf2`; the password is passed via stdin (not command-line) to avoid exposure in the process list. Zip archives are encrypted the same way (`.zip.enc`).
+With a password, tar or zip writes to a pipe into `openssl enc -aes-256-cbc -pbkdf2`, so no unencrypted copy is written to disk. Decrypt with `openssl enc -d -aes-256-cbc -pbkdf2 -in <file>.enc -out <file>`. GNU tar is required (BusyBox tar lacks `--numeric-owner`). tar exit code 1 and zip exit code 18 (files changed or unreadable) are warnings.
 
 ---
 
-## Job List Column Preferences
+## Testing
 
-The job list table supports persistent per-browser column configuration.
-
-### Columns
-
-| Column | Fixed | Default visible | Description |
-|--------|-------|----------------|-------------|
-| `job` | Yes (first) | Yes | Job name + status indicator |
-| `status` | No | Yes | Enabled/disabled badge |
-| `sources` | No | Yes | Source directory count |
-| `destination` | No | Yes | Destination summary |
-| `last_run` | No | Yes | Relative time of last run |
-| `schedule` | No | No | Human-readable cron + next run |
-| `options` | No | Yes | Active option badges |
-| `actions` | Yes (last) | Yes | Run/Stop/Logs buttons |
-
-### Behaviour
-
-- **Visibility**: Toggle columns via the Columns popover (fixed columns cannot be hidden)
-- **Reordering**: Drag column headers to reorder; fixed columns (`job`, `actions`) always stay at the ends
-- **Resizing**: Drag column borders to set widths (minimum 60px); excess space is distributed proportionally
-- **Persistence**: All preferences are stored in `localStorage` under key `dynamight-job-table-prefs`
-- **Schedules**: Displayed as human-readable text (e.g. "Daily at 14:30", "Weekly on Monday at 09:00"); orphaned or disabled schedules are styled accordingly
-
-### Exclude Directories UI
-
-In `SyncOptions.svelte`, excluded directories are **grouped by their parent source directory** in a card-per-source layout. Paths that no longer match any current source directory are highlighted as orphaned entries (amber warning) and can be cleaned up.
+| Command | Covers |
+|---------|--------|
+| `cargo test` (in `backend/`) | Unit tests next to the code; API tests in `tests/` against the real router with in-memory databases |
+| `cargo test --test providers_live -- --ignored --test-threads=1` | Real WebDAV, SFTP and S3 servers (see the file header for podman commands) |
+| `cargo clippy --all-targets` | Lints (kept at zero warnings) |
+| `npm test` (in `frontend/`) | Vitest unit tests (job state, draft, schedule text, summaries, ...) |
+| `npm run check` | svelte-check type and accessibility checks |
 
 ---
 
 ## Key Design Decisions
 
-1. **SQLite over PostgreSQL**: Simplicity for single-user/self-hosted deployments
-2. **Separate logs database**: Better performance and easier cleanup
-3. **Argon2 over bcrypt**: More resistant to modern attack vectors
-4. **AES-256-GCM for credentials**: Authenticated encryption
-5. **Trait-based providers**: Extensible architecture for adding new providers
-6. **Provider factory pattern**: Clean instantiation and configuration
-7. **WebSocket for logs**: Real-time feedback without polling
-8. **UUID-based mounts**: More reliable than device paths
-9. **Svelte 5 runes**: Modern reactive primitives
-10. **Alpine base image**: Minimal attack surface
+1. **SQLite, two databases**: no database server to run; log lines in their own file keep the main database small and fast.
+2. **One backup at a time**: backups compete for the same disks and network; a queue keeps them predictable and avoids two jobs mounting the same drive.
+3. **Cancellation tokens and RAII guards**: cancel reacts immediately, and a run's place is released on every path.
+4. **Typed run events**: start and finish events have their own channel, so they are never lost among log lines.
+5. **Incremental sync by size and time**: works with every provider, including those that only report the upload time.
+6. **External tools for local work**: rsync, tar, zip and openssl are proven and fast; Dynamight orchestrates them and never passes data through a shell.
+7. **UUID-based mounts with verification**: backups never land in an empty mount-point directory on the system disk.
+8. **Trait-based providers**: one interface for all destinations, shared helpers for the remote ones.
+9. **Hash routes and a static SPA**: the server only serves files and JSON; hashed assets are cached for good.
 
 ---
 
 ## Extension Points
 
-To extend this application:
-
-- **Add new provider**: Implement `SyncProvider` trait in `services/providers/`
-- **Add OAuth flow**: Implement authorization endpoints for OAuth providers
-- **Add email notifications**: Create notification service, call from scheduler
-- **Add backup verification**: Add post-sync checksum verification
-- **Add retention policies**: Implement cleanup based on age/count
-- **Add multi-user**: Extend user model with roles, add authorization
+- **New provider**: add a `DestinationConfig` variant, implement `SyncProvider` (reuse `common.rs` for walking, change detection, parallel uploads and retries), register it in the factory, add a destination form in `frontend/src/components/jobs/providers/`.
+- **New notification channel**: extend `notification_service.rs` and the notification settings component.
+- **More parallel runs**: `MAX_PARALLEL_RUNS` in `backup_service.rs`; a job's follow-up run would then need its own guard against running beside itself.
+- **Restore from the UI**: not built yet; backups are restored with the destination's own tools (rsync, openssl, provider clients).
+- **Multiple users**: the user model and sessions are single-admin today; roles would need authorization checks in the handlers.
