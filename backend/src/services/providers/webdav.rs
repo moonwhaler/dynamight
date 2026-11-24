@@ -1,6 +1,6 @@
 //! WebDAV sync provider (Nextcloud, ownCloud, etc.)
 
-use super::common::{self, needs_upload, parse_http_date, rel_excluded, send_with_retry, LocalEntry, RemoteFile};
+use super::common::{self, needs_upload, parse_http_date, send_with_retry, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
@@ -562,28 +562,33 @@ impl WebDavProvider {
         // Remote tree (relative to dest_path)
         let mut remote_files: HashMap<String, RemoteFile> = HashMap::new();
         let mut remote_dirs: HashSet<String> = HashSet::new();
-        let mut queue = vec![String::new()];
-        while let Some(prefix) = queue.pop() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
-            let Some(children) = dav.list(ctx, &join_path(dest_path, &prefix)).await? else {
-                continue;
-            };
-            for child in children {
-                let name = href_name(&child.href);
-                if name.is_empty() {
-                    continue;
+        common::walk_remote(
+            &ctx.cancel,
+            String::new(),
+            common::PARALLEL_LISTINGS,
+            |prefix: String| async move {
+                let children = dav.list(ctx, &join_path(dest_path, &prefix)).await?;
+                Ok((prefix, children.unwrap_or_default()))
+            },
+            |prefix, children| {
+                let mut subdirs = Vec::new();
+                for child in children {
+                    let name = href_name(&child.href);
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let rel = join_path(prefix, &name);
+                    if child.is_collection {
+                        remote_dirs.insert(rel.clone());
+                        subdirs.push(rel);
+                    } else {
+                        remote_files.insert(rel, RemoteFile { size: child.size, mtime: child.mtime, id: None });
+                    }
                 }
-                let rel = join_path(&prefix, &name);
-                if child.is_collection {
-                    remote_dirs.insert(rel.clone());
-                    queue.push(rel);
-                } else {
-                    remote_files.insert(rel, RemoteFile { size: child.size, mtime: child.mtime, id: None });
-                }
-            }
-        }
+                subdirs
+            },
+        )
+        .await?;
 
         if !dry_run {
             dav.mkcol(ctx, dest_path).await?;
@@ -604,10 +609,8 @@ impl WebDavProvider {
         }
 
         let mut skipped = 0u64;
+        let mut uploads = Vec::new();
         for file in local.files() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
             if !needs_upload(file, remote_files.get(&file.rel)) {
                 skipped += 1;
                 continue;
@@ -619,30 +622,34 @@ impl WebDavProvider {
                 result.bytes_transferred += file.size as i64;
                 continue;
             }
-            match self.put_file(ctx, dav, &rel, file).await {
+            uploads.push((file.clone(), rel));
+        }
+        common::upload_parallel(&ctx.cancel, uploads, common::PARALLEL_UPLOADS, result, |(file, rel)| async move {
+            match self.put_file(ctx, dav, &rel, &file).await {
                 Ok(()) => {
                     ctx.log_info(&format!("Uploaded: {}", rel), "webdav").await;
-                    result.files_transferred += 1;
-                    result.bytes_transferred += file.size as i64;
+                    Ok(file.size)
                 }
-                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
+                Err(ProviderError::Cancelled) => Err(ProviderError::Cancelled),
                 Err(e) => {
                     ctx.log_error(&format!("Failed to upload {}: {}", rel, e), "webdav").await;
-                    result.error_count += 1;
+                    Err(e)
                 }
             }
-        }
+        })
+        .await?;
         if skipped > 0 {
             ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "webdav").await;
         }
 
         if ctx.options.delete_extraneous {
             let local_paths = local.rel_paths();
+            let excludes = common::ExcludeMatcher::new(&ctx.options);
             let mut stale: Vec<(String, bool)> = remote_files
                 .keys()
                 .map(|r| (r.clone(), false))
                 .chain(remote_dirs.iter().map(|r| (r.clone(), true)))
-                .filter(|(rel, _)| !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options))
+                .filter(|(rel, _)| !local_paths.contains(rel) && !excludes.rel_excluded(source_dir, rel))
                 .collect();
             stale.sort();
 

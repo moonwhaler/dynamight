@@ -174,15 +174,7 @@ impl RsyncProvider {
     /// Unmount a mount point
     async fn unmount(&self, ctx: &SyncContext, mount_point: &str) {
         ctx.log_info(&format!("Unmounting {}", mount_point), "mount").await;
-
-        // Sync first
-        let _ = Command::new("sync").output().await;
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-        let unmount_result = Command::new("umount")
-            .arg(mount_point)
-            .output()
-            .await;
+        let unmount_result = umount(mount_point).await;
 
         match unmount_result {
             Ok(output) if output.status.success() => {
@@ -200,18 +192,18 @@ impl RsyncProvider {
 
     /// Unmount a mount point (standalone version without SyncContext)
     async fn unmount_standalone(&self, mount_point: &str) {
-        let _ = Command::new("sync").output().await;
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _ = Command::new("umount").arg(mount_point).output().await;
+        let _ = umount(mount_point).await;
     }
 
     /// Build rsync args for space check (dry-run with per-file size output)
     fn build_space_check_args(&self, options: &SyncOptions, fstype: &str) -> Vec<String> {
-        // Use --out-format=%l to output only the file size (bytes) for each file
-        // that would be transferred. This works reliably in dry-run mode unlike --stats.
+        // --out-format=%l prints the size (bytes) of each file that would be
+        // transferred; --stats adds "Total file size", the size of the whole
+        // source, so the source needs no separate `du` scan.
         let mut args = vec![
             "--dry-run".to_string(),
             "--out-format=%l".to_string(),
+            "--stats".to_string(),
         ];
 
         // Filesystem-aware options
@@ -261,12 +253,14 @@ impl RsyncProvider {
 
     /// Run rsync dry-run and sum file sizes from output
     /// Uses --out-format=%l which outputs file size (bytes) per file to transfer
+    /// Returns the bytes to transfer and, when rsync reported it, the size of
+    /// the whole source.
     async fn get_transfer_size(
         &self,
         source: &str,
         dest: &str,
         args: &[String],
-    ) -> Result<u64, ProviderError> {
+    ) -> Result<(u64, Option<u64>), ProviderError> {
         let mut cmd = Command::new("rsync");
         set_rsync_locale(&mut cmd);
         cmd.args(args)
@@ -278,15 +272,7 @@ impl RsyncProvider {
         let output = cmd.output().await.map_err(ProviderError::IoError)?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-
-        // Each line contains a file size in bytes (from --out-format=%l)
-        // Sum all sizes to get total transfer size
-        let transfer_size: u64 = stdout
-            .lines()
-            .filter_map(|line| line.trim().parse::<u64>().ok())
-            .sum();
-
-        Ok(transfer_size)
+        Ok(parse_space_check_output(&stdout))
     }
 
     /// Mount the job's USB drive for a space check (when the job auto-mounts
@@ -351,10 +337,6 @@ impl RsyncProvider {
                 continue;
             }
 
-            // Get source size
-            let source_size = self.get_directory_size(source_dir).await.unwrap_or(0);
-            total_source_size += source_size;
-
             // Derive destination path
             let dest_name = Path::new(source_dir)
                 .file_name()
@@ -378,11 +360,17 @@ impl RsyncProvider {
                 }
             }
 
-            // Get transfer size via rsync dry-run
-            let transfer_size = self
-                .get_transfer_size(source_dir, &dest, &args_with_excludes)
-                .await
-                .unwrap_or(source_size); // Fall back to source size if dry-run fails
+            // Transfer size (and source size) from one rsync dry run; `du`
+            // only when that fails
+            let (transfer_size, source_size) = match self.get_transfer_size(source_dir, &dest, &args_with_excludes).await {
+                Ok((transfer, Some(source))) => (transfer, source),
+                Ok((transfer, None)) => (transfer, self.get_directory_size(source_dir).await.unwrap_or(0)),
+                Err(_) => {
+                    let size = self.get_directory_size(source_dir).await.unwrap_or(0);
+                    (size, size)
+                }
+            };
+            total_source_size += source_size;
 
             total_transfer_size += transfer_size;
 
@@ -393,85 +381,8 @@ impl RsyncProvider {
             });
         }
 
-        // Get destination free space using statvfs via df command
-        // First try the GNU coreutils --output option, then fall back to POSIX df
-        let (destination_free, destination_total) = {
-            // Try GNU df with --output first (most accurate)
-            let output = Command::new("df")
-                .args(["--block-size=1", "--output=avail,size", mount_point])
-                .output()
-                .await;
-
-            match output {
-                Ok(out) if out.status.success() => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let mut lines = stdout.lines();
-                    lines.next(); // Skip header
-                    if let Some(data_line) = lines.next() {
-                        let parts: Vec<&str> = data_line.split_whitespace().collect();
-                        let free: u64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-                        let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                        if free > 0 || total > 0 {
-                            (free, total)
-                        } else {
-                            tracing::warn!("df returned zero values, output: {:?}", stdout);
-                            (0, 0)
-                        }
-                    } else {
-                        tracing::warn!("df output has no data line: {:?}", stdout);
-                        (0, 0)
-                    }
-                }
-                Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    tracing::warn!(
-                        "df --output failed for {}: stderr={}, stdout={}, exit={:?}",
-                        mount_point, stderr.trim(), stdout.trim(), out.status.code()
-                    );
-
-                    // Fallback: try POSIX df (columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on)
-                    let fallback = Command::new("df")
-                        .args(["-B1", mount_point])
-                        .output()
-                        .await;
-
-                    match fallback {
-                        Ok(fb) if fb.status.success() => {
-                            let fb_stdout = String::from_utf8_lossy(&fb.stdout);
-                            let mut lines = fb_stdout.lines();
-                            lines.next(); // Skip header
-                            if let Some(data_line) = lines.next() {
-                                let parts: Vec<&str> = data_line.split_whitespace().collect();
-                                // POSIX: Filesystem, Size, Used, Avail, Use%, Mount
-                                let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                                let free: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                                tracing::info!("df fallback succeeded: free={}, total={}", free, total);
-                                (free, total)
-                            } else {
-                                (0, 0)
-                            }
-                        }
-                        Ok(fb) => {
-                            tracing::error!(
-                                "df fallback also failed for {}: {}",
-                                mount_point,
-                                String::from_utf8_lossy(&fb.stderr).trim()
-                            );
-                            (0, 0)
-                        }
-                        Err(e) => {
-                            tracing::error!("df fallback command error: {}", e);
-                            (0, 0)
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("df command error for {}: {}", mount_point, e);
-                    (0, 0)
-                }
-            }
-        };
+        let (destination_free, destination_total) =
+            crate::services::fs_space(Path::new(mount_point)).unwrap_or((0, 0));
 
         // If we couldn't get destination space info, return an error
         if destination_free == 0 && destination_total == 0 {
@@ -646,58 +557,10 @@ impl SyncProvider for RsyncProvider {
             _ => return Ok(StorageInfo::default()),
         };
 
-        // Use df to get storage info
-        let output = Command::new("df")
-            .args(["--block-size=1", "--output=avail,size", &mount_point])
-            .output()
-            .await;
-
-        match output {
-            Ok(out) if out.status.success() => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let mut lines = stdout.lines();
-                lines.next(); // Skip header
-                if let Some(data_line) = lines.next() {
-                    let parts: Vec<&str> = data_line.split_whitespace().collect();
-                    let free: u64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    if free > 0 || total > 0 {
-                        return Ok(StorageInfo {
-                            free: Some(free),
-                            total: Some(total),
-                            supported: true,
-                        });
-                    }
-                }
-                // Fallback to POSIX df if --output failed
-                let fallback = Command::new("df")
-                    .args(["-B1", &mount_point])
-                    .output()
-                    .await;
-
-                if let Ok(fb) = fallback {
-                    if fb.status.success() {
-                        let fb_stdout = String::from_utf8_lossy(&fb.stdout);
-                        let mut lines = fb_stdout.lines();
-                        lines.next(); // Skip header
-                        if let Some(data_line) = lines.next() {
-                            let parts: Vec<&str> = data_line.split_whitespace().collect();
-                            let total: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                            let free: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                            if free > 0 || total > 0 {
-                                return Ok(StorageInfo {
-                                    free: Some(free),
-                                    total: Some(total),
-                                    supported: true,
-                                });
-                            }
-                        }
-                    }
-                }
-                Ok(StorageInfo::default())
-            }
-            _ => Ok(StorageInfo::default()),
-        }
+        Ok(match crate::services::fs_space(Path::new(&mount_point)) {
+            Some((free, total)) if total > 0 => StorageInfo { free: Some(free), total: Some(total), supported: true },
+            _ => StorageInfo::default(),
+        })
     }
 }
 
@@ -719,6 +582,27 @@ impl RsyncProvider {
         let mode = ctx.options.space_check_mode();
         if mode == "none" {
             return false;
+        }
+        // Quick check: what the last run transferred against the free space,
+        // without scanning anything. It only ever says "fits"; anything else
+        // (no estimate, too little room) gets the full measurement, so a large
+        // first run cannot make every later run fail.
+        if let DestinationConfig::Local { mount_point, .. } = &ctx.destination {
+            let free = crate::services::fs_space(Path::new(mount_point)).map(|(free, _)| free);
+            if let (Some(estimate), Some(free)) = (ctx.last_transfer_bytes, free) {
+                if quick_space_fits(estimate, free) {
+                    ctx.log_info(
+                        &format!(
+                            "Space check: the last run transferred {}, {} free",
+                            format_file_size(estimate),
+                            format_file_size(free)
+                        ),
+                        "space-check",
+                    )
+                    .await;
+                    return false;
+                }
+            }
         }
         match self.measure_space(&ctx.source_dirs, &ctx.destination, &ctx.options).await {
             Ok(check) if !check.fits => {
@@ -841,15 +725,15 @@ impl RsyncProvider {
             let mut out_done = out_lines.is_none();
             let mut err_done = err_lines.is_none();
             let mut cancelled = false;
-            let mut tick = tokio::time::interval(tokio::time::Duration::from_millis(200));
 
             while !(out_done && err_done) {
                 tokio::select! {
                     line = async { out_lines.as_mut().expect("guarded by out_done").next_line().await }, if !out_done => {
                         match line {
                             Ok(Some(line)) => {
-                                parse_stats_line(&line, result);
-                                ctx.log_info(&line, "rsync").await;
+                                let line = final_progress(&line);
+                                parse_stats_line(line, result);
+                                ctx.log_info(line, "rsync").await;
                             }
                             _ => out_done = true,
                         }
@@ -860,11 +744,9 @@ impl RsyncProvider {
                             _ => err_done = true,
                         }
                     }
-                    _ = tick.tick() => {
-                        if ctx.check_cancelled() {
-                            cancelled = true;
-                            break;
-                        }
+                    _ = ctx.cancel.cancelled() => {
+                        cancelled = true;
+                        break;
                     }
                 }
             }
@@ -951,6 +833,28 @@ fn parse_rsync_number(value: &str) -> Option<i64> {
     Some((number * unit).round() as i64)
 }
 
+/// The quick space check: the last run's transfer (plus 5 %) fits. No
+/// estimate (0 bytes, e.g. a quiet run without stats) never "fits".
+fn quick_space_fits(estimate: u64, free: u64) -> bool {
+    estimate > 0 && estimate.saturating_add(estimate / 20) <= free
+}
+
+/// Sum the `%l` size lines of a space-check dry run, and read "Total file
+/// size" (the whole source) from its `--stats`.
+fn parse_space_check_output(stdout: &str) -> (u64, Option<u64>) {
+    let mut transfer = 0u64;
+    let mut source = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Ok(n) = line.parse::<u64>() {
+            transfer += n;
+        } else if let Some(value) = line.strip_prefix("Total file size:") {
+            source = value.split_whitespace().next().and_then(parse_rsync_number).map(|n| n.max(0) as u64);
+        }
+    }
+    (transfer, source)
+}
+
 /// Parse rsync `--stats` output lines into the sync result.
 fn parse_stats_line(line: &str, result: &mut SyncResult) {
     // Handle both "Number of files transferred" (old rsync) and
@@ -971,6 +875,23 @@ fn parse_stats_line(line: &str, result: &mut SyncResult) {
             result.bytes_transferred = b;
         }
     }
+}
+
+/// `umount`, tried once more after a short wait when the drive is still busy.
+/// umount flushes the drive's own pending writes; no global `sync` needed.
+async fn umount(mount_point: &str) -> std::io::Result<std::process::Output> {
+    let output = Command::new("umount").arg(mount_point).output().await?;
+    if output.status.success() {
+        return Ok(output);
+    }
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    Command::new("umount").arg(mount_point).output().await
+}
+
+/// With `--progress`, rsync redraws a file's progress with `\r` on one line;
+/// keep only the last state (the finished one) instead of every redraw.
+fn final_progress(line: &str) -> &str {
+    line.trim_end_matches('\r').rsplit('\r').next().unwrap_or(line)
 }
 
 /// What is mounted exactly at a mount point, compared with the expected drive.
@@ -1130,6 +1051,32 @@ mod tests {
         assert_eq!(parse_rsync_number("1.5K"), Some(1500));
         assert_eq!(parse_rsync_number("12,345,678"), Some(12_345_678));
         assert_eq!(parse_rsync_number("x"), None);
+    }
+
+    #[test]
+    fn space_check_output_gives_transfer_and_source_size() {
+        let out = "1000\n60\n1234567\nNumber of files: 4 (reg: 2, dir: 2)\n\
+                   Total file size: 9,235,567 bytes\nTotal transferred file size: 1,235,567 bytes\n";
+        assert_eq!(parse_space_check_output(out), (1_235_627, Some(9_235_567)));
+        assert_eq!(parse_space_check_output("12\n"), (12, None));
+    }
+
+    #[test]
+    fn progress_redraws_collapse_to_the_last_one() {
+        assert_eq!(
+            final_progress("   32,768   1%    0:00:00\r  2,500,000 100%    0:00:00 (xfr#1, to-chk=1/3)"),
+            "  2,500,000 100%    0:00:00 (xfr#1, to-chk=1/3)"
+        );
+        assert_eq!(final_progress("a.bin"), "a.bin");
+        assert_eq!(final_progress("x\r"), "x");
+    }
+
+    #[test]
+    fn quick_space_check_only_says_fits() {
+        assert!(quick_space_fits(100, 106));
+        assert!(!quick_space_fits(100, 104));
+        // No estimate: measure instead
+        assert!(!quick_space_fits(0, u64::MAX));
     }
 
     #[test]

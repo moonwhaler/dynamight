@@ -112,6 +112,7 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
             let update = match events.recv().await {
                 Ok(event) => json!({
                     "type": match event.kind {
+                        RunEventKind::Queued => "job_queued",
                         RunEventKind::Started => "job_started",
                         RunEventKind::Completed => "job_completed",
                     },

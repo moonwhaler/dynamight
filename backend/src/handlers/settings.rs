@@ -12,21 +12,59 @@ pub struct AppSettings {
     pub delete_verification_window_minutes: Option<u32>,
     pub search_timeout_seconds: Option<u32>,
     pub show_directory_sizes: Option<bool>,
+    /// Days run logs are kept; `None` keeps them forever
+    pub log_retention_days: Option<u32>,
 }
 
 /// Stored value of `max_runs_per_job` that means "keep every run"
 const UNLIMITED: &str = "unlimited";
 /// Runs kept per job when nothing is configured
 pub const DEFAULT_MAX_RUNS_PER_JOB: u32 = 5;
+/// Days run logs are kept when nothing is configured
+pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 90;
 
-/// Read the stored `max_runs_per_job` setting: missing means the default,
-/// "unlimited" means no limit (None).
-pub fn max_runs_from_setting(value: Option<&str>) -> Option<u32> {
+/// Read a stored limit: missing means `default`, "unlimited" means no
+/// limit (None).
+fn limit_from_setting(value: Option<&str>, default: u32) -> Option<u32> {
     match value {
-        None => Some(DEFAULT_MAX_RUNS_PER_JOB),
+        None => Some(default),
         Some(UNLIMITED) => None,
-        Some(v) => Some(v.parse::<u32>().ok().filter(|n| *n > 0).unwrap_or(DEFAULT_MAX_RUNS_PER_JOB)),
+        Some(v) => Some(v.parse::<u32>().ok().filter(|n| *n > 0).unwrap_or(default)),
     }
+}
+
+/// Read the stored `max_runs_per_job` setting
+pub fn max_runs_from_setting(value: Option<&str>) -> Option<u32> {
+    limit_from_setting(value, DEFAULT_MAX_RUNS_PER_JOB)
+}
+
+/// Read the stored `log_retention_days` setting
+pub fn log_days_from_setting(value: Option<&str>) -> Option<u32> {
+    limit_from_setting(value, DEFAULT_LOG_RETENTION_DAYS)
+}
+
+async fn stored_value(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
+    sqlx::query_as::<_, (String,)>("SELECT value FROM app_settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|(v,)| v)
+}
+
+/// Store a limit (`None` = unlimited)
+async fn store_limit(db: &sqlx::SqlitePool, key: &str, limit: Option<u32>) -> Result<(), sqlx::Error> {
+    let stored = limit.map(|n| n.to_string()).unwrap_or_else(|| UNLIMITED.to_string());
+    sqlx::query(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(key)
+    .bind(stored)
+    .execute(db)
+    .await
+    .map(|_| ())
 }
 
 /// For fields where "absent" and `null` differ: absent stays `None`
@@ -45,6 +83,9 @@ pub struct UpdateSettingsRequest {
     /// A number of runs to keep, or `null` to keep every run
     #[serde(default, deserialize_with = "present")]
     pub max_runs_per_job: Option<Option<u32>>,
+    /// Days to keep run logs, or `null` to keep them forever
+    #[serde(default, deserialize_with = "present")]
+    pub log_retention_days: Option<Option<u32>>,
     pub delete_verification_window_minutes: Option<u32>,
     pub search_timeout_seconds: Option<u32>,
     pub show_directory_sizes: Option<bool>,
@@ -99,7 +140,10 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> impl IntoRespon
             .unwrap_or(false),
     );
 
+    let log_retention_days = log_days_from_setting(stored_value(&state.db, "log_retention_days").await.as_deref());
+
     Json(AppSettings {
+        log_retention_days,
         max_runs_per_job,
         delete_verification_window_minutes,
         search_timeout_seconds,
@@ -115,24 +159,25 @@ pub async fn update_settings(
     // max_runs_per_job: absent = unchanged, null = keep every run
     if let Some(limit) = req.max_runs_per_job {
         let limit = limit.map(|n| n.max(1));
-        let stored = limit.map(|n| n.to_string()).unwrap_or_else(|| UNLIMITED.to_string());
-        let result = sqlx::query(
-            r#"
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES ('max_runs_per_job', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-            "#
-        )
-        .bind(stored)
-        .execute(&state.db)
-        .await;
-
-        if let Err(e) = result {
+        if let Err(e) = store_limit(&state.db, "max_runs_per_job", limit).await {
             tracing::error!("Failed to update max_runs_per_job setting: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to save setting"})));
         }
 
         state.backup_service.set_max_runs_per_job(limit).await;
+    }
+
+    // log_retention_days: absent = unchanged, null = keep every log
+    if let Some(days) = req.log_retention_days {
+        let days = days.map(|n| n.max(1));
+        if let Err(e) = store_limit(&state.db, "log_retention_days", days).await {
+            tracing::error!("Failed to update log_retention_days setting: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to save setting"})));
+        }
+        state.backup_service.set_log_retention_days(days).await;
+        // Apply a shorter limit now instead of at the next maintenance
+        let service = Arc::clone(&state.backup_service);
+        tokio::spawn(async move { service.maintain_logs().await });
     }
 
     // Update delete_verification_window_minutes when present

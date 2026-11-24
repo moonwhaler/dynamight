@@ -95,6 +95,10 @@ pub struct SyncContext {
     pub log_writer: crate::services::LogWriter,
     /// Callback to check if the run has been cancelled
     pub is_cancelled: CancellationChecker,
+    /// Fires when the run is cancelled (for waiting on it instead of polling)
+    pub cancel: tokio_util::sync::CancellationToken,
+    /// Bytes the job's last completed run transferred (quick space check)
+    pub last_transfer_bytes: Option<u64>,
     /// Renews OAuth access tokens during long runs (Google Drive, OneDrive)
     pub oauth: Option<Arc<crate::services::OAuthTokenSource>>,
 }

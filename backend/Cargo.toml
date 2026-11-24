@@ -8,7 +8,7 @@ edition = "2021"
 axum = { version = "0.7", features = ["ws", "macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.5", features = ["fs", "cors", "trace", "limit", "set-header"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace", "limit", "set-header", "compression-gzip", "compression-br"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono"] }
@@ -88,7 +88,7 @@ quick-xml = "0.37"
 
 # Unix process signals
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["signal"] }
+nix = { version = "0.29", features = ["signal", "fs"] }
 
 # Error handling
 anyhow = "1"

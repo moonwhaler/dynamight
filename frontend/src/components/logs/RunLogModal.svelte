@@ -361,7 +361,7 @@
     {#if loading && lines.length === 0}
       <div class="flex justify-center py-12 text-gray-400"><Spinner size="w-6 h-6" /></div>
     {:else if lines.length === 0}
-      <p class="px-5 sm:px-6 py-8 text-gray-400 font-sans text-sm">{filtered ? m.runlog_no_match() : m.runlog_empty()}</p>
+      <p class="px-5 sm:px-6 py-8 text-gray-400 font-sans text-sm">{filtered ? m.runlog_no_match() : run?.log_pruned ? m.runlog_pruned() : m.runlog_empty()}</p>
     {:else}
       {#each lines as e (e.id)}
         <div class="flex gap-3 px-5 sm:px-6 hover:bg-white/5 {e.level === 'error' ? 'bg-red-500/10' : ''}">

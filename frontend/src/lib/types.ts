@@ -325,6 +325,8 @@ export interface JobRun {
   error_count: number;
   /** Why the run ended as it did (failure reason, cancel note) */
   summary: string | null;
+  /** The log lines were removed by the log retention */
+  log_pruned?: boolean;
 }
 
 export interface LogEntry {

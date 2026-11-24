@@ -343,7 +343,7 @@ export const api = {
     delete: (id: number) =>
       request<{ success: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
     run: (id: number) =>
-      request<{ runId: number }>(`/jobs/${id}/run`, { method: 'POST' }),
+      request<{ runId: number; queued?: boolean }>(`/jobs/${id}/run`, { method: 'POST' }),
     cancel: (id: number) =>
       request<{ success: boolean; processKilled: boolean }>(
         `/jobs/${id}/cancel`,
@@ -424,12 +424,14 @@ export const api = {
   settings: {
     get: () => request<{
       max_runs_per_job: number | null;
+      log_retention_days: number | null;
       delete_verification_window_minutes: number | null;
       search_timeout_seconds: number | null;
       show_directory_sizes: boolean | null;
     }>('/settings'),
     update: (settings: {
       max_runs_per_job?: number | null;
+      log_retention_days?: number | null;
       delete_verification_window_minutes?: number | null;
       search_timeout_seconds?: number | null;
       show_directory_sizes?: boolean;

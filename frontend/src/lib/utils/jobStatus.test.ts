@@ -30,9 +30,11 @@ describe('jobStatus', () => {
     expect(jobStatus(job({ enabled: false, last_run_status: 'failed' }), NOW).state).toBe('disabled');
   });
 
-  it('shows running and pending runs as running', () => {
+  it('tells running from queued runs', () => {
     expect(jobStatus(job({ last_run_status: 'running' }), NOW).state).toBe('running');
-    expect(jobStatus(job({ last_run_status: 'pending' }), NOW).state).toBe('running');
+    const queued = jobStatus(job({ last_run_status: 'pending' }), NOW);
+    expect(queued.state).toBe('queued');
+    expect(matchesFilter(queued, 'running')).toBe(true);
   });
 
   it('flags failed and overdue jobs', () => {

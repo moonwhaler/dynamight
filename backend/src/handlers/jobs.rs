@@ -208,13 +208,18 @@ async fn load_job_list(state: &AppState) -> Result<Vec<JobResponse>, sqlx::Error
         .fetch_all(&state.db)
         .await?;
 
-    // Latest run of each job (highest ID = started last). The covering index
-    // on job_runs(job_id) answers the MAX(id) per job without a table scan.
+    // Latest run of each job (highest ID = started last), except that a
+    // running run wins over a queued one. Answered from the index on
+    // job_runs(job_id) without a table scan.
     let last_runs: Vec<(i64, String, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
         r#"
         SELECT r.job_id, r.status, COALESCE(r.completed_at, r.started_at) AS run_at
         FROM job_runs r
-        JOIN (SELECT job_id, MAX(id) AS id FROM job_runs GROUP BY job_id) latest ON r.id = latest.id
+        JOIN (
+            -- A running run wins over a follow-up queued behind it
+            SELECT job_id, COALESCE(MAX(CASE WHEN status = 'running' THEN id END), MAX(id)) AS id
+            FROM job_runs GROUP BY job_id
+        ) latest ON r.id = latest.id
         "#,
     )
     .fetch_all(&state.db)
@@ -644,7 +649,11 @@ pub async fn run_job(
     };
 
     match state.backup_service.start_run(job, None).await {
-        Ok(run_id) => (StatusCode::OK, Json(json!({"runId": run_id}))).into_response(),
+        Ok(started) => (
+            StatusCode::OK,
+            Json(json!({"runId": started.run_id, "queued": started.queued})),
+        )
+            .into_response(),
         Err(StartRunError::AlreadyRunning) => ApiError::job_already_running().into_response(),
         Err(StartRunError::ShuttingDown) => ApiError::new(ErrorCode::ServerShuttingDown).into_response(),
         Err(StartRunError::Database(e)) => {
@@ -667,36 +676,14 @@ pub async fn cancel_job(
         return ApiError::new(ErrorCode::NoRunningJob).into_response();
     }
 
-    // Find running job run (check for both 'running' and 'cancelled' status - may still have process running)
-    let run: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM job_runs WHERE job_id = ? AND status IN ('pending', 'running', 'cancelled') ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None);
-
-    match run {
-        Some((run_id,)) => {
-            tracing::info!("Found run_id: {} for job_id: {}", run_id, id);
-            match state.backup_service.cancel_job(run_id).await {
-                Ok(killed) => {
-                    tracing::info!("cancel_job returned: killed={}", killed);
-                    Json(json!({
-                        "success": true,
-                        "processKilled": killed
-                    })).into_response()
-                },
-                Err(e) => {
-                    tracing::error!("cancel_job error: {}", e);
-                    ApiError::new(ErrorCode::JobCancelFailed).into_response()
-                },
-            }
+    // The running run and a queued follow-up, if any
+    match state.backup_service.cancel_job_runs(id).await {
+        Ok(0) => ApiError::new(ErrorCode::NoRunningJob).into_response(),
+        Ok(n) => Json(json!({ "success": true, "processKilled": true, "cancelled": n })).into_response(),
+        Err(e) => {
+            tracing::error!("cancel_job error: {}", e);
+            ApiError::new(ErrorCode::JobCancelFailed).into_response()
         }
-        None => {
-            tracing::warn!("No running job found for job_id: {}", id);
-            ApiError::new(ErrorCode::NoRunningJob).into_response()
-        },
     }
 }
 

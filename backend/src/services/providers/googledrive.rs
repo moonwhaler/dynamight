@@ -12,7 +12,7 @@
 //! - Shared drives: <https://developers.google.com/workspace/drive/api/guides/enable-shareddrives>
 
 use super::common::{
-    self, needs_upload, parse_rfc3339, read_chunk, rel_excluded, send_create_with_retry, send_with_retry, Created,
+    self, needs_upload, parse_rfc3339, read_chunk, send_create_with_retry, send_with_retry, Created,
     LocalEntry, RemoteFile,
 };
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
@@ -515,10 +515,8 @@ impl GoogleDriveProvider {
 
         // Upload new and changed files
         let mut skipped = 0u64;
+        let mut uploads = Vec::new();
         for file in local.files() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
             let existing = remote.files.get(&file.rel);
             if !needs_upload(file, existing) {
                 skipped += 1;
@@ -539,20 +537,29 @@ impl GoogleDriveProvider {
                 continue;
             };
             let existing_id = existing.and_then(|r| r.id.clone());
-            match self.upload_file(ctx, file, &parent, existing_id.as_deref(), drive).await {
-                Ok(()) => {
-                    let verb = if existing_id.is_some() { "Updated" } else { "Uploaded" };
-                    ctx.log_info(&format!("{}: {}", verb, label), "googledrive").await;
-                    result.files_transferred += 1;
-                    result.bytes_transferred += file.size as i64;
-                }
-                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
-                Err(e) => {
-                    ctx.log_error(&format!("Failed to upload {}: {}", label, e), "googledrive").await;
-                    result.error_count += 1;
-                }
-            }
+            uploads.push((file.clone(), parent, existing_id, label));
         }
+        common::upload_parallel(
+            &ctx.cancel,
+            uploads,
+            common::PARALLEL_UPLOADS_GOOGLE_DRIVE,
+            result,
+            |(file, parent, existing_id, label)| async move {
+                match self.upload_file(ctx, &file, &parent, existing_id.as_deref(), drive).await {
+                    Ok(()) => {
+                        let verb = if existing_id.is_some() { "Updated" } else { "Uploaded" };
+                        ctx.log_info(&format!("{}: {}", verb, label), "googledrive").await;
+                        Ok(file.size)
+                    }
+                    Err(ProviderError::Cancelled) => Err(ProviderError::Cancelled),
+                    Err(e) => {
+                        ctx.log_error(&format!("Failed to upload {}: {}", label, e), "googledrive").await;
+                        Err(e)
+                    }
+                }
+            },
+        )
+        .await?;
         if skipped > 0 {
             ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "googledrive").await;
         }
@@ -560,16 +567,17 @@ impl GoogleDriveProvider {
         // Mirror deletes: move items that no longer exist locally to the trash
         if ctx.options.delete_extraneous {
             let local_paths = local.rel_paths();
+            let excludes = common::ExcludeMatcher::new(&ctx.options);
             let mut to_trash: Vec<(String, String)> = Vec::new();
             for (rel, file) in &remote.files {
-                if !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options) {
+                if !local_paths.contains(rel) && !excludes.rel_excluded(source_dir, rel) {
                     if let Some(id) = &file.id {
                         to_trash.push((rel.clone(), id.clone()));
                     }
                 }
             }
             for (rel, id) in &remote.folders {
-                if !rel.is_empty() && !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options) {
+                if !rel.is_empty() && !local_paths.contains(rel) && !excludes.rel_excluded(source_dir, rel) {
                     to_trash.push((rel.clone(), id.clone()));
                 }
             }
@@ -659,43 +667,49 @@ impl GoogleDriveProvider {
     /// Recursively list the folder tree below `root_id`.
     async fn list_tree(&self, ctx: &SyncContext, root_id: &str, drive: Option<&str>) -> Result<RemoteTree, ProviderError> {
         let mut tree = RemoteTree::default();
-        let mut queue: Vec<(String, String)> = vec![(String::new(), root_id.to_string())];
+        common::walk_remote(
+            &ctx.cancel,
+            (String::new(), root_id.to_string()),
+            common::PARALLEL_LISTINGS,
+            |(prefix, folder_id): (String, String)| async move {
+                let children = self.list_children(ctx, &folder_id, drive).await?;
+                Ok(((prefix, folder_id), children))
+            },
+            |(prefix, _), mut children| {
+                let mut queue: Vec<(String, String)> = Vec::new();
+                // Newest first, so the copy we keep among duplicates is the latest
+                children.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
 
-        while let Some((prefix, folder_id)) = queue.pop() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
-            let mut children = self.list_children(ctx, &folder_id, drive).await?;
-            // Newest first, so the copy we keep among duplicates is the latest
-            children.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
-
-            for child in children {
-                let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
-                if child.mime_type == FOLDER_MIME {
-                    match tree.folders.entry(rel.clone()) {
-                        std::collections::hash_map::Entry::Occupied(_) => tree.duplicates.push((rel, child.id)),
-                        std::collections::hash_map::Entry::Vacant(slot) => {
-                            slot.insert(child.id.clone());
-                            queue.push((rel, child.id));
+                for child in children {
+                    let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
+                    if child.mime_type == FOLDER_MIME {
+                        match tree.folders.entry(rel.clone()) {
+                            std::collections::hash_map::Entry::Occupied(_) => tree.duplicates.push((rel, child.id)),
+                            std::collections::hash_map::Entry::Vacant(slot) => {
+                                slot.insert(child.id.clone());
+                                queue.push((rel, child.id));
+                            }
                         }
-                    }
-                } else if child.mime_type.starts_with("application/vnd.google-apps.") {
-                    // Native Google Docs/Sheets have no binary content; never touch them
-                    continue;
-                } else {
-                    match tree.files.entry(rel.clone()) {
-                        std::collections::hash_map::Entry::Occupied(_) => tree.duplicates.push((rel, child.id)),
-                        std::collections::hash_map::Entry::Vacant(slot) => {
-                            slot.insert(RemoteFile {
-                                size: child.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
-                                mtime: child.modified_time.as_deref().and_then(parse_rfc3339).unwrap_or(0),
-                                id: Some(child.id),
-                            });
+                    } else if child.mime_type.starts_with("application/vnd.google-apps.") {
+                        // Native Google Docs/Sheets have no binary content; never touch them
+                        continue;
+                    } else {
+                        match tree.files.entry(rel.clone()) {
+                            std::collections::hash_map::Entry::Occupied(_) => tree.duplicates.push((rel, child.id)),
+                            std::collections::hash_map::Entry::Vacant(slot) => {
+                                slot.insert(RemoteFile {
+                                    size: child.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
+                                    mtime: child.modified_time.as_deref().and_then(parse_rfc3339).unwrap_or(0),
+                                    id: Some(child.id),
+                                });
+                            }
                         }
                     }
                 }
-            }
-        }
+                queue
+            },
+        )
+        .await?;
         Ok(tree)
     }
 

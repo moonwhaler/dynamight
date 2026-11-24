@@ -12,7 +12,7 @@
 //! since not every S3-compatible service accepts them:
 //! <https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html>
 
-use super::common::{self, needs_upload, rel_excluded, LocalEntry, RemoteFile};
+use super::common::{self, needs_upload, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
@@ -361,9 +361,10 @@ impl S3Provider {
 
         if ctx.options.delete_extraneous {
             let local_paths = local.rel_paths();
+            let excludes = common::ExcludeMatcher::new(&ctx.options);
             let mut stale: Vec<String> = remote
                 .keys()
-                .filter(|rel| !local_paths.contains(*rel) && !rel_excluded(source_dir, rel, &ctx.options))
+                .filter(|rel| !local_paths.contains(*rel) && !excludes.rel_excluded(source_dir, rel))
                 .cloned()
                 .collect();
             stale.sort();

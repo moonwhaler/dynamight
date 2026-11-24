@@ -197,6 +197,16 @@ async fn run_and_poll(
     result
 }
 
+/// Whether `pigz` (parallel gzip) is installed. Checked once.
+fn pigz_available() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        std::env::var_os("PATH")
+            .map(|path| std::env::split_paths(&path).any(|dir| dir.join("pigz").is_file()))
+            .unwrap_or(false)
+    })
+}
+
 /// Convert absolute exclude paths to archive-relative paths for tar/zip.
 ///
 /// Each entry in `exclude_paths` that is a strict child of `source_dir` is
@@ -239,11 +249,11 @@ fn archive_relative_excludes(source_dir: &Path, dir_name: &str, exclude_paths: &
 /// When `store_only` is set, files are archived without compression
 /// (tar without `-z`, or `zip -0`).
 ///
-/// When a password is set for tar-based formats, a two-step process is used:
-/// 1. Archive to an intermediate temp file
-/// 2. Encrypt with `openssl enc -aes-256-cbc -pbkdf2` (password via stdin)
-///
-/// The final output carries a `.enc` extension (e.g. `archive.tar.gz.enc`).
+/// With a password, the archiver's output is piped straight into
+/// `openssl enc -aes-256-cbc -pbkdf2` (password through openssl's
+/// environment), so no unencrypted copy is written. The final output carries
+/// a `.enc` extension (e.g. `archive.tar.gz.enc`); decrypt with
+/// `openssl enc -d -aes-256-cbc -pbkdf2 -in archive.tar.gz.enc -out archive.tar.gz`.
 ///
 /// Returns the path to the created archive file.
 pub async fn compress_directory(
@@ -324,15 +334,10 @@ pub async fn compress_directory(
         ));
     }
 
-    // Phase 1: create the archive. With a password it goes to an intermediate
-    // file first, which phase 2 encrypts with openssl.
-    let raw_path = if has_password {
-        staging_dir.join(format!("{}.inter.{}.tmp", archive_name, run_id))
-    } else {
-        tmp_path.clone()
-    };
-
-    match &opts.format {
+    // The archiver writes the archive to the temp file, or, with a password,
+    // to a pipe into openssl, so no unencrypted copy is ever written to disk.
+    let out_arg = if has_password { "-".to_string() } else { tmp_path.to_string_lossy().to_string() };
+    let (mut archiver, warning_codes): (tokio::process::Command, &[i32]) = match &opts.format {
         CompressFormat::Zip => {
             let mut cmd = tokio::process::Command::new("zip");
             if opts.store_only {
@@ -340,98 +345,96 @@ pub async fn compress_directory(
             }
             // -y stores symlinks as links instead of following them
             cmd.args(["-r", "-y"]);
-            cmd.args([raw_path.to_str().unwrap_or_default(), dir_name]);
+            cmd.args([out_arg.as_str(), dir_name]);
             // -x patterns must come AFTER the source argument (Info-ZIP requirement)
             for rel in &rel_excludes {
                 cmd.args(["-x", rel.as_str()]);
                 cmd.args(["-x", &format!("{}/*", rel)]);
             }
-            let child = cmd
-                .current_dir(parent_dir)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context("Failed to spawn zip. Ensure zip is installed.")?;
-
+            cmd.current_dir(parent_dir);
             // zip exit 18 = some files could not be read; the archive is still written
-            run_and_poll(child, &raw_path, &is_cancelled, "Archiving cancelled", &[18], &log_fn).await?;
+            (cmd, &[18])
         }
-
         CompressFormat::TarGz => {
-            // `-z` for gzip compression; omit for store-only (plain tar)
-            let tar_flags = if opts.store_only { "-cpf" } else { "-czpf" };
-
-            // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
             let mut cmd = tokio::process::Command::new("tar");
-            cmd.args([
-                tar_flags,
-                raw_path.to_str().unwrap_or_default(),
-                "--numeric-owner",
-                "-C",
-                parent_dir.to_str().unwrap_or_default(),
-            ]);
+            cmd.args(["-cpf", out_arg.as_str()]);
+            if !opts.store_only {
+                // pigz compresses on every core; same .tar.gz format
+                if pigz_available() {
+                    cmd.arg("--use-compress-program=pigz");
+                } else {
+                    cmd.arg("-z");
+                }
+            }
+            cmd.args(["--numeric-owner", "-C", parent_dir.to_str().unwrap_or_default()]);
+            // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
             for rel in &rel_excludes {
                 cmd.arg(format!("--exclude={}", rel));
             }
             cmd.arg(dir_name);
-            let child = cmd
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context("Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).")?;
-
             // GNU tar exit 1 = some files changed while being read; the archive is complete
-            run_and_poll(child, &raw_path, &is_cancelled, "Archiving cancelled", &[1], &log_fn).await?;
+            (cmd, &[1])
         }
-    }
+    };
+    let archiver_name = match &opts.format {
+        CompressFormat::Zip => "zip. Ensure zip is installed.",
+        CompressFormat::TarGz => "tar. Ensure GNU tar is installed (not BusyBox tar).",
+    };
+    archiver
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .stdout(if has_password { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+    let mut archiver = archiver.spawn().with_context(|| format!("Failed to spawn {}", archiver_name))?;
 
-    // Phase 2: encrypt with openssl AES-256-CBC. The password is passed via
-    // stdin so it never shows up in the process list (zip -P would expose it).
-    if has_password {
-        let password = opts.password.as_deref().unwrap_or_default();
+    if !has_password {
+        run_and_poll(archiver, &tmp_path, &is_cancelled, "Archiving cancelled", warning_codes, &log_fn).await?;
+    } else {
         log_fn("Encrypting archive (AES-256-CBC)".to_string());
-
-        let enc_child = tokio::process::Command::new("openssl")
+        let piped: std::process::Stdio = match archiver.stdout.take().map(TryInto::try_into) {
+            Some(Ok(stdio)) => stdio,
+            _ => {
+                let _ = archiver.kill().await;
+                anyhow::bail!("Could not connect the archiver to openssl");
+            }
+        };
+        // The password goes in through the environment of openssl only: unlike
+        // the command line, another process's environment can be read only by
+        // its owner (and root), and stdin carries the archive here.
+        let password = opts.password.as_deref().unwrap_or_default();
+        let encrypt = tokio::process::Command::new("openssl")
             .args([
                 "enc",
                 "-aes-256-cbc",
                 "-pbkdf2",
-                "-in",
-                raw_path.to_str().unwrap_or_default(),
                 "-out",
                 tmp_path.to_str().unwrap_or_default(),
                 "-pass",
-                "stdin",
+                "env:DYNAMIGHT_ARCHIVE_PASS",
             ])
-            .stdin(std::process::Stdio::piped())
+            .env("DYNAMIGHT_ARCHIVE_PASS", password)
+            .stdin(piped)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn();
-
-        let mut enc_child = match enc_child {
-            Ok(c) => c,
+        let encrypt = match encrypt {
+            Ok(child) => child,
             Err(e) => {
-                let _ = tokio::fs::remove_file(&raw_path).await;
+                // Otherwise the archiver blocks on the pipe nobody reads
+                let _ = archiver.kill().await;
+                let _ = archiver.wait().await;
                 return Err(anyhow::Error::new(e).context("Failed to spawn openssl. Ensure openssl is installed."));
             }
         };
-
-        // Write password to openssl's stdin and close the pipe
-        if let Some(mut stdin) = enc_child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(password.as_bytes()).await;
-            // stdin is dropped here, closing the pipe and signalling EOF to openssl
+        let (archived, encrypted) = tokio::join!(
+            run_and_poll(archiver, &tmp_path, &is_cancelled, "Archiving cancelled", warning_codes, &log_fn),
+            run_and_poll(encrypt, &tmp_path, &is_cancelled, "Encryption cancelled", &[], &log_fn),
+        );
+        if archived.is_err() || encrypted.is_err() {
+            // An archive the archiver did not finish must not be kept
+            let _ = tokio::fs::remove_file(&tmp_path).await;
         }
-
-        let enc_result =
-            run_and_poll(enc_child, &tmp_path, &is_cancelled, "Encryption cancelled", &[], &log_fn).await;
-
-        // Always remove the intermediate unencrypted archive, even on success
-        let _ = tokio::fs::remove_file(&raw_path).await;
-
-        enc_result?;
+        archived?;
+        encrypted?;
     }
 
     // Atomic rename: temp → final path
@@ -548,6 +551,66 @@ mod tests {
             password: None,
             store_only: false,
         }
+    }
+
+    /// Archive `src` with a password, decrypt it with openssl and return the
+    /// decrypted archive's path. Checks that no unencrypted temp file remains.
+    async fn encrypted_round_trip(format: CompressFormat) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src/photos");
+        std::fs::create_dir_all(src.join("2026")).unwrap();
+        std::fs::write(src.join("2026/a.txt"), b"hello").unwrap();
+        let staging = tmp.path().join("staging");
+        let opts = CompressDirsOptions {
+            format,
+            staging_path: staging.to_string_lossy().to_string(),
+            password: Some("s3cret pass".to_string()),
+            ..default_opts()
+        };
+        let archive = compress_directory(&src, 7, 99, &opts, &[], |_| {}, || false).await.unwrap();
+        let names: Vec<String> = std::fs::read_dir(&staging)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names.len(), 1, "only the encrypted archive is left: {:?}", names);
+
+        let plain = tmp.path().join("plain");
+        let status = std::process::Command::new("openssl")
+            .args(["enc", "-d", "-aes-256-cbc", "-pbkdf2", "-pass", "pass:s3cret pass", "-in"])
+            .arg(&archive)
+            .arg("-out")
+            .arg(&plain)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        (tmp, plain)
+    }
+
+    #[tokio::test]
+    async fn encrypted_tar_is_streamed_and_decrypts() {
+        let (_tmp, plain) = encrypted_round_trip(CompressFormat::TarGz).await;
+        let out = std::process::Command::new("tar").arg("-tzf").arg(&plain).output().unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("photos/2026/a.txt"));
+    }
+
+    #[tokio::test]
+    async fn encrypted_zip_is_streamed_and_decrypts() {
+        let (_tmp, plain) = encrypted_round_trip(CompressFormat::Zip).await;
+        let out = std::process::Command::new("unzip").arg("-t").arg(&plain).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    }
+
+    #[tokio::test]
+    async fn plain_tar_gz_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("docs");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("b.txt"), b"x").unwrap();
+        let opts = CompressDirsOptions { staging_path: tmp.path().join("st").to_string_lossy().to_string(), ..default_opts() };
+        let archive = compress_directory(&src, 1, 1, &opts, &[], |_| {}, || false).await.unwrap();
+        let out = std::process::Command::new("tar").arg("-tzf").arg(&archive).output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("docs/b.txt"));
     }
 
     // --- sanitize_dir_name tests ---

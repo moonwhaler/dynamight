@@ -14,7 +14,7 @@
 //! - Throttling: <https://learn.microsoft.com/graph/throttling>
 //! - Invalid names: <https://support.microsoft.com/office/restrictions-and-limitations-in-onedrive-and-sharepoint-64883a5d-228e-48f5-b3d2-eb39e07630fa>
 
-use super::common::{self, needs_upload, parse_rfc3339, read_chunk, rel_excluded, send_with_retry, LocalEntry, RemoteFile};
+use super::common::{self, needs_upload, parse_rfc3339, read_chunk, send_with_retry, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
@@ -594,28 +594,36 @@ impl OneDriveProvider {
     async fn list_tree(&self, ctx: &SyncContext, base: &str, root_id: &str) -> Result<RemoteTree, ProviderError> {
         let mut tree = RemoteTree::default();
         tree.insert_folder(String::new(), root_id.to_string());
-        let mut queue = vec![(String::new(), root_id.to_string())];
-        while let Some((prefix, id)) = queue.pop() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
-            for child in self.list_children(ctx, base, &id).await? {
-                let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
-                if child.folder.is_some() {
-                    tree.insert_folder(rel.clone(), child.id.clone());
-                    queue.push((rel, child.id));
-                } else {
-                    tree.insert_file(
-                        rel,
-                        RemoteFile {
-                            size: child.size.unwrap_or(0),
-                            mtime: child.last_modified_date_time.as_deref().and_then(parse_rfc3339).unwrap_or(0),
-                            id: Some(child.id),
-                        },
-                    );
+        common::walk_remote(
+            &ctx.cancel,
+            (String::new(), root_id.to_string()),
+            common::PARALLEL_LISTINGS,
+            |(prefix, id): (String, String)| async move {
+                let children = self.list_children(ctx, base, &id).await?;
+                Ok(((prefix, id), children))
+            },
+            |(prefix, _), children| {
+                let mut subfolders = Vec::new();
+                for child in children {
+                    let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
+                    if child.folder.is_some() {
+                        tree.insert_folder(rel.clone(), child.id.clone());
+                        subfolders.push((rel, child.id));
+                    } else {
+                        tree.insert_file(
+                            rel,
+                            RemoteFile {
+                                size: child.size.unwrap_or(0),
+                                mtime: child.last_modified_date_time.as_deref().and_then(parse_rfc3339).unwrap_or(0),
+                                id: Some(child.id),
+                            },
+                        );
+                    }
                 }
-            }
-        }
+                subfolders
+            },
+        )
+        .await?;
         Ok(tree)
     }
 
@@ -691,10 +699,8 @@ impl OneDriveProvider {
         }
 
         let mut skipped = 0u64;
+        let mut uploads = Vec::new();
         for file in local.files() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
             if is_under_invalid(&file.rel, &invalid_dirs) {
                 continue;
             }
@@ -721,19 +727,22 @@ impl OneDriveProvider {
                 result.error_count += 1;
                 continue;
             };
-            match self.upload_file(ctx, base, &parent, file).await {
+            uploads.push((file.clone(), parent, label));
+        }
+        common::upload_parallel(&ctx.cancel, uploads, common::PARALLEL_UPLOADS, result, |(file, parent, label)| async move {
+            match self.upload_file(ctx, base, &parent, &file).await {
                 Ok(()) => {
                     ctx.log_info(&format!("Uploaded: {}", label), "onedrive").await;
-                    result.files_transferred += 1;
-                    result.bytes_transferred += file.size as i64;
+                    Ok(file.size)
                 }
-                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
+                Err(ProviderError::Cancelled) => Err(ProviderError::Cancelled),
                 Err(e) => {
                     ctx.log_error(&format!("Failed to upload {}: {}", label, e), "onedrive").await;
-                    result.error_count += 1;
+                    Err(e)
                 }
             }
-        }
+        })
+        .await?;
         if skipped > 0 {
             ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "onedrive").await;
         }
@@ -741,6 +750,7 @@ impl OneDriveProvider {
         if ctx.options.delete_extraneous {
             // Case-insensitive, like OneDrive itself
             let local_paths: HashSet<String> = local.rel_paths().iter().map(|p| p.to_lowercase()).collect();
+            let excludes = common::ExcludeMatcher::new(&ctx.options);
             let mut to_delete: Vec<(String, String, bool)> = remote
                 .files
                 .iter()
@@ -753,7 +763,7 @@ impl OneDriveProvider {
                         .map(|(rel, id)| (rel.clone(), id.clone(), true)),
                 )
                 .filter(|(rel, _, _)| {
-                    !local_paths.contains(&rel.to_lowercase()) && !rel_excluded(source_dir, rel, &ctx.options)
+                    !local_paths.contains(&rel.to_lowercase()) && !excludes.rel_excluded(source_dir, rel)
                 })
                 .collect();
             to_delete.sort();

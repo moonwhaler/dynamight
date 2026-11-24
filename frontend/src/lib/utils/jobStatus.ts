@@ -5,13 +5,14 @@ import { jobHealth } from './backupHealth';
  * One state per job, used for every status chip, filter and the overview.
  *
  * - running:  a run is in progress
+ * - queued:   a run waits for another backup to finish
  * - failed:   the last run failed
  * - overdue:  the last good backup is older than the schedule allows
  * - never:    no successful backup yet
  * - ok:       a good backup exists and is current (or the job only runs manually)
  * - disabled: switched off; nothing is expected of it
  */
-export type JobState = 'running' | 'failed' | 'overdue' | 'never' | 'ok' | 'disabled';
+export type JobState = 'running' | 'queued' | 'failed' | 'overdue' | 'never' | 'ok' | 'disabled';
 
 export interface JobStatus {
   state: JobState;
@@ -23,9 +24,8 @@ export interface JobStatus {
 export function jobStatus(job: Job, now = Date.now()): JobStatus {
   const lastSuccessAt = job.last_success_at ?? null;
   if (!job.enabled) return { state: 'disabled', attention: false, lastSuccessAt };
-  if (job.last_run_status === 'running' || job.last_run_status === 'pending') {
-    return { state: 'running', attention: false, lastSuccessAt };
-  }
+  if (job.last_run_status === 'running') return { state: 'running', attention: false, lastSuccessAt };
+  if (job.last_run_status === 'pending') return { state: 'queued', attention: false, lastSuccessAt };
   const health = jobHealth(job, now);
   if (health.state === 'failed') return { state: 'failed', attention: true, lastSuccessAt };
   if (health.state === 'overdue') {
@@ -41,8 +41,9 @@ export const STATE_ORDER: Record<JobState, number> = {
   overdue: 1,
   never: 2,
   running: 3,
-  ok: 4,
-  disabled: 5,
+  queued: 4,
+  ok: 5,
+  disabled: 6,
 };
 
 /** Filter groups offered in the job list */
@@ -53,7 +54,7 @@ export function matchesFilter(status: JobStatus, filter: StateFilter): boolean {
     case 'attention':
       return status.attention;
     case 'running':
-      return status.state === 'running';
+      return status.state === 'running' || status.state === 'queued';
     case 'ok':
       return status.state === 'ok' || (status.state === 'never' && !status.attention);
     case 'disabled':

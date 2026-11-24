@@ -54,41 +54,67 @@ impl LocalTree {
     }
 }
 
-/// True if a file name matches one of the exclude patterns.
-pub fn name_excluded(name: &str, options: &SyncOptions) -> bool {
-    options
-        .exclude_patterns
-        .iter()
-        .any(|p| glob::Pattern::new(p).map(|pat| pat.matches(name)).unwrap_or(false))
+/// The exclude rules of a job, compiled once per run instead of once per
+/// file and pattern.
+pub struct ExcludeMatcher {
+    excludes: Vec<glob::Pattern>,
+    /// `None`: no include-only list (everything is included)
+    include_only: Option<Vec<glob::Pattern>>,
+    /// Excluded directories (absolute), without trailing slash
+    exclude_dirs: Vec<String>,
 }
 
-/// True if `name` matches one of the `include_only` globs (or there are none).
-pub fn include_only_matches(patterns: &[String], name: &str) -> bool {
-    patterns.is_empty()
-        || patterns
+fn compile(patterns: &[String]) -> Vec<glob::Pattern> {
+    patterns.iter().filter_map(|p| glob::Pattern::new(p).ok()).collect()
+}
+
+impl ExcludeMatcher {
+    pub fn new(options: &SyncOptions) -> Self {
+        Self {
+            excludes: compile(&options.exclude_patterns),
+            include_only: (!options.include_only.is_empty()).then(|| compile(&options.include_only)),
+            exclude_dirs: options
+                .exclude_dirs
+                .iter()
+                .map(|d| d.trim_end_matches('/').to_string())
+                .collect(),
+        }
+    }
+
+    /// True if a file name matches one of the exclude patterns.
+    pub fn name_excluded(&self, name: &str) -> bool {
+        self.excludes.iter().any(|p| p.matches(name))
+    }
+
+    /// True if `name` matches one of the include-only globs (or there are none).
+    pub fn include_only_matches(&self, name: &str) -> bool {
+        self.include_only.as_ref().is_none_or(|list| list.iter().any(|p| p.matches(name)))
+    }
+
+    /// True if the absolute path is an excluded directory or lies in one.
+    pub fn dir_excluded(&self, abs: &str) -> bool {
+        self.exclude_dirs
             .iter()
-            .any(|p| glob::Pattern::new(p).map(|pat| pat.matches(name)).unwrap_or(false))
-}
+            .any(|ex| abs == ex || (abs.len() > ex.len() && abs.starts_with(ex.as_str()) && abs.as_bytes()[ex.len()] == b'/'))
+    }
 
-/// True if a path relative to `source_dir` is excluded: one of its components
-/// matches an exclude pattern, or it lies in an excluded directory.
-///
-/// Used to keep excluded files on the destination when mirroring deletes,
-/// like rsync `--delete` (which does not delete excluded files).
-pub fn rel_excluded(source_dir: &str, rel: &str, options: &SyncOptions) -> bool {
-    if rel.split('/').any(|component| name_excluded(component, options)) {
-        return true;
+    /// True if a path relative to `source_dir` is excluded: one of its
+    /// components matches an exclude pattern, or it lies in an excluded
+    /// directory.
+    ///
+    /// Used to keep excluded files on the destination when mirroring deletes,
+    /// like rsync `--delete` (which does not delete excluded files).
+    pub fn rel_excluded(&self, source_dir: &str, rel: &str) -> bool {
+        if rel.split('/').any(|component| self.name_excluded(component)) {
+            return true;
+        }
+        // In compress mode only this job's archives belong to it; never delete others
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if !self.include_only_matches(name) {
+            return true;
+        }
+        self.dir_excluded(&format!("{}/{}", source_dir.trim_end_matches('/'), rel))
     }
-    // In compress mode only this job's archives belong to it; never delete others
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    if !include_only_matches(&options.include_only, name) {
-        return true;
-    }
-    let abs = format!("{}/{}", source_dir.trim_end_matches('/'), rel);
-    options
-        .exclude_dirs
-        .iter()
-        .any(|ex| abs == *ex || abs.starts_with(&format!("{}/", ex.trim_end_matches('/'))))
 }
 
 fn mtime_secs(meta: &std::fs::Metadata) -> i64 {
@@ -112,6 +138,7 @@ pub fn walk_source(source_dir: &str, options: &SyncOptions) -> Result<LocalTree,
 
     let mut tree = LocalTree::default();
     let mut files = Vec::new();
+    let excludes = ExcludeMatcher::new(options);
 
     let walker = walkdir::WalkDir::new(root)
         .follow_links(false)
@@ -122,20 +149,10 @@ pub fn walk_source(source_dir: &str, options: &SyncOptions) -> Result<LocalTree,
                 return true;
             }
             let name = e.file_name().to_string_lossy();
-            if name_excluded(&name, options) {
+            if excludes.name_excluded(&name) {
                 return false;
             }
-            if e.file_type().is_dir() {
-                let full = e.path().to_string_lossy();
-                if options
-                    .exclude_dirs
-                    .iter()
-                    .any(|ex| full == ex.as_str() || full.starts_with(&format!("{}/", ex.trim_end_matches('/'))))
-                {
-                    return false;
-                }
-            }
-            true
+            !(e.file_type().is_dir() && excludes.dir_excluded(&e.path().to_string_lossy()))
         });
 
     for entry in walker {
@@ -184,7 +201,7 @@ pub fn walk_source(source_dir: &str, options: &SyncOptions) -> Result<LocalTree,
         if file_type.is_dir() {
             tree.entries.push(local);
         } else if file_type.is_file() {
-            if !include_only_matches(&options.include_only, &entry.file_name().to_string_lossy()) {
+            if !excludes.include_only_matches(&entry.file_name().to_string_lossy()) {
                 continue;
             }
             files.push(local);
@@ -204,6 +221,87 @@ pub async fn walk_source_async(source_dir: &str, options: &SyncOptions) -> Resul
     tokio::task::spawn_blocking(move || walk_source(&dir, &opts))
         .await
         .map_err(|e| ProviderError::Other(format!("Directory walk failed: {}", e)))?
+}
+
+/// Files uploaded at the same time by the remote providers. Small files are
+/// bound by round trips, so a few transfers in flight speed them up a lot;
+/// Google Drive throttles writes harder than the others.
+pub const PARALLEL_UPLOADS: usize = 4;
+pub const PARALLEL_UPLOADS_GOOGLE_DRIVE: usize = 3;
+/// Folders listed at the same time when reading a remote tree
+pub const PARALLEL_LISTINGS: usize = 4;
+
+/// Run `upload` for every item, up to `limit` at a time, and count the
+/// results into `result`: `Ok(bytes)` is a transferred file, any other error
+/// a failed one (`upload` logs it). Stops at once when the run is cancelled.
+pub async fn upload_parallel<T, F, Fut>(
+    cancel: &tokio_util::sync::CancellationToken,
+    items: Vec<T>,
+    limit: usize,
+    result: &mut super::SyncResult,
+    upload: F,
+) -> Result<(), ProviderError>
+where
+    F: Fn(T) -> Fut,
+    Fut: std::future::Future<Output = Result<u64, ProviderError>>,
+{
+    use futures::StreamExt;
+    let mut uploads = futures::stream::iter(items).map(upload).buffer_unordered(limit.max(1));
+    loop {
+        let next = tokio::select! {
+            next = uploads.next() => next,
+            _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+        };
+        match next {
+            None => return Ok(()),
+            Some(Ok(bytes)) => {
+                result.files_transferred += 1;
+                result.bytes_transferred += bytes as i64;
+            }
+            Some(Err(ProviderError::Cancelled)) => return Err(ProviderError::Cancelled),
+            Some(Err(_)) => result.error_count += 1,
+        }
+    }
+}
+
+/// Walk a remote folder tree with up to `limit` folder listings in flight.
+///
+/// `list(folder)` lists one folder and returns it with its listing; `visit`
+/// takes each listing in turn (one at a time, so it can fill plain maps) and
+/// returns the subfolders to list next.
+pub async fn walk_remote<K, O, F, Fut>(
+    cancel: &tokio_util::sync::CancellationToken,
+    root: K,
+    limit: usize,
+    list: F,
+    mut visit: impl FnMut(&K, O) -> Vec<K>,
+) -> Result<(), ProviderError>
+where
+    F: Fn(K) -> Fut,
+    Fut: std::future::Future<Output = Result<(K, O), ProviderError>>,
+{
+    use futures::StreamExt;
+    let mut pending = vec![root];
+    let mut in_flight = futures::stream::FuturesUnordered::new();
+    loop {
+        while in_flight.len() < limit.max(1) {
+            match pending.pop() {
+                Some(folder) => in_flight.push(list(folder)),
+                None => break,
+            }
+        }
+        let next = tokio::select! {
+            next = in_flight.next() => next,
+            _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+        };
+        match next {
+            None => return Ok(()),
+            Some(listed) => {
+                let (folder, listing) = listed?;
+                pending.extend(visit(&folder, listing));
+            }
+        }
+    }
 }
 
 /// Decide whether a local file has to be uploaded.
@@ -395,20 +493,90 @@ mod tests {
         let tree = walk_source(tmp.path().to_str().unwrap(), &o).unwrap();
         let rels: Vec<&str> = tree.entries.iter().map(|e| e.rel.as_str()).collect();
         assert_eq!(rels, vec!["photos_42.tar.gz"]);
-        assert!(rel_excluded("/s", "docs_7.zip", &o));
-        assert!(rel_excluded("/s", "photos_142.tar.gz", &o));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/s", "docs_7.zip"));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/s", "photos_142.tar.gz"));
         // Another job's archive whose custom name contains "_42."
-        assert!(rel_excluded("/s", "x_42.notes_7.zip", &o));
-        assert!(!rel_excluded("/s", "2026-01-01_photos_42.tar.gz", &o));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/s", "x_42.notes_7.zip"));
+        assert!(!ExcludeMatcher::new(&o).rel_excluded("/s", "2026-01-01_photos_42.tar.gz"));
     }
 
     #[test]
     fn rel_excluded_matches_components_and_dirs() {
         let o = opts(&["*.tmp", "node_modules"], &["/src/private"]);
-        assert!(rel_excluded("/src", "x/node_modules/y.js", &o));
-        assert!(rel_excluded("/src", "a.tmp", &o));
-        assert!(rel_excluded("/src", "private/secret.txt", &o));
-        assert!(!rel_excluded("/src", "public/a.txt", &o));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/src", "x/node_modules/y.js"));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/src", "a.tmp"));
+        assert!(ExcludeMatcher::new(&o).rel_excluded("/src", "private/secret.txt"));
+        assert!(!ExcludeMatcher::new(&o).rel_excluded("/src", "public/a.txt"));
+    }
+
+    #[tokio::test]
+    async fn uploads_run_in_parallel_and_are_counted() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut result = super::super::SyncResult::default();
+        upload_parallel(&cancel, (1..=10u64).collect(), 3, &mut result, |n| {
+            let (in_flight, peak) = (Arc::clone(&in_flight), Arc::clone(&peak));
+            async move {
+                use std::sync::atomic::Ordering::SeqCst;
+                peak.fetch_max(in_flight.fetch_add(1, SeqCst) + 1, SeqCst);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                in_flight.fetch_sub(1, SeqCst);
+                if n == 7 { Err(ProviderError::TransferError("x".into())) } else { Ok(n) }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!((result.files_transferred, result.bytes_transferred, result.error_count), (9, 55 - 7, 1));
+        assert_eq!(peak.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn cancelling_stops_uploads_at_once() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let mut result = super::super::SyncResult::default();
+        let token = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            token.cancel();
+        });
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(2),
+            upload_parallel(&cancel, vec![1u64, 2], 2, &mut result, |_| async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(0)
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, Err(ProviderError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn walk_remote_lists_the_whole_tree() {
+        // a -> b, c; b -> d
+        let tree: std::collections::HashMap<&str, Vec<&str>> =
+            [("", vec!["a"]), ("a", vec!["a/b", "a/c"]), ("a/b", vec!["a/b/d"]), ("a/c", vec![]), ("a/b/d", vec![])]
+                .into_iter()
+                .collect();
+        let mut seen = Vec::new();
+        walk_remote(
+            &tokio_util::sync::CancellationToken::new(),
+            String::new(),
+            4,
+            |folder: String| {
+                let children: Vec<String> = tree[folder.as_str()].iter().map(|s| s.to_string()).collect();
+                async move { Ok((folder, children)) }
+            },
+            |folder, children| {
+                seen.push(folder.clone());
+                children
+            },
+        )
+        .await
+        .unwrap();
+        seen.sort();
+        assert_eq!(seen, vec!["", "a", "a/b", "a/b/d", "a/c"]);
     }
 
     #[test]

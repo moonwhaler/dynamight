@@ -10,6 +10,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use axum::http::{header, HeaderValue, Method};
+use axum::http::{Extensions, HeaderMap, StatusCode, Version};
+use tower_http::compression::{predicate::{DefaultPredicate, Predicate}, CompressionLayer};
 use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -323,6 +325,17 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&credential_service),
     ));
 
+    let db_log_days: Option<(String,)> =
+        sqlx::query_as("SELECT value FROM app_settings WHERE key = 'log_retention_days'")
+            .fetch_optional(&db)
+            .await
+            .unwrap_or(None);
+    backup_service
+        .set_log_retention_days(dynamight::handlers::settings::log_days_from_setting(
+            db_log_days.as_ref().map(|(v,)| v.as_str()),
+        ))
+        .await;
+
     // No run can be active yet: anything still marked pending/running was
     // interrupted by a crash or restart.
     match backup_service.mark_interrupted_runs().await {
@@ -357,12 +370,19 @@ async fn main() -> anyhow::Result<()> {
         dir_size_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
     });
 
-    // Start periodic cleanup of expired pending TOTP sessions
+    // Hourly cleanup of expired sessions and tokens; log retention every
+    // 6 hours (the first tick runs right away, at startup)
     let cleanup_db = db.clone();
+    let maintenance = backup_service.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut hours: u64 = 0;
         loop {
             interval.tick().await;
+            if hours.is_multiple_of(6) {
+                maintenance.maintain_logs().await;
+            }
+            hours += 1;
             let _ = sqlx::query("DELETE FROM pending_totp_sessions WHERE expires_at < datetime('now')")
                 .execute(&cleanup_db)
                 .await;
@@ -385,9 +405,34 @@ async fn main() -> anyhow::Result<()> {
     // Build security headers layers
     let security_headers = build_security_headers(&config);
 
+    // Vite names the files in /assets after their content, so browsers may
+    // keep them for good; everything else (index.html) is checked each time
+    let assets = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .service(ServeDir::new(std::path::Path::new(&config.static_files_dir).join("assets")));
+    let static_files = Router::new()
+        .nest_service("/assets", assets)
+        .fallback_service(ServeDir::new(&config.static_files_dir))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ));
+
+    // Compress pages, scripts and JSON, but not file downloads (attachments):
+    // those can be large or compressed already, and keep their Content-Length
+    let compression = CompressionLayer::new().compress_when(
+        DefaultPredicate::new().and(|_: StatusCode, _: Version, headers: &HeaderMap, _: &Extensions| {
+            !headers.contains_key(header::CONTENT_DISPOSITION)
+        }),
+    );
+
     let app = Router::new()
         .nest("/api", api_routes)
-        .fallback_service(ServeDir::new(&config.static_files_dir))
+        .merge(static_files)
+        .layer(compression)
         .layer(TraceLayer::new_for_http())
         .layer(build_cors_layer(&config))
         .layer(security_headers);

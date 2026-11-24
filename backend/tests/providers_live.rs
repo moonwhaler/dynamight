@@ -74,6 +74,8 @@ async fn run(
         log_sender: tx,
         log_writer: dynamight::services::LogWriter::spawn(db.clone()),
         is_cancelled: Arc::new(|_| false),
+        cancel: Default::default(),
+        last_transfer_bytes: None,
         oauth: None,
     });
     let provider = create_provider(destination);

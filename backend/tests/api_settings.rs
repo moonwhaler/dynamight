@@ -54,3 +54,16 @@ async fn saving_one_setting_keeps_the_others() {
     assert_eq!(s["search_timeout_seconds"], 30);
     assert_eq!(s["show_directory_sizes"], true);
 }
+
+#[tokio::test]
+async fn log_retention_defaults_to_ninety_days_and_can_be_off() {
+    let app = TestApp::new().await;
+    let cookie = TestApp::cookie_value(&app.setup_and_login().await);
+
+    assert_eq!(get(&app, &cookie).await["log_retention_days"], 90);
+    put(&app, &cookie, json!({ "log_retention_days": 30 })).await;
+    put(&app, &cookie, json!({ "search_timeout_seconds": 20 })).await;
+    assert_eq!(get(&app, &cookie).await["log_retention_days"], 30);
+    put(&app, &cookie, json!({ "log_retention_days": null })).await;
+    assert_eq!(get(&app, &cookie).await["log_retention_days"], Value::Null);
+}

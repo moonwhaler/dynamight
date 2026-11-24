@@ -19,9 +19,10 @@ export function isRunning(job: Pick<Job, 'last_run_status'>): boolean {
 /** Start a run; opens its log when the preference says so. */
 export async function runJob(job: Job): Promise<number | null> {
   try {
-    const { runId } = await api.jobs.run(job.id);
+    const { runId, queued } = await api.jobs.run(job.id);
     jobsStore.refresh();
     if (get(preferencesStore).showLogViewerAfterManualRun) showRunLog(runId, job.id);
+    else if (queued) showToast({ message: m.job_run_queued({ name: job.name }), variant: 'info' });
     else showToast({ message: m.job_run_started({ name: job.name }), variant: 'success' });
     return runId;
   } catch (e) {

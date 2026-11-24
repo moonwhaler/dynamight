@@ -126,6 +126,7 @@ pub struct JobRunRow {
     pub total_size: Option<i64>,
     pub error_count: i32,
     pub summary: Option<String>,
+    pub log_pruned: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,6 +144,8 @@ pub struct JobRun {
     pub error_count: i32,
     /// Why a run ended the way it did (failure reason, cancel note), as text
     pub summary: Option<String>,
+    /// The log lines were removed by the log retention
+    pub log_pruned: bool,
 }
 
 impl From<JobRunRow> for JobRun {
@@ -160,6 +163,7 @@ impl From<JobRunRow> for JobRun {
             total_size: row.total_size,
             error_count: row.error_count,
             summary: row.summary.filter(|s| !s.trim().is_empty()),
+            log_pruned: row.log_pruned,
         }
     }
 }

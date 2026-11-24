@@ -17,6 +17,8 @@
     switch (status.state) {
       case 'running':
         return { cls: 'badge-info', dot: 'bg-primary-500 animate-pulse', label: m.state_running() };
+      case 'queued':
+        return { cls: 'badge-info', dot: 'bg-primary-400', label: m.state_queued() };
       case 'failed':
         return { cls: 'badge-error', dot: 'bg-red-500', label: m.state_failed() };
       case 'overdue':

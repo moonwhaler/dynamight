@@ -3,7 +3,7 @@ import { writable } from 'svelte/store';
 // Status store for global job status updates
 interface StatusUpdate {
   // resync: events were missed, reload everything
-  type: 'job_started' | 'job_completed' | 'resync';
+  type: 'job_queued' | 'job_started' | 'job_completed' | 'resync';
   run_id?: number;
   job_id?: number;
   timestamp?: string;

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio::sync::{broadcast, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 /// Logged (source "system") when a run starts.
@@ -25,6 +26,8 @@ pub const RUN_FINISHED_PREFIX: &str = "Run finished";
 /// among thousands of log lines when a client falls behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunEventKind {
+    /// Waits for another backup to finish
+    Queued,
     Started,
     /// Final status and the whole log are stored
     Completed,
@@ -40,6 +43,90 @@ pub struct RunEvent {
 
 /// Run events held for slow subscribers (a handful per run)
 const EVENT_CAPACITY: usize = 64;
+
+/// Backups running at the same time; further runs wait in line (FIFO).
+///
+/// Must stay 1 as long as a job may queue a follow-up run behind its own
+/// running one: with more slots the two could run side by side.
+const MAX_PARALLEL_RUNS: usize = 1;
+
+/// A started run: its ID and whether it waits for another backup first.
+#[derive(Debug, Clone, Copy)]
+pub struct StartedRun {
+    pub run_id: i64,
+    pub queued: bool,
+}
+
+/// Runs of one job that are active (at most one running and one waiting).
+#[derive(Debug, Default)]
+struct JobSlot {
+    running: bool,
+    waiting: bool,
+}
+
+/// What is active right now. Behind a plain mutex: every use is a short,
+/// synchronous update.
+#[derive(Default)]
+struct ActiveRuns {
+    jobs: std::collections::HashMap<i64, JobSlot>,
+    /// Cancellation per active run, with its job
+    tokens: std::collections::HashMap<i64, (i64, CancellationToken)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Waiting,
+    Running,
+}
+
+/// Holds one run's place: its waiting/running flag, its cancellation token
+/// and (while running) its run slot. Dropping it releases all of them, on
+/// every path, panics included.
+struct RunGuard {
+    active: Arc<std::sync::Mutex<ActiveRuns>>,
+    job_id: i64,
+    run_id: Option<i64>,
+    phase: Phase,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl RunGuard {
+    /// The run got its slot and starts
+    fn start(&mut self, permit: OwnedSemaphorePermit) {
+        let mut active = lock(&self.active);
+        let slot = active.jobs.entry(self.job_id).or_default();
+        debug_assert!(!slot.running, "two runs of one job at once");
+        slot.waiting = false;
+        slot.running = true;
+        self.phase = Phase::Running;
+        self.permit = Some(permit);
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        let mut active = lock(&self.active);
+        if let Some(slot) = active.jobs.get_mut(&self.job_id) {
+            // Only this run's own flag: a queued follow-up keeps its place
+            match self.phase {
+                Phase::Waiting => slot.waiting = false,
+                Phase::Running => slot.running = false,
+            }
+            if !slot.running && !slot.waiting {
+                active.jobs.remove(&self.job_id);
+            }
+        }
+        if let Some(run_id) = self.run_id {
+            active.tokens.remove(&run_id);
+        }
+        // The permit (if any) is released after this, so the next run in
+        // line sees the flags already cleared
+    }
+}
+
+fn lock(m: &std::sync::Mutex<ActiveRuns>) -> std::sync::MutexGuard<'_, ActiveRuns> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Why [`BackupService::start_run`] did not start a run.
 #[derive(Debug)]
@@ -70,10 +157,13 @@ pub struct BackupService {
     log_writer: LogWriter,
     log_tx: broadcast::Sender<LogMessage>,
     events: broadcast::Sender<RunEvent>,
-    running_jobs: Arc<RwLock<std::collections::HashSet<i64>>>,
-    /// Tracks cancelled run_ids
-    cancelled_runs: Arc<Mutex<std::collections::HashSet<i64>>>,
+    /// Active runs per job and their cancellation tokens
+    active: Arc<std::sync::Mutex<ActiveRuns>>,
+    /// Run slots (see MAX_PARALLEL_RUNS)
+    run_slots: Arc<Semaphore>,
     max_runs_per_job: Arc<RwLock<Option<u32>>>,
+    /// Days run logs are kept (None: forever)
+    log_retention_days: RwLock<Option<u32>>,
     credential_service: Arc<CredentialService>,
     /// Set by `shutdown`: no new runs start
     shutting_down: AtomicBool,
@@ -97,9 +187,10 @@ impl BackupService {
             logs_db,
             log_tx,
             events: broadcast::channel(EVENT_CAPACITY).0,
-            running_jobs: Arc::new(RwLock::new(std::collections::HashSet::new())),
-            cancelled_runs: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            active: Arc::new(std::sync::Mutex::new(ActiveRuns::default())),
+            run_slots: Arc::new(Semaphore::new(MAX_PARALLEL_RUNS)),
             max_runs_per_job: Arc::new(RwLock::new(max_runs_per_job)),
+            log_retention_days: RwLock::new(Some(crate::handlers::settings::DEFAULT_LOG_RETENTION_DAYS)),
             credential_service,
             shutting_down: AtomicBool::new(false),
             tasks: TaskTracker::new(),
@@ -247,20 +338,25 @@ impl BackupService {
 
     /// Start a run of `job` in the background and return its run ID.
     ///
-    /// The one way runs start (manual and scheduled): reserves the job so two
-    /// triggers cannot run it twice, creates the run record, and tracks the
-    /// task so a shutdown can wait for it.
+    /// The one way runs start (manual and scheduled). Runs go one at a time
+    /// (see MAX_PARALLEL_RUNS); a run that has to wait is stored as `pending`
+    /// and starts when the slot frees up.
+    ///
+    /// A job runs at most once at a time. A manual start is refused while the
+    /// job has a run running or waiting; a scheduled one only while a run is
+    /// already waiting, so a schedule that fires during a long run queues one
+    /// follow-up run instead of being lost.
     pub async fn start_run(
         self: &Arc<Self>,
         job: Job,
         schedule_id: Option<i64>,
-    ) -> Result<i64, StartRunError> {
+    ) -> Result<StartedRun, StartRunError> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(StartRunError::ShuttingDown);
         }
-        if !self.try_reserve_job(job.id).await {
+        let Some(mut guard) = self.reserve(job.id, schedule_id.is_some()) else {
             return Err(StartRunError::AlreadyRunning);
-        }
+        };
 
         let run_id = match sqlx::query("INSERT INTO job_runs (job_id, schedule_id, status) VALUES (?, ?, ?)")
             .bind(job.id)
@@ -270,14 +366,48 @@ impl BackupService {
             .await
         {
             Ok(r) => r.last_insert_rowid(),
-            Err(e) => {
-                self.release_job(job.id).await;
-                return Err(StartRunError::Database(e));
-            }
+            // Dropping the guard releases the reservation
+            Err(e) => return Err(StartRunError::Database(e)),
         };
+        let token = CancellationToken::new();
+        lock(&self.active).tokens.insert(run_id, (job.id, token.clone()));
+        guard.run_id = Some(run_id);
+
+        let permit_now = Arc::clone(&self.run_slots).try_acquire_owned().ok();
+        let queued = permit_now.is_none();
+        if queued {
+            self.log(run_id, LogLevel::Info, "Waiting for another backup to finish", "system").await;
+            self.emit(RunEventKind::Queued, run_id, job.id);
+        }
 
         let service = Arc::clone(self);
         self.tasks.spawn(async move {
+            let permit = match permit_now {
+                Some(permit) => Some(permit),
+                None => tokio::select! {
+                    permit = Arc::clone(&service.run_slots).acquire_owned() => permit.ok(),
+                    _ = token.cancelled() => None,
+                },
+            };
+            let permit = permit.filter(|_| !token.is_cancelled());
+            let Some(permit) = permit else {
+                // Cancelled while waiting: never started. Stored as cancelled
+                // here too (a shutdown cancels through the token alone)
+                let _ = sqlx::query(
+                    "UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status IN ('pending', 'running')",
+                )
+                .bind(JobRunStatus::Cancelled.as_str())
+                .bind(Utc::now())
+                .bind(run_id)
+                .execute(&service.db)
+                .await;
+                let cancelled = JobResult { exit_code: 130, ..Default::default() };
+                service.finalize_run(run_id, job.id, &job, Ok(cancelled)).await;
+                drop(guard);
+                return;
+            };
+            guard.start(permit);
+
             let _ = sqlx::query(
                 "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'",
             )
@@ -288,11 +418,40 @@ impl BackupService {
             .await;
             service.emit(RunEventKind::Started, run_id, job.id);
 
-            let result = service.execute_job(&job, run_id, schedule_id).await;
+            // Changes saved while the run waited apply to it
+            let job = match sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE id = ?")
+                .bind(job.id)
+                .fetch_optional(&service.db)
+                .await
+            {
+                Ok(Some(current)) => current,
+                _ => job,
+            };
+
+            let result = service.execute_job(&job, run_id, schedule_id, &token).await;
             service.finalize_run(run_id, job.id, &job, result).await;
+            drop(guard);
         });
 
-        Ok(run_id)
+        Ok(StartedRun { run_id, queued })
+    }
+
+    /// Reserve a place for a run of `job_id` (see [`start_run`](Self::start_run)).
+    fn reserve(&self, job_id: i64, scheduled: bool) -> Option<RunGuard> {
+        let mut active = lock(&self.active);
+        let slot = active.jobs.entry(job_id).or_default();
+        let refused = if scheduled { slot.waiting } else { slot.running || slot.waiting };
+        if refused {
+            return None;
+        }
+        slot.waiting = true;
+        Some(RunGuard {
+            active: Arc::clone(&self.active),
+            job_id,
+            run_id: None,
+            phase: Phase::Waiting,
+            permit: None,
+        })
     }
 
     /// Stop for a server shutdown: start no new runs, cancel the active ones,
@@ -310,7 +469,6 @@ impl BackupService {
             tracing::info!("Shutdown: cancelling {} active run(s)", active.len());
         }
         for (run_id,) in active {
-            self.cancelled_runs.lock().await.insert(run_id);
             let _ = sqlx::query(
                 "UPDATE job_runs SET status = ?, completed_at = ?, summary = ? \
                  WHERE id = ? AND status IN ('pending', 'running')",
@@ -322,6 +480,11 @@ impl BackupService {
             .execute(&self.db)
             .await;
             self.log(run_id, LogLevel::Warning, "Server is shutting down, cancelling the run", "system").await;
+        }
+        // After the status is stored (the runs read it when they wake);
+        // wakes runs waiting for a slot, too
+        for (_, token) in lock(&self.active).tokens.values() {
+            token.cancel();
         }
 
         self.tasks.close();
@@ -339,6 +502,103 @@ impl BackupService {
     pub async fn set_max_runs_per_job(&self, value: Option<u32>) {
         *self.max_runs_per_job.write().await = value;
         tracing::info!("Updated max_runs_per_job to {:?}", value);
+    }
+
+    pub async fn set_log_retention_days(&self, value: Option<u32>) {
+        *self.log_retention_days.write().await = value;
+    }
+
+    /// Log retention: remove old log lines, then compact the logs database
+    /// when that frees a lot of space. Errors are only logged.
+    pub async fn maintain_logs(&self) {
+        match self.prune_logs().await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("Log retention: removed the log lines of {} old run(s)", n),
+            Err(e) => tracing::warn!("Log retention failed: {}", e),
+        }
+        if let Err(e) = self.compact_logs().await {
+            tracing::warn!("Compacting the logs database failed: {}", e);
+        }
+    }
+
+    /// Remove the log lines of runs that finished more than the configured
+    /// number of days ago. The run records stay (status, sizes, error
+    /// reason); each job's newest finished run and newest failed run keep
+    /// their log. Returns how many runs lost their log.
+    pub async fn prune_logs(&self) -> anyhow::Result<usize> {
+        let Some(days) = *self.log_retention_days.read().await else {
+            return Ok(0);
+        };
+        let cutoff = Utc::now() - chrono::Duration::days(days as i64);
+        let runs: Vec<(i64,)> = sqlx::query_as(
+            "SELECT id FROM job_runs \
+             WHERE log_pruned = 0 AND completed_at IS NOT NULL \
+               AND julianday(completed_at) < julianday(?) \
+               AND id NOT IN (SELECT MAX(id) FROM job_runs WHERE completed_at IS NOT NULL GROUP BY job_id) \
+               AND id NOT IN (SELECT MAX(id) FROM job_runs WHERE status = 'failed' GROUP BY job_id)",
+        )
+        .bind(cutoff.to_rfc3339())
+        .fetch_all(&self.db)
+        .await?;
+
+        let ids: Vec<i64> = runs.into_iter().map(|(id,)| id).collect();
+        for chunk in ids.chunks(500) {
+            let mut del = QueryBuilder::new("DELETE FROM log_entries WHERE job_run_id IN (");
+            let mut sep = del.separated(", ");
+            for id in chunk {
+                sep.push_bind(*id);
+            }
+            del.push(")");
+            del.build().execute(&self.logs_db).await?;
+
+            let mut mark = QueryBuilder::new("UPDATE job_runs SET log_pruned = 1 WHERE id IN (");
+            let mut sep = mark.separated(", ");
+            for id in chunk {
+                sep.push_bind(*id);
+            }
+            mark.push(")");
+            mark.build().execute(&self.db).await?;
+        }
+        Ok(ids.len())
+    }
+
+    /// VACUUM the logs database when at least a quarter of it is free pages.
+    ///
+    /// Holds every run slot meanwhile, so no backup writes log lines into the
+    /// locked database (they would be dropped); skipped while a run is active
+    /// or when the disk lacks room for the copy VACUUM writes.
+    async fn compact_logs(&self) -> anyhow::Result<()> {
+        let pragma = |name: &'static str| async move {
+            sqlx::query_scalar::<_, i64>(&format!("PRAGMA {}", name)).fetch_one(&self.logs_db).await
+        };
+        let (pages, free_pages, page_size) =
+            (pragma("page_count").await?, pragma("freelist_count").await?, pragma("page_size").await?);
+        if free_pages * 4 <= pages {
+            return Ok(());
+        }
+        let Ok(_slots) = Arc::clone(&self.run_slots).try_acquire_many_owned(MAX_PARALLEL_RUNS as u32) else {
+            return Ok(());
+        };
+        let file: Option<String> = sqlx::query_as::<_, (i64, String, String)>("PRAGMA database_list")
+            .fetch_all(&self.logs_db)
+            .await?
+            .into_iter()
+            .find(|(_, name, _)| name == "main")
+            .map(|(_, _, file)| file)
+            .filter(|f| !f.is_empty());
+        if let Some(file) = file {
+            let dir = Path::new(&file).parent().unwrap_or(Path::new("."));
+            let needed = ((pages - free_pages) * page_size) as u64;
+            if crate::services::fs_space(dir).is_some_and(|(free, _)| free < needed) {
+                tracing::warn!("Not compacting the logs database: too little free disk space");
+                return Ok(());
+            }
+        }
+        let before = pages * page_size;
+        sqlx::query("VACUUM").execute(&self.logs_db).await?;
+        let after = pragma("page_count").await? * page_size;
+        tracing::info!("Compacted the logs database: {} MB to {} MB", before >> 20, after >> 20);
+        Ok(())
     }
 
     /// Get the current max_runs_per_job setting
@@ -419,8 +679,9 @@ impl BackupService {
         }
     }
 
+    /// Whether the job has a run running or waiting for its turn
     pub async fn is_job_running(&self, job_id: i64) -> bool {
-        self.running_jobs.read().await.contains(&job_id)
+        lock(&self.active).jobs.get(&job_id).is_some_and(|s| s.running || s.waiting)
     }
 
     /// Mark runs left in 'pending' or 'running' by a crash or restart as failed.
@@ -454,32 +715,39 @@ impl BackupService {
         Ok(stale.len() as u64)
     }
 
-    /// Atomically mark a job as running. Returns `false` if it already is.
-    ///
-    /// Callers must reserve the job *before* creating the run record and
-    /// spawning the task, so two triggers (double click, manual + scheduled)
-    /// cannot both start the same job. [`execute_job`](Self::execute_job)
-    /// releases the reservation when it finishes; call
-    /// [`release_job`](Self::release_job) if the run is never started.
+    /// Mark a job as running without starting a run (tests, and callers
+    /// that must keep runs away). Returns `false` if it is active already.
+    /// Undo with [`release_job`](Self::release_job).
     pub async fn try_reserve_job(&self, job_id: i64) -> bool {
-        self.running_jobs.write().await.insert(job_id)
+        let mut active = lock(&self.active);
+        let slot = active.jobs.entry(job_id).or_default();
+        if slot.running || slot.waiting {
+            return false;
+        }
+        slot.running = true;
+        true
     }
 
-    /// Release a reservation made with [`try_reserve_job`](Self::try_reserve_job)
-    /// for a run that was never handed to `execute_job`.
+    /// Undo [`try_reserve_job`](Self::try_reserve_job).
     pub async fn release_job(&self, job_id: i64) {
-        self.running_jobs.write().await.remove(&job_id);
+        let mut active = lock(&self.active);
+        if let Some(slot) = active.jobs.get_mut(&job_id) {
+            slot.running = false;
+            if !slot.waiting {
+                active.jobs.remove(&job_id);
+            }
+        }
     }
 
-    /// Cancel a running job by marking it as cancelled.
-    /// The provider will check this flag and stop execution.
+    /// Cancel a run: running or still waiting for its turn. Providers see it
+    /// at once through the run's cancellation token.
     pub async fn cancel_job(&self, run_id: i64) -> anyhow::Result<bool> {
         tracing::info!("cancel_job called for run_id: {}", run_id);
 
-        // Mark as cancelled in memory (providers will check this)
-        self.cancelled_runs.lock().await.insert(run_id);
+        self.log(run_id, LogLevel::Warning, "Job cancellation requested", "system").await;
 
-        // Mark as cancelled in database
+        // Stored before the token fires: the woken run reads this status to
+        // finish as cancelled
         sqlx::query("UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status IN ('pending', 'running')")
             .bind(JobRunStatus::Cancelled.as_str())
             .bind(Utc::now())
@@ -487,36 +755,46 @@ impl BackupService {
             .execute(&self.db)
             .await?;
 
-        self.log(run_id, LogLevel::Warning, "Job cancellation requested", "system").await;
-        Ok(true)
+        let token = lock(&self.active).tokens.get(&run_id).map(|(_, t)| t.clone());
+        if let Some(token) = &token {
+            token.cancel();
+        }
+        Ok(token.is_some())
+    }
+
+    /// Cancel every active run of a job (the running one and a queued
+    /// follow-up). Returns how many runs were cancelled.
+    pub async fn cancel_job_runs(&self, job_id: i64) -> anyhow::Result<usize> {
+        let runs: Vec<i64> = lock(&self.active)
+            .tokens
+            .iter()
+            .filter(|(_, (job, _))| *job == job_id)
+            .map(|(run, _)| *run)
+            .collect();
+        for run_id in &runs {
+            self.cancel_job(*run_id).await?;
+        }
+        Ok(runs.len())
     }
 
     /// Check if a job run has been cancelled
     pub fn is_cancelled_sync(&self, run_id: i64) -> bool {
-        // Use try_lock to avoid blocking - if we can't get the lock, assume not cancelled
-        self.cancelled_runs.try_lock().map(|guard| guard.contains(&run_id)).unwrap_or(false)
+        lock(&self.active).tokens.get(&run_id).is_some_and(|(_, t)| t.is_cancelled())
     }
 
-    /// Check if a job run has been cancelled (async version)
-    pub async fn is_cancelled(&self, run_id: i64) -> bool {
-        self.cancelled_runs.lock().await.contains(&run_id)
-    }
-
-    pub async fn execute_job(
+    /// Run a job (the run's place is held by the caller, see start_run)
+    async fn execute_job(
         &self,
         job: &Job,
         run_id: i64,
         schedule_id: Option<i64>,
+        cancel: &CancellationToken,
     ) -> anyhow::Result<JobResult> {
         use futures::FutureExt;
 
-        // The job was reserved by the caller (see try_reserve_job). Make sure the
-        // reservation is set even for callers that did not reserve.
-        self.running_jobs.write().await.insert(job.id);
-
         // Catch panics so a provider bug cannot leave the job marked as running
         // forever or the run stuck in the 'running' state.
-        let result = match std::panic::AssertUnwindSafe(self.do_execute(job, run_id, schedule_id))
+        let result = match std::panic::AssertUnwindSafe(self.do_execute(job, run_id, schedule_id, cancel))
             .catch_unwind()
             .await
         {
@@ -533,12 +811,6 @@ impl BackupService {
             }
         };
 
-        // Remove from running jobs
-        self.running_jobs.write().await.remove(&job.id);
-
-        // Clean up cancelled tracking
-        self.cancelled_runs.lock().await.remove(&run_id);
-
         result
     }
 
@@ -547,6 +819,7 @@ impl BackupService {
         job: &Job,
         run_id: i64,
         _schedule_id: Option<i64>,
+        cancel: &CancellationToken,
     ) -> anyhow::Result<JobResult> {
         // Get destination config and sync options from job
         let destination = job.get_destination_config();
@@ -638,7 +911,7 @@ impl BackupService {
 
                 for source_dir in &source_dirs {
                     // Check cancellation before starting each archive
-                    if self.is_cancelled(run_id).await {
+                    if cancel.is_cancelled() {
                         return Ok(JobResult {
                             exit_code: 130,
                             ..Default::default()
@@ -661,13 +934,8 @@ impl BackupService {
                         .cloned()
                         .collect();
 
-                    let cancelled_runs = Arc::clone(&self.cancelled_runs);
-                    let is_cancelled_fn = move || {
-                        cancelled_runs
-                            .try_lock()
-                            .map(|g| g.contains(&run_id))
-                            .unwrap_or(false)
-                    };
+                    let token = cancel.clone();
+                    let is_cancelled_fn = move || token.is_cancelled();
 
                     let log_tx = self.log_tx.clone();
                     // Persist as well, so compression output shows up in History.
@@ -705,7 +973,7 @@ impl BackupService {
                     let archive_path = match archive_path {
                         Ok(p) => p,
                         Err(e) => {
-                            if self.is_cancelled(run_id).await {
+                            if cancel.is_cancelled() {
                                 return Ok(JobResult {
                                     exit_code: 130,
                                     ..Default::default()
@@ -786,10 +1054,8 @@ impl BackupService {
         // once the drive is mounted (one mount per run)
 
         // Create cancellation checker closure
-        let cancelled_runs = Arc::clone(&self.cancelled_runs);
-        let is_cancelled: providers::CancellationChecker = Arc::new(move |rid: i64| {
-            cancelled_runs.try_lock().map(|guard| guard.contains(&rid)).unwrap_or(false)
-        });
+        let token = cancel.clone();
+        let is_cancelled: providers::CancellationChecker = Arc::new(move |_| token.is_cancelled());
 
         let oauth = match (job.credential_id, credential.as_ref()) {
             (Some(cred_id), Some(data)) => {
@@ -805,6 +1071,20 @@ impl BackupService {
             sync_options.exclude_patterns.push("*.tmp".to_string());
         }
 
+        // For the quick space check: the last completed run's transfer size
+        let last_transfer_bytes: Option<u64> = sqlx::query_scalar::<_, i64>(
+            "SELECT bytes_transferred FROM job_runs \
+             WHERE job_id = ? AND id != ? AND status = 'completed' AND bytes_transferred > 0 \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(job.id)
+        .bind(run_id)
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|b| b as u64);
+
         // Build sync context (uses effective_source_dirs: staging dir when compress is enabled)
         let ctx = Arc::new(SyncContext {
             run_id,
@@ -815,6 +1095,8 @@ impl BackupService {
             log_sender: self.log_tx.clone(),
             log_writer: self.log_writer.clone(),
             is_cancelled,
+            cancel: cancel.clone(),
+            last_transfer_bytes,
             oauth,
         });
 
@@ -1281,7 +1563,7 @@ mod shutdown_tests {
         let dir = tempfile::tempdir().unwrap();
         let job = slow_local_job(&db, dir.path()).await;
 
-        let run_id = service.start_run(job.clone(), None).await.unwrap();
+        let run_id = service.start_run(job.clone(), None).await.unwrap().run_id;
         // Wait until rsync is running
         for _ in 0..100 {
             let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_entries WHERE message LIKE 'Spawned rsync%'")
@@ -1548,7 +1830,7 @@ mod run_event_tests {
         .unwrap()
         .last_insert_rowid();
         let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(id).fetch_one(&db).await.unwrap();
-        let run_id = service.start_run(job, None).await.unwrap();
+        let run_id = service.start_run(job, None).await.unwrap().run_id;
 
         let started = tokio::time::timeout(Duration::from_secs(3), events.recv()).await.unwrap().unwrap();
         assert_eq!((started.kind, started.run_id, started.job_id), (RunEventKind::Started, run_id, id));
@@ -1562,5 +1844,254 @@ mod run_event_tests {
             .await
             .unwrap();
         assert_eq!(status, "failed");
+    }
+}
+
+#[cfg(test)]
+mod run_queue_tests {
+    use super::*;
+
+    async fn setup() -> (SqlitePool, SqlitePool, Arc<BackupService>) {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = Arc::new(BackupService::new(db.clone(), logs_db.clone(), log_tx, None, credentials));
+        (db, logs_db, service)
+    }
+
+    /// A job that fails right away (no mount point), with one schedule
+    async fn add_job(db: &SqlitePool, name: &str) -> (Job, i64) {
+        let id = sqlx::query(
+            "INSERT INTO jobs (name, mount_point, source_dirs, destination_type, destination_config) \
+             VALUES (?, '', '[]', 'local', '{}')",
+        )
+        .bind(name)
+        .execute(db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let schedule = sqlx::query("INSERT INTO schedules (job_id, cron_expression) VALUES (?, '0 3 * * *')")
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+        let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id = ?").bind(id).fetch_one(db).await.unwrap();
+        (job, schedule)
+    }
+
+    async fn status(db: &SqlitePool, run_id: i64) -> String {
+        sqlx::query_as::<_, (String,)>("SELECT status FROM job_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .0
+    }
+
+    async fn next_event(rx: &mut broadcast::Receiver<RunEvent>) -> (RunEventKind, i64) {
+        let e = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.unwrap().unwrap();
+        (e.kind, e.run_id)
+    }
+
+    #[tokio::test]
+    async fn a_run_waits_for_the_slot_then_runs() {
+        let (db, _, service) = setup().await;
+        let (job, _) = add_job(&db, "a").await;
+        let mut events = service.subscribe_events();
+
+        // Another backup holds the only slot
+        let busy = Arc::clone(&service.run_slots).acquire_owned().await.unwrap();
+        let started = service.start_run(job.clone(), None).await.unwrap();
+        assert!(started.queued);
+        assert_eq!(next_event(&mut events).await, (RunEventKind::Queued, started.run_id));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(status(&db, started.run_id).await, "pending");
+        assert!(service.is_job_running(job.id).await);
+
+        drop(busy);
+        assert_eq!(next_event(&mut events).await, (RunEventKind::Started, started.run_id));
+        assert_eq!(next_event(&mut events).await, (RunEventKind::Completed, started.run_id));
+        assert_eq!(status(&db, started.run_id).await, "failed");
+        service.tasks.close();
+        service.tasks.wait().await;
+        assert!(!service.is_job_running(job.id).await);
+    }
+
+    #[tokio::test]
+    async fn a_schedule_queues_one_follow_up_behind_a_running_job() {
+        let (db, _, service) = setup().await;
+        let (job, schedule) = add_job(&db, "a").await;
+        let _busy = Arc::clone(&service.run_slots).acquire_owned().await.unwrap();
+
+        // The job is running (reserved here, as a long run would be)
+        assert!(service.try_reserve_job(job.id).await);
+        assert!(matches!(service.start_run(job.clone(), None).await, Err(StartRunError::AlreadyRunning)));
+        let follow_up = service.start_run(job.clone(), Some(schedule)).await.unwrap();
+        assert!(follow_up.queued);
+        // Only one follow-up
+        assert!(matches!(
+            service.start_run(job.clone(), Some(schedule)).await,
+            Err(StartRunError::AlreadyRunning)
+        ));
+
+        // The running run ending keeps the follow-up in place
+        service.release_job(job.id).await;
+        assert!(service.is_job_running(job.id).await);
+        assert!(matches!(service.start_run(job, None).await, Err(StartRunError::AlreadyRunning)));
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_waiting_run_never_starts_it() {
+        let (db, logs_db, service) = setup().await;
+        let (job, _) = add_job(&db, "a").await;
+        let mut events = service.subscribe_events();
+        let _busy = Arc::clone(&service.run_slots).acquire_owned().await.unwrap();
+
+        let started = service.start_run(job.clone(), None).await.unwrap();
+        assert_eq!(next_event(&mut events).await.0, RunEventKind::Queued);
+        assert_eq!(service.cancel_job_runs(job.id).await.unwrap(), 1);
+        assert_eq!(next_event(&mut events).await, (RunEventKind::Completed, started.run_id));
+
+        assert_eq!(status(&db, started.run_id).await, "cancelled");
+        service.tasks.close();
+        service.tasks.wait().await;
+        assert!(!service.is_job_running(job.id).await);
+        let (starts,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_entries WHERE job_run_id = ? AND message = ?")
+            .bind(started.run_id)
+            .bind(RUN_STARTED_MESSAGE)
+            .fetch_one(&logs_db)
+            .await
+            .unwrap();
+        assert_eq!(starts, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_wakes_waiting_runs() {
+        let (db, _, service) = setup().await;
+        let (job, _) = add_job(&db, "a").await;
+        let _busy = Arc::clone(&service.run_slots).acquire_owned().await.unwrap();
+        let started = service.start_run(job, None).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), service.shutdown(Duration::from_secs(3)))
+            .await
+            .unwrap();
+        assert_eq!(service.tasks.len(), 0);
+        assert_eq!(status(&db, started.run_id).await, "cancelled");
+        let (summary,): (Option<String>,) = sqlx::query_as("SELECT summary FROM job_runs WHERE id = ?")
+            .bind(started.run_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(summary.as_deref(), Some(SHUTDOWN_SUMMARY));
+    }
+}
+
+#[cfg(test)]
+mod log_retention_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn old_logs_go_but_the_newest_and_newest_failed_runs_keep_theirs() {
+        let db = crate::test_helpers::test_db().await;
+        let logs_db = crate::test_helpers::test_db().await;
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = BackupService::new(db.clone(), logs_db.clone(), log_tx, None, credentials);
+        service.set_log_retention_days(Some(30)).await;
+
+        let job = sqlx::query("INSERT INTO jobs (name, mount_point, source_dirs) VALUES ('j', '/m', '[]')")
+            .execute(&db)
+            .await
+            .unwrap()
+            .last_insert_rowid();
+        let old = Utc::now() - chrono::Duration::days(60);
+        let mut runs = Vec::new();
+        // old failed, old completed, old completed (newest finished), recent... in id order
+        for (status, done) in [
+            ("failed", Some(old)),
+            ("completed", Some(old)),
+            ("failed", Some(old)),
+            ("completed", Some(old)),
+            ("completed", Some(Utc::now())),
+            ("pending", None),
+        ] {
+            let id = sqlx::query("INSERT INTO job_runs (job_id, status, completed_at) VALUES (?, ?, ?)")
+                .bind(job)
+                .bind(status)
+                .bind(done)
+                .execute(&db)
+                .await
+                .unwrap()
+                .last_insert_rowid();
+            sqlx::query("INSERT INTO log_entries (job_run_id, level, message) VALUES (?, 'info', 'x')")
+                .bind(id)
+                .execute(&logs_db)
+                .await
+                .unwrap();
+            runs.push(id);
+        }
+
+        // Runs 0, 1, 3 are old and neither the newest finished (4) nor the
+        // newest failed (2); 5 has not finished
+        assert_eq!(service.prune_logs().await.unwrap(), 3);
+        assert_eq!(service.prune_logs().await.unwrap(), 0);
+
+        for (i, id) in runs.iter().enumerate() {
+            let (lines,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_entries WHERE job_run_id = ?")
+                .bind(id)
+                .fetch_one(&logs_db)
+                .await
+                .unwrap();
+            let (pruned,): (bool,) = sqlx::query_as("SELECT log_pruned FROM job_runs WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            let gone = [0, 1, 3].contains(&i);
+            assert_eq!((lines == 0, pruned), (gone, gone), "run index {}", i);
+        }
+
+        // Off: nothing more is removed
+        service.set_log_retention_days(None).await;
+        assert_eq!(service.prune_logs().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn compacting_shrinks_a_mostly_empty_logs_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(dir.path().join("logs.db"))
+            .create_if_missing(true);
+        let logs_db = sqlx::sqlite::SqlitePoolOptions::new().max_connections(2).connect_with(options).await.unwrap();
+        crate::db::run_logs_migrations(&logs_db).await.unwrap();
+        let db = crate::test_helpers::test_db().await;
+        let credentials = Arc::new(CredentialService::new("test-secret", db.clone()));
+        let (log_tx, _) = broadcast::channel(100);
+        let service = BackupService::new(db, logs_db.clone(), log_tx, None, credentials);
+
+        let line = "x".repeat(2000);
+        for _ in 0..2000 {
+            sqlx::query("INSERT INTO log_entries (job_run_id, level, message) VALUES (1, 'info', ?)")
+                .bind(&line)
+                .execute(&logs_db)
+                .await
+                .unwrap();
+        }
+        sqlx::query("DELETE FROM log_entries").execute(&logs_db).await.unwrap();
+        let pages = || async { sqlx::query_scalar::<_, i64>("PRAGMA page_count").fetch_one(&logs_db).await.unwrap() };
+        let before = pages().await;
+
+        // A running backup holds the slot: no compaction
+        let busy = Arc::clone(&service.run_slots).acquire_owned().await.unwrap();
+        service.compact_logs().await.unwrap();
+        assert_eq!(pages().await, before);
+        drop(busy);
+
+        service.compact_logs().await.unwrap();
+        assert!(pages().await < before / 10, "{} -> {}", before, pages().await);
     }
 }

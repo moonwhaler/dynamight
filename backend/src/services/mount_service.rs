@@ -113,13 +113,12 @@ impl MountService {
 
     /// Unmount a mount point
     pub fn unmount(&self, mount_point: &str) -> Result<(), MountError> {
-        // Sync first
-        let _ = Command::new("sync").status();
-
-        // Small delay
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        let status = Command::new("umount").arg(mount_point).status()?;
+        // umount flushes the drive's pending writes itself; retry once if busy
+        let mut status = Command::new("umount").arg(mount_point).status()?;
+        if !status.success() {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            status = Command::new("umount").arg(mount_point).status()?;
+        }
 
         if status.success() {
             Ok(())
@@ -596,10 +595,32 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     pi == plen
 }
 
+/// Free and total bytes of the filesystem holding `path` (like `df`: free
+/// is what an unprivileged user may still use).
+#[cfg(unix)]
+pub fn fs_space(path: &std::path::Path) -> Option<(u64, u64)> {
+    let st = nix::sys::statvfs::statvfs(path).ok()?;
+    let frsize = st.fragment_size() as u64;
+    Some((st.blocks_available() as u64 * frsize, st.blocks() as u64 * frsize))
+}
+
+#[cfg(not(unix))]
+pub fn fs_space(_path: &std::path::Path) -> Option<(u64, u64)> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn fs_space_reports_free_and_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let (free, total) = fs_space(dir.path()).unwrap();
+        assert!(total > 0 && free <= total);
+        assert!(fs_space(std::path::Path::new("/no/such/dir")).is_none());
+    }
 
     #[test]
     fn search_stops_at_the_deadline() {

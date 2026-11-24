@@ -1,6 +1,6 @@
 //! SFTP sync provider for remote SSH servers
 
-use super::common::{self, needs_upload, rel_excluded, LocalEntry, RemoteFile};
+use super::common::{self, needs_upload, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
@@ -473,10 +473,8 @@ impl SftpProvider {
         }
 
         let mut skipped = 0u64;
+        let mut uploads = Vec::new();
         for file in local.files() {
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
-            }
             if !needs_upload(file, remote_files.get(&file.rel)) {
                 skipped += 1;
                 continue;
@@ -488,25 +486,30 @@ impl SftpProvider {
                 result.bytes_transferred += file.size as i64;
                 continue;
             }
-            match upload_file(sftp, file, &path).await {
+            uploads.push((file.clone(), path));
+        }
+        // Several files at once over the one session (SFTP multiplexes requests)
+        common::upload_parallel(&ctx.cancel, uploads, common::PARALLEL_UPLOADS, result, |(file, path)| async move {
+            match upload_file(sftp, &file, &path).await {
                 Ok(()) => {
                     ctx.log_info(&format!("Uploaded: {}", path), "sftp").await;
-                    result.files_transferred += 1;
-                    result.bytes_transferred += file.size as i64;
+                    Ok(file.size)
                 }
                 Err(e) => {
                     ctx.log_error(&format!("Failed to upload {}: {}", path, e), "sftp").await;
-                    result.error_count += 1;
+                    Err(e)
                 }
             }
-        }
+        })
+        .await?;
         if skipped > 0 {
             ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "sftp").await;
         }
 
         if ctx.options.delete_extraneous {
             let local_paths = local.rel_paths();
-            let is_stale = |rel: &String| !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options);
+            let excludes = common::ExcludeMatcher::new(&ctx.options);
+            let is_stale = |rel: &String| !local_paths.contains(rel) && !excludes.rel_excluded(source_dir, rel);
 
             let mut files: Vec<&String> = remote_files.keys().filter(|r| is_stale(r)).collect();
             files.sort();
@@ -581,39 +584,46 @@ async fn list_remote_tree(
         return Ok((files, dirs));
     }
 
-    let mut queue = vec![String::new()];
-    while let Some(prefix) = queue.pop() {
-        if ctx.check_cancelled() {
-            return Err(ProviderError::Cancelled);
-        }
-        let dir_path = if prefix.is_empty() { root.to_string() } else { format!("{}/{}", root, prefix) };
-        let entries = sftp
-            .read_dir(dir_path.clone())
-            .await
-            .map_err(|e| ProviderError::ConnectionError(format!("Cannot list {}: {}", dir_path, e)))?;
-        for entry in entries {
-            let name = entry.file_name();
-            if name == "." || name == ".." {
-                continue;
+    common::walk_remote(
+        &ctx.cancel,
+        String::new(),
+        common::PARALLEL_LISTINGS,
+        |prefix: String| async move {
+            let dir_path = if prefix.is_empty() { root.to_string() } else { format!("{}/{}", root, prefix) };
+            let entries = sftp
+                .read_dir(dir_path.clone())
+                .await
+                .map_err(|e| ProviderError::ConnectionError(format!("Cannot list {}: {}", dir_path, e)))?;
+            Ok((prefix, entries))
+        },
+        |prefix, entries| {
+            let mut subdirs = Vec::new();
+            for entry in entries {
+                let name = entry.file_name();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                let rel = if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) };
+                let ft = entry.file_type();
+                if ft.is_dir() {
+                    dirs.insert(rel.clone());
+                    subdirs.push(rel);
+                } else if ft.is_file() {
+                    let meta = entry.metadata();
+                    files.insert(
+                        rel,
+                        RemoteFile {
+                            size: meta.size.unwrap_or(0),
+                            mtime: meta.mtime.map(i64::from).unwrap_or(0),
+                            id: None,
+                        },
+                    );
+                }
             }
-            let rel = if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) };
-            let ft = entry.file_type();
-            if ft.is_dir() {
-                dirs.insert(rel.clone());
-                queue.push(rel);
-            } else if ft.is_file() {
-                let meta = entry.metadata();
-                files.insert(
-                    rel,
-                    RemoteFile {
-                        size: meta.size.unwrap_or(0),
-                        mtime: meta.mtime.map(i64::from).unwrap_or(0),
-                        id: None,
-                    },
-                );
-            }
-        }
-    }
+            subdirs
+        },
+    )
+    .await?;
     Ok((files, dirs))
 }
 

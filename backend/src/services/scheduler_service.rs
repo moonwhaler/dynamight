@@ -4,7 +4,7 @@ use chrono_tz::Tz;
 use crate::models::parse_cron;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 
 pub struct SchedulerService {
     db: SqlitePool,
@@ -25,7 +25,16 @@ impl SchedulerService {
             tracing::error!("Failed to update schedule times: {}", e);
         }
 
-        let mut ticker = interval(Duration::from_secs(60));
+        // Tick one second after each full minute, so a schedule (cron has
+        // minute resolution) starts right on time instead of up to a minute late
+        let now = Utc::now();
+        let into_minute = Duration::from_millis(now.timestamp_subsec_millis() as u64)
+            + Duration::from_secs(now.timestamp().rem_euclid(60) as u64);
+        let first = tokio::time::Instant::now() + (Duration::from_secs(61) - into_minute);
+        let mut ticker = tokio::time::interval_at(first, Duration::from_secs(60));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // The first check runs right away (missed schedules after a restart)
+        self.check_and_run_due_jobs().await;
         let mut tick: u64 = 0;
 
         loop {
@@ -138,11 +147,12 @@ impl SchedulerService {
                 }
             };
 
-            // Skipped if a manual or other scheduled run is active
+            // Queued behind other backups (and behind a run of this job, as
+            // one follow-up); skipped only when a run of the job already waits
             match self.backup_service.start_run(job, Some(schedule.schedule_id)).await {
                 Ok(_) => {}
                 Err(StartRunError::AlreadyRunning) => tracing::warn!(
-                    "Job {} is already running, skipping scheduled run",
+                    "Job {} already has a run waiting, skipping scheduled run",
                     schedule.job_name
                 ),
                 Err(StartRunError::ShuttingDown) => return,

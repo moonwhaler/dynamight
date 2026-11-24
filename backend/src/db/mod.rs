@@ -177,6 +177,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await;
 
+    // Set once a run's log lines were removed by the log retention
+    let _ = sqlx::query("ALTER TABLE job_runs ADD COLUMN log_pruned INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }

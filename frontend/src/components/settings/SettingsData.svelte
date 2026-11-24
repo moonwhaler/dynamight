@@ -8,25 +8,30 @@
   import { showToast } from '../ui/Toast.svelte';
   import * as m from '$lib/paraglide/messages.js';
 
-  type Key = 'max_runs_per_job' | 'delete_verification_window_minutes' | 'search_timeout_seconds';
+  type Key = 'max_runs_per_job' | 'log_retention_days' | 'delete_verification_window_minutes' | 'search_timeout_seconds';
+  /** Settings where an empty field means "no limit" */
+  const optional: Key[] = ['max_runs_per_job', 'log_retention_days'];
 
   // Values as stored on the server, and the text in each input
   let stored = $state<Record<Key, number | null>>({
     max_runs_per_job: null,
+    log_retention_days: 90,
     delete_verification_window_minutes: 5,
     search_timeout_seconds: 10,
   });
   let input = $state<Record<Key, string>>({
     max_runs_per_job: '',
+    log_retention_days: '90',
     delete_verification_window_minutes: '5',
     search_timeout_seconds: '10',
   });
   let saving = $state<Key | 'sizes' | null>(null);
   let showDirectorySizes = $state(false);
 
-  /** Allowed range per setting; max_runs_per_job may also be empty (unlimited) */
+  /** Allowed range per setting; the optional ones may also be empty (no limit) */
   const limits: Record<Key, { min: number; max: number; invalid: () => string }> = {
     max_runs_per_job: { min: 1, max: 1_000_000, invalid: m.settings_retention_invalid },
+    log_retention_days: { min: 1, max: 36_500, invalid: m.settings_log_retention_invalid },
     delete_verification_window_minutes: { min: 1, max: 60, invalid: m.settings_delete_verification_invalid },
     search_timeout_seconds: { min: 3, max: 60, invalid: m.settings_search_timeout_invalid },
   };
@@ -36,11 +41,13 @@
       const s = await api.settings.get();
       stored = {
         max_runs_per_job: s.max_runs_per_job,
+        log_retention_days: s.log_retention_days,
         delete_verification_window_minutes: s.delete_verification_window_minutes ?? 5,
         search_timeout_seconds: s.search_timeout_seconds ?? 10,
       };
       input = {
         max_runs_per_job: s.max_runs_per_job?.toString() ?? '',
+        log_retention_days: s.log_retention_days?.toString() ?? '',
         delete_verification_window_minutes: String(s.delete_verification_window_minutes ?? 5),
         search_timeout_seconds: String(s.search_timeout_seconds ?? 10),
       };
@@ -52,7 +59,7 @@
 
   async function save(key: Key) {
     const text = input[key].trim();
-    const value = text === '' && key === 'max_runs_per_job' ? null : parseInt(text, 10);
+    const value = text === '' && optional.includes(key) ? null : parseInt(text, 10);
     const { min, max, invalid } = limits[key];
     if (value !== null && (Number.isNaN(value) || value < min || value > max)) {
       showToast({ message: invalid(), variant: 'error' });
@@ -110,14 +117,24 @@
 
 <div class="space-y-6">
   <SettingsSection title={m.settings_retention_title()} description={m.settings_retention_description()}>
-    {@render numberField(
-      'max_runs_per_job',
-      'max-runs',
-      m.settings_retention_max_runs(),
-      m.settings_retention_help(),
-      m.settings_retention_unit(),
-      m.settings_retention_placeholder(),
-    )}
+    <div class="space-y-6">
+      {@render numberField(
+        'max_runs_per_job',
+        'max-runs',
+        m.settings_retention_max_runs(),
+        m.settings_retention_help(),
+        m.settings_retention_unit(),
+        m.settings_retention_placeholder(),
+      )}
+      {@render numberField(
+        'log_retention_days',
+        'log-days',
+        m.settings_log_retention_label(),
+        m.settings_log_retention_help(),
+        m.settings_log_retention_unit(),
+        m.settings_log_retention_placeholder(),
+      )}
+    </div>
   </SettingsSection>
 
   <SettingsSection title={m.settings_filebrowser_title()}>

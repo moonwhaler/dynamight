@@ -25,12 +25,13 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - A page per job with a summary sentence, recent runs, schedules, sources and destination
   - Multiple source directories per job
   - Cron-based scheduling (daily, weekly, monthly, custom) with timezone support
-  - Manual and scheduled execution
+  - Manual and scheduled execution, one backup at a time: further runs wait in a queue
   - Real-time log streaming via WebSocket
 
 - **Directory Compression**
   - Archive source directories (tar.gz or zip) before uploading
-  - Optional archive encryption (AES-256-CBC via openssl, `.enc` files)
+  - Uses all CPU cores for tar.gz when `pigz` is installed
+  - Optional archive encryption (AES-256-CBC via openssl, `.enc` files), streamed without an unencrypted copy on disk
   - Timestamped versioning with configurable per-directory retention
   - Custom archive name prefixes
   - Store-only mode (archive without compression)
@@ -46,7 +47,7 @@ A self-hosted backup management system with a web UI, supporting multiple destin
   - Free-space indicators for local destinations
   - Activity list of all runs, grouped by day, with the error line of failed runs and status, job, and date-range filters
   - Log viewer for every run (live while running, stored afterwards) with search, level filter, copy and download
-  - Configurable history retention
+  - Configurable history retention: runs per job, and days to keep full logs (90 by default)
 
 - **File Browser**
   - Browse allowed local paths and USB drives directly in the UI
@@ -473,7 +474,7 @@ When editing an OAuth credential, fields left empty keep their stored values.
 
 ### How Cloud Sync Works
 
-All remote providers (S3, SFTP, WebDAV, Google Drive, OneDrive) sync incrementally. Each run lists the destination first and only uploads files that are new, changed in size, or modified locally after the copy on the destination. Files are streamed from disk, so large files do not have to fit into memory. S3 uses multipart upload for files above 64 MiB, and Google Drive and OneDrive use resumable chunked uploads.
+All remote providers (S3, SFTP, WebDAV, Google Drive, OneDrive) sync incrementally. Each run lists the destination first and only uploads files that are new, changed in size, or modified locally after the copy on the destination. SFTP, WebDAV, Google Drive and OneDrive list several folders and upload several files at the same time (four, three for Google Drive), which speeds up folders with many small files. Files are streamed from disk, so large files do not have to fit into memory. S3 uses multipart upload for files above 64 MiB, and Google Drive and OneDrive use resumable chunked uploads.
 
 With **Delete extraneous files** enabled, files that no longer exist in the source are removed from the destination. Google Drive moves them to the trash, and OneDrive moves them to the recycle bin. Files that match an exclude pattern are never deleted. Throttled requests (HTTP 429) and temporary server errors are retried, honoring `Retry-After`.
 
@@ -517,6 +518,10 @@ Schedules are part of a job: open the job, go to its **Settings** tab and the **
 
 A schedule can be paused with its switch. The same schedule cannot be added twice. Times are in the server's timezone (see below); when your browser is in another zone, the zone is shown next to the times.
 
+Backups run one at a time. A run that starts while another backup is running waits in a queue (shown as **Queued**) and starts as soon as the other one finishes; **Stop** also removes a queued run. When a schedule fires while its own job is still running, one follow-up run is queued; further triggers in the meantime are skipped. After the server was down, missed schedules run once each, one after another.
+
+Before copying to a local or USB destination, the space check compares the free space with what the job's last run transferred. Only when that does not clearly fit (or on the first run) does it measure the transfer with an rsync dry run. **Check space** in the job's menu always measures.
+
 ### Two-Factor Authentication
 
 Enable 2FA for additional security:
@@ -533,7 +538,7 @@ Enable 2FA for additional security:
 - **Jobs**: all jobs as a table or cards; filter by state and sort by name, status, last good copy or next run. Each job has its own page with **Overview**, **Runs** and **Settings** tabs
 - **Activity**: every run of every job, newest first, grouped by day
 - **Files**: browse allowed paths and USB drives
-- **Settings**: general behaviour, appearance, notifications, credentials, account, two-factor authentication, data (run history retention, configuration backup) and version information
+- **Settings**: general behaviour, appearance, notifications, credentials, account, two-factor authentication, data (run history and log retention, configuration backup) and version information
 
 Unsaved changes to a job are kept until you save or discard them; leaving the page asks first.
 
@@ -627,7 +632,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | `/api/jobs/:id` | GET | Get job details |
 | `/api/jobs/:id` | PUT | Update job |
 | `/api/jobs/:id` | DELETE | Delete job |
-| `/api/jobs/:id/run` | POST | Run job |
+| `/api/jobs/:id/run` | POST | Run job (returns `runId` and `queued`) |
 | `/api/jobs/:id/cancel` | POST | Cancel running job |
 | `/api/jobs/:id/clone` | POST | Clone job |
 | `/api/jobs/:id/check-space` | POST | Check free space at the destination |
@@ -654,7 +659,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 | `/api/runs/:id` | DELETE | Delete run |
 | `/api/runs/:id/logs` | GET | Get run logs (`limit`, `offset`, `level` as a comma list, `q` to search) |
 | `/api/ws/logs/:runId` | WS | Stream live logs |
-| `/api/ws/status` | WS | Global status updates |
+| `/api/ws/status` | WS | Run events: `job_queued`, `job_started`, `job_completed` (with `run_id`, `job_id`), and `resync` when events were missed |
 
 ### Credentials
 
@@ -701,7 +706,7 @@ For complete API documentation, see [docs/API.md](docs/API.md).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/settings` | GET/PUT | App settings |
+| `/api/settings` | GET/PUT | App settings (`max_runs_per_job` and `log_retention_days`: a number, or `null` for no limit; fields left out are not changed) |
 | `/api/settings/notifications` | GET/PUT | Notification settings |
 | `/api/settings/notifications/test` | POST | Send a test notification |
 | `/api/config/export` | POST | Export the encrypted configuration backup |
