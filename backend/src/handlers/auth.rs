@@ -210,7 +210,7 @@ pub async fn login(
     };
 
     // Verify password
-    let valid = AuthService::verify_password(&req.password, &user.password_hash).unwrap_or(false);
+    let valid = AuthService::verify_password_async(&req.password, &user.password_hash).await;
 
     if !valid {
         state.rate_limit_service.record_failure(&client_ip);
@@ -267,7 +267,20 @@ pub async fn login(
         .into_response()
 }
 
-pub async fn logout(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+    // Revoke the token itself: clearing the cookie alone would leave a copied
+    // token valid until it expires.
+    if let Some(token) = extract_token_from_headers(&headers) {
+        if let Ok(claims) = state.auth_service.validate_token(&token) {
+            let expires_at = chrono::DateTime::<Utc>::from_timestamp(claims.exp as i64, 0).unwrap_or_else(Utc::now);
+            let _ = sqlx::query("INSERT OR IGNORE INTO revoked_tokens (jti, expires_at) VALUES (?, ?)")
+                .bind(&claims.jti)
+                .bind(expires_at)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
     // Clear cookie with Secure flag based on configuration
     let cookie = build_logout_cookie(state.config.secure_cookies);
 
@@ -293,14 +306,14 @@ pub async fn change_password(
 
     // Verify current password
     let valid =
-        AuthService::verify_password(&req.current_password, &user.password_hash).unwrap_or(false);
+        AuthService::verify_password_async(&req.current_password, &user.password_hash).await;
 
     if !valid {
         return ApiError::password_incorrect().into_response();
     }
 
     // Hash new password
-    let new_hash = match AuthService::hash_password(&req.new_password) {
+    let new_hash = match AuthService::hash_password_async(&req.new_password).await {
         Ok(h) => h,
         Err(_) => {
             return ApiError::new(crate::errors::ErrorCode::PasswordHashFailed).into_response();
@@ -345,14 +358,6 @@ pub async fn setup_required(State(state): State<Arc<AppState>>) -> impl IntoResp
     }))
 }
 
-/// GET /auth/token - Return the current JWT token for WebSocket authentication
-pub async fn get_token(headers: axum::http::HeaderMap) -> impl IntoResponse {
-    match extract_token_from_headers(&headers) {
-        Some(t) => Json(json!({"token": t})).into_response(),
-        None => ApiError::not_authenticated().into_response(),
-    }
-}
-
 pub async fn setup(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SetupRequest>,
@@ -368,7 +373,7 @@ pub async fn setup(
     }
 
     // Hash password
-    let password_hash = match AuthService::hash_password(&req.password) {
+    let password_hash = match AuthService::hash_password_async(&req.password).await {
         Ok(h) => h,
         Err(_) => {
             return ApiError::new(crate::errors::ErrorCode::PasswordHashFailed).into_response();
@@ -502,6 +507,7 @@ pub async fn setup_from_backup(
         &state.credential_service,
         backup,
         config_backup_service::ImportStrategy::Replace,
+        state.config.timezone,
     )
     .await;
 

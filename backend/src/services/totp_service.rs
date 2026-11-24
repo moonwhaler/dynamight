@@ -80,10 +80,55 @@ impl TotpService {
         Ok(format!("data:image/png;base64,{}", base64_png))
     }
 
-    /// Verify a TOTP code against a secret
+    /// Verify a TOTP code against a secret (without replay protection; the
+    /// handlers use [`accept_code`](Self::accept_code))
+    #[cfg(test)]
     pub fn verify_code(secret: &str, code: &str) -> Result<bool, TotpError> {
         let totp = Self::create_totp(secret)?;
         Ok(totp.check_current(code).unwrap_or(false))
+    }
+
+    /// Time step (unix time / 30 s) the code belongs to, if it is valid now
+    /// (allowing one step of clock skew either way).
+    pub fn matching_step(secret: &str, code: &str) -> Result<Option<u64>, TotpError> {
+        let totp = Self::create_totp(secret)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Ok(Self::matching_step_at(&totp, code.trim(), now))
+    }
+
+    fn matching_step_at(totp: &TOTP, code: &str, now: u64) -> Option<u64> {
+        let step = totp.step;
+        let current = now / step;
+        [current.saturating_sub(1), current, current + 1]
+            .into_iter()
+            .find(|&s| {
+                let expected = totp.generate(s * step);
+                // constant-time comparison
+                expected.len() == code.len()
+                    && expected.bytes().zip(code.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+            })
+    }
+
+    /// Accept a TOTP code at most once: the code must be valid and belong to a
+    /// later time step than the last accepted code of this user (so a code that
+    /// was seen once, e.g. by shoulder surfing, cannot be replayed).
+    pub async fn accept_code(db: &sqlx::SqlitePool, user_id: i64, secret: &str, code: &str) -> bool {
+        let Ok(Some(step)) = Self::matching_step(secret, code) else {
+            return false;
+        };
+        sqlx::query(
+            "UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)",
+        )
+        .bind(step as i64)
+        .bind(user_id)
+        .bind(step as i64)
+        .execute(db)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .unwrap_or(false)
     }
 
     /// Generate recovery codes (8 codes of format XXXX-XXXX-XXXX)
@@ -153,6 +198,12 @@ mod tests {
         let valid_code = totp.generate_current().unwrap();
 
         assert!(TotpService::verify_code(&secret, &valid_code).unwrap());
+        assert!(TotpService::matching_step(&secret, &valid_code).unwrap().is_some());
+        let totp = TotpService::create_totp(&secret).unwrap();
+        let code_at = totp.generate(1_000 * 30);
+        assert_eq!(TotpService::matching_step_at(&totp, &code_at, 1_000 * 30 + 5), Some(1_000));
+        assert_eq!(TotpService::matching_step_at(&totp, &code_at, 1_001 * 30 + 5), Some(1_000));
+        assert_eq!(TotpService::matching_step_at(&totp, &code_at, 1_003 * 30), None);
         assert!(!TotpService::verify_code(&secret, "000000").unwrap());
     }
 

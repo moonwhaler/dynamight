@@ -424,6 +424,7 @@ mod tests {
             provider_options: None,
             space_check: "fail".to_string(),
             compress_dirs: None,
+            include_only: None,
         };
         job.sync_options = Some(serde_json::to_string(&sync_opts).unwrap());
         let opts = job.get_sync_options();

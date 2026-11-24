@@ -39,8 +39,9 @@ pub fn sanitize_dir_name(name: &str) -> String {
 /// `store_only` affects tar-based formats: TarGz in store-only mode produces a
 /// plain `.tar` file (no gzip compression). Zip always uses `.zip` regardless.
 ///
-/// `encrypted` adds a `.enc` suffix for tar-based formats (openssl AES-256).
-/// Zip encryption is built into the format so the extension does not change.
+/// `encrypted` adds a `.enc` suffix (openssl AES-256-CBC). This applies to zip
+/// too: zip's built-in encryption is weak and needs the password on the
+/// command line, so password-protected zips are encrypted with openssl as well.
 pub fn format_extension(format: &CompressFormat, store_only: bool, encrypted: bool) -> &'static str {
     match format {
         CompressFormat::TarGz => match (store_only, encrypted) {
@@ -49,7 +50,13 @@ pub fn format_extension(format: &CompressFormat, store_only: bool, encrypted: bo
             (true, false) => "tar",
             (true, true) => "tar.enc",
         },
-        CompressFormat::Zip => "zip",
+        CompressFormat::Zip => {
+            if encrypted {
+                "zip.enc"
+            } else {
+                "zip"
+            }
+        }
     }
 }
 
@@ -88,30 +95,50 @@ pub fn generate_archive_name(dir_name: &str, opts: &CompressDirsOptions, job_id:
 
 /// Poll a spawned child process until it exits or cancellation is requested.
 ///
+/// stderr is drained concurrently: if it is only read after exit, a process
+/// that writes more than one pipe buffer of warnings blocks forever. Up to
+/// `MAX_STDERR_LINES` lines are kept; they are logged through `log_fn` and the
+/// last few are included in the error on failure.
+///
+/// `warning_codes` are non-zero exit codes that still mean the output is
+/// usable (logged as a warning, not an error).
+///
 /// On failure or cancellation the `cleanup_path` file is removed. This helper
-/// is called for both the compression and encryption phases in the two-step
-/// encrypted-tar workflow.
+/// is called for both the archiving and encryption phases.
 async fn run_and_poll(
     mut child: tokio::process::Child,
     cleanup_path: &Path,
     is_cancelled: &impl Fn() -> bool,
     cancel_msg: &'static str,
+    warning_codes: &[i32],
+    log_fn: &impl Fn(String),
 ) -> anyhow::Result<()> {
-    let result: anyhow::Result<()> = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if status.success() {
-                    break Ok(());
-                } else {
-                    break Err(anyhow::anyhow!(
-                        "Process exited with code {}",
-                        status.code().unwrap_or(-1)
-                    ));
+    const MAX_STDERR_LINES: usize = 50;
+
+    let stderr_task = child.stderr.take().map(|stderr| {
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            let mut kept: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+            let mut total = 0usize;
+            while let Ok(Some(line)) = lines.next_line().await {
+                total += 1;
+                if kept.len() == MAX_STDERR_LINES {
+                    kept.pop_front();
                 }
+                kept.push_back(line);
             }
+            (kept, total)
+        })
+    });
+
+    let status: anyhow::Result<std::process::ExitStatus> = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
             Ok(None) => {
                 if is_cancelled() {
                     let _ = child.kill().await;
+                    let _ = child.wait().await;
                     let _ = tokio::fs::remove_file(cleanup_path).await;
                     return Err(anyhow::anyhow!("{}", cancel_msg));
                 }
@@ -120,6 +147,37 @@ async fn run_and_poll(
             Err(e) => break Err(anyhow::anyhow!("Failed to check process status: {}", e)),
         }
     };
+
+    let (stderr_lines, stderr_total) = match stderr_task {
+        Some(task) => task.await.unwrap_or_default(),
+        None => Default::default(),
+    };
+
+    let result = match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => {
+            let code = status.code().unwrap_or(-1);
+            if warning_codes.contains(&code) {
+                log_fn(format!("Warning: process exited with code {} (archive was still created)", code));
+                Ok(())
+            } else {
+                let tail: Vec<&str> = stderr_lines.iter().rev().take(5).rev().map(String::as_str).collect();
+                Err(anyhow::anyhow!(
+                    "Process exited with code {}{}",
+                    code,
+                    if tail.is_empty() { String::new() } else { format!(": {}", tail.join(" | ")) }
+                ))
+            }
+        }
+        Err(e) => Err(e),
+    };
+
+    for line in &stderr_lines {
+        log_fn(line.clone());
+    }
+    if stderr_total > stderr_lines.len() {
+        log_fn(format!("({} earlier warning lines omitted)", stderr_total - stderr_lines.len()));
+    }
 
     if result.is_err() {
         let _ = tokio::fs::remove_file(cleanup_path).await;
@@ -254,19 +312,23 @@ pub async fn compress_directory(
         ));
     }
 
+    // Phase 1: create the archive. With a password it goes to an intermediate
+    // file first, which phase 2 encrypts with openssl.
+    let raw_path = if has_password {
+        staging_dir.join(format!("{}.inter.{}.tmp", archive_name, run_id))
+    } else {
+        tmp_path.clone()
+    };
+
     match &opts.format {
         CompressFormat::Zip => {
             let mut cmd = tokio::process::Command::new("zip");
             if opts.store_only {
                 cmd.arg("-0"); // store only, no compression
             }
-            cmd.arg("-r");
-            if has_password {
-                if let Some(ref pass) = opts.password {
-                    cmd.args(["-P", pass.as_str()]);
-                }
-            }
-            cmd.args([tmp_path.to_str().unwrap_or_default(), dir_name]);
+            // -y stores symlinks as links instead of following them
+            cmd.args(["-r", "-y"]);
+            cmd.args([raw_path.to_str().unwrap_or_default(), dir_name]);
             // -x patterns must come AFTER the source argument (Info-ZIP requirement)
             for rel in &rel_excludes {
                 cmd.args(["-x", rel.as_str()]);
@@ -280,110 +342,84 @@ pub async fn compress_directory(
                 .spawn()
                 .context("Failed to spawn zip. Ensure zip is installed.")?;
 
-            run_and_poll(child, &tmp_path, &is_cancelled, "Archiving cancelled").await?;
+            // zip exit 18 = some files could not be read; the archive is still written
+            run_and_poll(child, &raw_path, &is_cancelled, "Archiving cancelled", &[18], &log_fn).await?;
         }
 
         CompressFormat::TarGz => {
             // `-z` for gzip compression; omit for store-only (plain tar)
             let tar_flags = if opts.store_only { "-cpf" } else { "-czpf" };
 
-            if has_password {
-                let password = opts.password.as_deref().unwrap();
-
-                // Phase 1: Create the tar archive to an intermediate temp file.
-                // The final output will be the openssl-encrypted version.
-                let inter_path =
-                    staging_dir.join(format!("{}.inter.{}.tmp", archive_name, run_id));
-
-                // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
-                let mut tar_cmd = tokio::process::Command::new("tar");
-                tar_cmd.args([
-                    tar_flags,
-                    inter_path.to_str().unwrap_or_default(),
-                    "--numeric-owner",
-                    "-C",
-                    parent_dir.to_str().unwrap_or_default(),
-                ]);
-                for rel in &rel_excludes {
-                    tar_cmd.arg(format!("--exclude={}", rel));
-                }
-                tar_cmd.arg(dir_name);
-                let tar_child = tar_cmd
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .context(
-                        "Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).",
-                    )?;
-
-                run_and_poll(tar_child, &inter_path, &is_cancelled, "Archiving cancelled")
-                    .await?;
-
-                // Phase 2: Encrypt the intermediate archive with openssl AES-256-CBC.
-                // Password is passed via stdin to avoid exposing it in the process list.
-                log_fn("Encrypting archive (AES-256-CBC)".to_string());
-
-                let mut enc_child = tokio::process::Command::new("openssl")
-                    .args([
-                        "enc",
-                        "-aes-256-cbc",
-                        "-pbkdf2",
-                        "-in",
-                        inter_path.to_str().unwrap_or_default(),
-                        "-out",
-                        tmp_path.to_str().unwrap_or_default(),
-                        "-pass",
-                        "stdin",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .context("Failed to spawn openssl. Ensure openssl is installed.")?;
-
-                // Write password to openssl's stdin and close the pipe
-                if let Some(mut stdin) = enc_child.stdin.take() {
-                    use tokio::io::AsyncWriteExt;
-                    let _ = stdin.write_all(password.as_bytes()).await;
-                    // stdin is dropped here, closing the pipe and signalling EOF to openssl
-                }
-
-                let enc_result =
-                    run_and_poll(enc_child, &tmp_path, &is_cancelled, "Encryption cancelled")
-                        .await;
-
-                // Always remove the intermediate unencrypted archive — even on success
-                let _ = tokio::fs::remove_file(&inter_path).await;
-
-                enc_result?;
-            } else {
-                // No password: write archive directly to tmp_path
-                // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
-                let mut cmd = tokio::process::Command::new("tar");
-                cmd.args([
-                    tar_flags,
-                    tmp_path.to_str().unwrap_or_default(),
-                    "--numeric-owner",
-                    "-C",
-                    parent_dir.to_str().unwrap_or_default(),
-                ]);
-                for rel in &rel_excludes {
-                    cmd.arg(format!("--exclude={}", rel));
-                }
-                cmd.arg(dir_name);
-                let child = cmd
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .context(
-                        "Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).",
-                    )?;
-
-                run_and_poll(child, &tmp_path, &is_cancelled, "Archiving cancelled").await?;
+            // --exclude flags must appear BEFORE the source dir argument (GNU tar requirement)
+            let mut cmd = tokio::process::Command::new("tar");
+            cmd.args([
+                tar_flags,
+                raw_path.to_str().unwrap_or_default(),
+                "--numeric-owner",
+                "-C",
+                parent_dir.to_str().unwrap_or_default(),
+            ]);
+            for rel in &rel_excludes {
+                cmd.arg(format!("--exclude={}", rel));
             }
+            cmd.arg(dir_name);
+            let child = cmd
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .context("Failed to spawn tar. Ensure GNU tar is installed (not BusyBox tar).")?;
+
+            // GNU tar exit 1 = some files changed while being read; the archive is complete
+            run_and_poll(child, &raw_path, &is_cancelled, "Archiving cancelled", &[1], &log_fn).await?;
         }
+    }
+
+    // Phase 2: encrypt with openssl AES-256-CBC. The password is passed via
+    // stdin so it never shows up in the process list (zip -P would expose it).
+    if has_password {
+        let password = opts.password.as_deref().unwrap_or_default();
+        log_fn("Encrypting archive (AES-256-CBC)".to_string());
+
+        let enc_child = tokio::process::Command::new("openssl")
+            .args([
+                "enc",
+                "-aes-256-cbc",
+                "-pbkdf2",
+                "-in",
+                raw_path.to_str().unwrap_or_default(),
+                "-out",
+                tmp_path.to_str().unwrap_or_default(),
+                "-pass",
+                "stdin",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+
+        let mut enc_child = match enc_child {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&raw_path).await;
+                return Err(anyhow::Error::new(e).context("Failed to spawn openssl. Ensure openssl is installed."));
+            }
+        };
+
+        // Write password to openssl's stdin and close the pipe
+        if let Some(mut stdin) = enc_child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(password.as_bytes()).await;
+            // stdin is dropped here, closing the pipe and signalling EOF to openssl
+        }
+
+        let enc_result =
+            run_and_poll(enc_child, &tmp_path, &is_cancelled, "Encryption cancelled", &[], &log_fn).await;
+
+        // Always remove the intermediate unencrypted archive, even on success
+        let _ = tokio::fs::remove_file(&raw_path).await;
+
+        enc_result?;
     }
 
     // Atomic rename: temp → final path
@@ -564,12 +600,12 @@ mod tests {
     }
 
     #[test]
-    fn format_extension_zip_always_zip() {
-        // Zip ignores store_only and encrypted flags for the extension
+    fn format_extension_zip() {
+        // Zip ignores store_only; encryption (openssl) adds .enc like tar
         assert_eq!(format_extension(&CompressFormat::Zip, false, false), "zip");
         assert_eq!(format_extension(&CompressFormat::Zip, true, false), "zip");
-        assert_eq!(format_extension(&CompressFormat::Zip, false, true), "zip");
-        assert_eq!(format_extension(&CompressFormat::Zip, true, true), "zip");
+        assert_eq!(format_extension(&CompressFormat::Zip, false, true), "zip.enc");
+        assert_eq!(format_extension(&CompressFormat::Zip, true, true), "zip.enc");
     }
 
     // --- generate_archive_name tests ---
@@ -648,5 +684,48 @@ mod tests {
         let name = generate_archive_name("docs", &opts, 1);
         // Empty password should not add .enc
         assert_eq!(name, "docs_1.tar.gz");
+    }
+}
+
+#[cfg(test)]
+mod run_and_poll_tests {
+    use super::*;
+
+    fn sh(script: &str) -> tokio::process::Child {
+        tokio::process::Command::new("sh")
+            .args(["-c", script])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn does_not_deadlock_on_large_stderr() {
+        // ~400 KB of stderr: far more than a pipe buffer
+        let child = sh("i=0; while [ $i -lt 8000 ]; do echo 'warning: some long tar message about a file' >&2; i=$((i+1)); done");
+        let logged = std::sync::Mutex::new(0usize);
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            run_and_poll(child, Path::new("/nonexistent"), &|| false, "cancelled", &[], &|_| {
+                *logged.lock().unwrap() += 1;
+            }),
+        )
+        .await
+        .expect("run_and_poll hung on a full stderr pipe");
+        assert!(res.is_ok());
+        assert!(*logged.lock().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn warning_exit_code_is_ok_and_error_includes_stderr() {
+        let ok = run_and_poll(sh("exit 1"), Path::new("/nonexistent"), &|| false, "c", &[1], &|_| {}).await;
+        assert!(ok.is_ok());
+
+        let err = run_and_poll(sh("echo 'disk full' >&2; exit 2"), Path::new("/nonexistent"), &|| false, "c", &[1], &|_| {})
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("code 2"));
+        assert!(err.to_string().contains("disk full"));
     }
 }

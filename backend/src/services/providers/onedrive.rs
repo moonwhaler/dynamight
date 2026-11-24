@@ -1,14 +1,35 @@
 //! OneDrive sync provider using Microsoft Graph API
+//!
+//! Sync is incremental: the destination folder tree is listed once, files of
+//! the same size that were modified at or after the local file are skipped,
+//! and changed files are replaced. With "delete extraneous" enabled, remote
+//! items that no longer exist locally are deleted (they go to the OneDrive
+//! recycle bin).
+//!
+//! Items are addressed by ID after the target folder is resolved; names that
+//! go into URLs are percent-encoded, so names with `#`, `%` or spaces work.
+//!
+//! API references:
+//! - Upload sessions: <https://learn.microsoft.com/graph/api/driveitem-createuploadsession>
+//! - Throttling: <https://learn.microsoft.com/graph/throttling>
+//! - Invalid names: <https://support.microsoft.com/office/restrictions-and-limitations-in-onedrive-and-sharepoint-64883a5d-228e-48f5-b3d2-eb39e07630fa>
 
+use super::common::{self, needs_upload, parse_rfc3339, read_chunk, rel_excluded, send_with_retry, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, StorageInfo, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
+/// Files up to this size use a single PUT request
+const SIMPLE_UPLOAD_LIMIT: u64 = 4 * 1024 * 1024;
+/// Upload session chunk size: must be a multiple of 320 KiB and below 60 MiB
+const CHUNK_SIZE: u64 = 32 * 320 * 1024;
+const MAX_CHUNK_RETRIES: u32 = 6;
 
 pub struct OneDriveProvider {
     client: Client,
@@ -33,8 +54,107 @@ impl Default for OneDriveProvider {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct DriveItem {
+    id: String,
+    name: String,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    folder: Option<serde_json::Value>,
+    #[serde(default)]
+    last_modified_date_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemList {
+    #[serde(default)]
+    value: Vec<DriveItem>,
+    #[serde(rename = "@odata.nextLink")]
+    next_link: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UploadSession {
     upload_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadStatus {
+    #[serde(default)]
+    next_expected_ranges: Vec<String>,
+}
+
+/// Percent-encode one path segment for Graph path-based addressing.
+fn encode_segment(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    for b in segment.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+/// Why OneDrive would reject this file or folder name, if it would.
+fn invalid_name_reason(name: &str) -> Option<&'static str> {
+    const RESERVED: &[&str] = &[
+        ".lock", "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "desktop.ini",
+    ];
+    if name.chars().any(|c| matches!(c, '"' | '*' | ':' | '<' | '>' | '?' | '/' | '\\' | '|')) {
+        return Some("contains a character OneDrive does not allow (\" * : < > ? / \\ |)");
+    }
+    if name.starts_with(' ') || name.ends_with(' ') {
+        return Some("starts or ends with a space");
+    }
+    if name.ends_with('.') {
+        return Some("ends with a period");
+    }
+    if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(name)) {
+        return Some("is a reserved name");
+    }
+    if name.starts_with("~$") || name.contains("_vti_") {
+        return Some("is a reserved name pattern (~$ or _vti_)");
+    }
+    None
+}
+
+fn drive_base(drive_id: &Option<String>) -> String {
+    match drive_id.as_deref().filter(|d| !d.trim().is_empty()) {
+        Some(id) => format!("{}/drives/{}", GRAPH_API_BASE, encode_segment(id.trim())),
+        None => format!("{}/me/drive", GRAPH_API_BASE),
+    }
+}
+
+fn access_token_of(credential: Option<&CredentialData>) -> Result<String, ProviderError> {
+    match credential {
+        Some(CredentialData::OAuth { access_token, .. }) if !access_token.is_empty() => Ok(access_token.clone()),
+        Some(CredentialData::OAuth { .. }) => Err(ProviderError::CredentialError(
+            "No access token. Set the OAuth client ID so a token can be fetched with the refresh token.".to_string(),
+        )),
+        _ => Err(ProviderError::CredentialError("OAuth credentials required".to_string())),
+    }
+}
+
+fn http_error(what: &str, status: reqwest::StatusCode, body: &str) -> ProviderError {
+    let body: String = body.chars().take(500).collect();
+    match status.as_u16() {
+        401 => ProviderError::CredentialError(format!("{}: authentication failed (HTTP 401). {}", what, body)),
+        403 => ProviderError::CredentialError(format!("{}: access denied (HTTP 403). {}", what, body)),
+        _ => ProviderError::TransferError(format!("{}: HTTP {} - {}", what, status, body)),
+    }
+}
+
+/// Remote state of a destination folder tree, keyed by relative path.
+#[derive(Default)]
+struct RemoteTree {
+    folders: HashMap<String, String>,
+    files: HashMap<String, RemoteFile>,
 }
 
 #[async_trait]
@@ -63,10 +183,16 @@ impl SyncProvider for OneDriveProvider {
     ) -> Result<(), ProviderError> {
         match destination {
             DestinationConfig::OneDrive { folder_path, .. } => {
-                if folder_path.is_empty() {
-                    return Err(ProviderError::ConfigError(
-                        "OneDrive folder path is required".to_string(),
-                    ));
+                if folder_path.trim_matches('/').trim().is_empty() {
+                    return Err(ProviderError::ConfigError("OneDrive folder path is required".to_string()));
+                }
+                for segment in folder_path.split('/').filter(|s| !s.is_empty()) {
+                    if let Some(reason) = invalid_name_reason(segment) {
+                        return Err(ProviderError::ConfigError(format!(
+                            "Folder name '{}' {}",
+                            segment, reason
+                        )));
+                    }
                 }
             }
             _ => {
@@ -76,25 +202,16 @@ impl SyncProvider for OneDriveProvider {
             }
         }
 
-        // Validate credentials
         match credential {
-            Some(CredentialData::OAuth { access_token, .. }) => {
-                if access_token.is_empty() {
+            Some(CredentialData::OAuth { access_token, refresh_token, client_id, .. }) => {
+                if access_token.is_empty() && (refresh_token.is_empty() || client_id.is_none()) {
                     return Err(ProviderError::CredentialError(
-                        "OneDrive access token is required".to_string(),
+                        "OneDrive needs an access token, or a refresh token with a client ID".to_string(),
                     ));
                 }
             }
-            None => {
-                return Err(ProviderError::CredentialError(
-                    "OneDrive credentials are required".to_string(),
-                ))
-            }
-            _ => {
-                return Err(ProviderError::CredentialError(
-                    "Invalid credential type for OneDrive".to_string(),
-                ))
-            }
+            None => return Err(ProviderError::CredentialError("OneDrive credentials are required".to_string())),
+            _ => return Err(ProviderError::CredentialError("Invalid credential type for OneDrive".to_string())),
         }
 
         Ok(())
@@ -108,35 +225,19 @@ impl SyncProvider for OneDriveProvider {
         self.validate_config(destination, credential)?;
 
         let (folder_path, drive_id) = match destination {
-            DestinationConfig::OneDrive { folder_path, drive_id } => {
-                (folder_path.clone(), drive_id.clone())
-            }
+            DestinationConfig::OneDrive { folder_path, drive_id } => (folder_path.clone(), drive_id.clone()),
             _ => return Err(ProviderError::ConfigError("Invalid destination type".to_string())),
         };
+        let access_token = access_token_of(credential)?;
+        let base = drive_base(&drive_id);
 
-        let access_token = match credential {
-            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
-            _ => return Err(ProviderError::CredentialError("OAuth credentials required".to_string())),
-        };
-
-        // Test connection using the drive endpoint
-        let test_url = if let Some(ref id) = drive_id {
-            format!("{}/drives/{}", GRAPH_API_BASE, id)
-        } else {
-            format!("{}/me/drive", GRAPH_API_BASE)
-        };
-
-        let response = self
-            .client
-            .get(&test_url)
-            .bearer_auth(&access_token)
-            .send()
-            .await
-            .map_err(|e| ProviderError::ConnectionError(format!("Failed to connect: {}", e)))?;
+        let response = send_with_retry(None, "OneDrive connection test", || {
+            self.client.get(&base).bearer_auth(&access_token)
+        })
+        .await?;
 
         match response.status().as_u16() {
             200 => {
-                // Parse drive info from response
                 #[derive(Deserialize)]
                 struct DriveInfo {
                     name: Option<String>,
@@ -157,11 +258,7 @@ impl SyncProvider for OneDriveProvider {
                     .await
                     .map(|r| {
                         let drive_name = r.name.unwrap_or_else(|| "OneDrive".to_string());
-                        let owner = r
-                            .owner
-                            .and_then(|o| o.user)
-                            .and_then(|u| u.display_name)
-                            .unwrap_or_default();
+                        let owner = r.owner.and_then(|o| o.user).and_then(|u| u.display_name).unwrap_or_default();
                         if !owner.is_empty() {
                             format!("{} ({})", drive_name, owner)
                         } else {
@@ -173,16 +270,18 @@ impl SyncProvider for OneDriveProvider {
                 Ok(TestConnectionResult {
                     success: true,
                     message: "Successfully connected to OneDrive".to_string(),
-                    details: Some(format!("Drive: {}. Folder: /{}", drive_info, folder_path)),
+                    details: Some(format!("Drive: {}. Folder: /{}", drive_info, folder_path.trim_matches('/'))),
                     host_key_fingerprint: None,
                 })
             }
             401 => Err(ProviderError::CredentialError(
-                "Authentication failed. Your access token may have expired.".to_string(),
+                "Authentication failed. The access token is invalid or expired; check the refresh token and client ID."
+                    .to_string(),
             )),
             403 => Err(ProviderError::CredentialError(
                 "Access forbidden. Check your OAuth scopes and permissions.".to_string(),
             )),
+            404 => Err(ProviderError::ConfigError("Drive not found. Check the drive ID.".to_string())),
             status => Err(ProviderError::ConnectionError(format!(
                 "Microsoft Graph API returned status {}",
                 status
@@ -194,78 +293,36 @@ impl SyncProvider for OneDriveProvider {
         let mut result = SyncResult::default();
 
         let (folder_path, drive_id) = match &ctx.destination {
-            DestinationConfig::OneDrive { folder_path, drive_id } => {
-                (folder_path.clone(), drive_id.clone())
-            }
+            DestinationConfig::OneDrive { folder_path, drive_id } => (folder_path.clone(), drive_id.clone()),
             _ => {
                 return Err(ProviderError::ConfigError(
                     "OneDriveProvider only supports OneDrive destination".to_string(),
                 ))
             }
         };
-
-        let access_token = match &ctx.credential {
-            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
-            _ => {
-                return Err(ProviderError::CredentialError(
-                    "OneDrive OAuth credentials required".to_string(),
-                ))
-            }
-        };
+        let base = drive_base(&drive_id);
 
         ctx.log_info("Starting OneDrive sync", "onedrive").await;
         ctx.log_info(&format!("Target folder: {}", folder_path), "onedrive").await;
 
-        // Build the base path for API calls
-        let base_path = if let Some(ref id) = drive_id {
-            format!("{}/drives/{}/root:", GRAPH_API_BASE, id)
-        } else {
-            format!("{}/me/drive/root:", GRAPH_API_BASE)
-        };
-
-        // Test connection by getting drive info
-        let test_url = if let Some(ref id) = drive_id {
-            format!("{}/drives/{}", GRAPH_API_BASE, id)
-        } else {
-            format!("{}/me/drive", GRAPH_API_BASE)
-        };
-
-        let response = self
-            .client
-            .get(&test_url)
-            .bearer_auth(&access_token)
-            .send()
-            .await;
-
-        match response {
-            Ok(resp) if resp.status().is_success() => {
-                ctx.log_info("Connection successful", "onedrive").await;
-            }
-            Ok(resp) if resp.status() == 401 => {
-                ctx.log_error("Authentication failed - token may be expired", "onedrive").await;
-                return Err(ProviderError::CredentialError(
-                    "Authentication failed - token may be expired".to_string(),
-                ));
-            }
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                ctx.log_error(&format!("Connection failed: {} - {}", status, body), "onedrive").await;
-                return Err(ProviderError::ConnectionError(format!("HTTP {}", status)));
-            }
-            Err(e) => {
-                ctx.log_error(&format!("Connection error: {}", e), "onedrive").await;
-                return Err(ProviderError::ConnectionError(e.to_string()));
-            }
+        // Verify access (and renew the token if needed)
+        let token = ctx.oauth_access_token().await?;
+        let response = send_with_retry(Some(&ctx), "OneDrive connection check", || {
+            self.client.get(&base).bearer_auth(&token)
+        })
+        .await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            ctx.log_error(&format!("Connection failed: {} - {}", status, body), "onedrive").await;
+            return Err(http_error("Connection check", status, &body));
         }
+        ctx.log_info("Connection successful", "onedrive").await;
 
-        // Ensure target folder exists
-        let folder_path_clean = folder_path.trim_matches('/');
-        if !folder_path_clean.is_empty() && !ctx.options.dry_run {
-            self.ensure_folder_exists(&base_path, folder_path_clean, &access_token, &ctx).await?;
-        }
+        // Resolve (or create) the target folder
+        let target_path = folder_path.trim_matches('/').to_string();
+        let target_id = self.resolve_folder(&ctx, &base, &target_path, !ctx.options.dry_run).await?;
 
-        // Sync each source directory
         for source_dir in &ctx.source_dirs {
             if ctx.check_cancelled() {
                 ctx.log_warning("Sync cancelled by user", "onedrive").await;
@@ -283,25 +340,14 @@ impl SyncProvider for OneDriveProvider {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "backup".to_string());
 
-            let dest_path = if folder_path_clean.is_empty() {
-                dest_name.clone()
-            } else {
-                format!("{}/{}", folder_path_clean, dest_name)
-            };
+            ctx.log_info(&format!("Syncing {} -> /{}/{}", source_dir, target_path, dest_name), "onedrive").await;
 
-            ctx.log_info(&format!("Syncing {} -> /{}", source_dir, dest_path), "onedrive").await;
-
-            // Create destination folder
-            if !ctx.options.dry_run {
-                self.ensure_folder_exists(&base_path, &dest_path, &access_token, &ctx).await?;
-            }
-
-            // Sync directory contents
             match self
-                .sync_directory(&base_path, source_dir, &dest_path, &access_token, &ctx, &mut result)
+                .sync_source(&ctx, &base, target_id.as_deref(), source_dir, &dest_name, &mut result)
                 .await
             {
-                Ok(_) => {}
+                Ok(()) => {}
+                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
                 Err(e) => {
                     ctx.log_error(&format!("Failed to sync {}: {}", source_dir, e), "onedrive").await;
                     result.error_count += 1;
@@ -312,8 +358,8 @@ impl SyncProvider for OneDriveProvider {
         result.success = result.error_count == 0;
         ctx.log_info(
             &format!(
-                "OneDrive sync complete. Files: {}, Bytes: {}, Errors: {}",
-                result.files_transferred, result.bytes_transferred, result.error_count
+                "OneDrive sync complete. Files: {}, Bytes: {}, Deleted: {}, Errors: {}",
+                result.files_transferred, result.bytes_transferred, result.files_deleted, result.error_count
             ),
             "onedrive",
         )
@@ -327,28 +373,15 @@ impl SyncProvider for OneDriveProvider {
         destination: &DestinationConfig,
         credential: Option<&CredentialData>,
     ) -> Result<StorageInfo, ProviderError> {
-        let access_token = match credential {
-            Some(CredentialData::OAuth { access_token, .. }) => access_token.clone(),
-            _ => return Ok(StorageInfo::default()),
+        let Ok(access_token) = access_token_of(credential) else {
+            return Ok(StorageInfo::default());
         };
-
         let drive_id = match destination {
             DestinationConfig::OneDrive { drive_id, .. } => drive_id.clone(),
             _ => return Ok(StorageInfo::default()),
         };
 
-        let url = if let Some(id) = drive_id {
-            format!("{}/drives/{}", GRAPH_API_BASE, id)
-        } else {
-            format!("{}/me/drive", GRAPH_API_BASE)
-        };
-
-        let response = self
-            .client
-            .get(&url)
-            .bearer_auth(&access_token)
-            .send()
-            .await;
+        let response = self.client.get(drive_base(&drive_id)).bearer_auth(&access_token).send().await;
 
         match response {
             Ok(resp) if resp.status().is_success() => {
@@ -363,18 +396,12 @@ impl SyncProvider for OneDriveProvider {
                 }
 
                 match resp.json::<DriveResponse>().await {
-                    Ok(drive) => {
-                        if let Some(quota) = drive.quota {
-                            Ok(StorageInfo {
-                                free: quota.remaining,
-                                total: quota.total,
-                                supported: true,
-                            })
-                        } else {
-                            Ok(StorageInfo::default())
-                        }
-                    }
-                    Err(_) => Ok(StorageInfo::default()),
+                    Ok(DriveResponse { quota: Some(quota) }) => Ok(StorageInfo {
+                        free: quota.remaining,
+                        total: quota.total,
+                        supported: true,
+                    }),
+                    _ => Ok(StorageInfo::default()),
                 }
             }
             _ => Ok(StorageInfo::default()),
@@ -383,197 +410,341 @@ impl SyncProvider for OneDriveProvider {
 }
 
 impl OneDriveProvider {
-    /// Ensure a folder path exists, creating folders as needed
-    async fn ensure_folder_exists(
+    /// Resolve a folder path below the drive root to its item ID, creating
+    /// missing folders when `create` is set. Returns `None` if it does not
+    /// exist and was not created (dry run).
+    async fn resolve_folder(
         &self,
-        base_path: &str,
-        folder_path: &str,
-        access_token: &str,
         ctx: &SyncContext,
-    ) -> Result<(), ProviderError> {
-        let parts: Vec<&str> = folder_path.split('/').filter(|s| !s.is_empty()).collect();
-        let mut current_path = String::new();
+        base: &str,
+        path: &str,
+        create: bool,
+    ) -> Result<Option<String>, ProviderError> {
+        let token = ctx.oauth_access_token().await?;
+        let root = send_with_retry(Some(ctx), "Get drive root", || {
+            self.client.get(format!("{}/root", base)).query(&[("$select", "id")]).bearer_auth(&token)
+        })
+        .await?;
+        if !root.status().is_success() {
+            let status = root.status();
+            let body = root.text().await.unwrap_or_default();
+            return Err(http_error("Get drive root", status, &body));
+        }
+        let mut current: String = root
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v["id"].as_str().map(String::from))
+            .ok_or_else(|| ProviderError::ConnectionError("Invalid drive root response".to_string()))?;
 
-        for part in parts {
-            if current_path.is_empty() {
-                current_path = part.to_string();
-            } else {
-                current_path = format!("{}/{}", current_path, part);
-            }
-
-            // Check if folder exists
-            let check_url = format!("{}/{}", base_path, current_path);
-            let response = self
-                .client
-                .get(&check_url)
-                .bearer_auth(access_token)
-                .send()
-                .await;
-
-            match response {
-                Ok(resp) if resp.status().is_success() => {
-                    // Folder exists
-                    continue;
+        for segment in path.split('/').filter(|s| !s.is_empty()) {
+            match self.find_child(ctx, base, &current, segment).await? {
+                Some(item) if item.folder.is_some() => current = item.id,
+                Some(_) => {
+                    return Err(ProviderError::ConfigError(format!(
+                        "'{}' exists in OneDrive but is not a folder",
+                        segment
+                    )))
                 }
-                Ok(resp) if resp.status() == 404 => {
-                    // Folder doesn't exist, create it
-                    let parent_path = if current_path.contains('/') {
-                        let idx = current_path
-                            .rfind('/')
-                            .expect("rfind('/') must succeed after contains('/') check");
-                        &current_path[..idx]
-                    } else {
-                        ""
-                    };
-
-                    let create_url = if parent_path.is_empty() {
-                        format!("{}/children", base_path.trim_end_matches(':'))
-                    } else {
-                        format!("{}/{}/children", base_path, parent_path)
-                    };
-
-                    let folder_name = if current_path.contains('/') {
-                        current_path
-                            .rsplit('/')
-                            .next()
-                            .expect("rsplit('/').next() always returns Some")
-                    } else {
-                        &current_path
-                    };
-
-                    let body = serde_json::json!({
-                        "name": folder_name,
-                        "folder": {},
-                        "@microsoft.graph.conflictBehavior": "replace"
-                    });
-
-                    let create_resp = self
-                        .client
-                        .post(&create_url)
-                        .bearer_auth(access_token)
-                        .json(&body)
-                        .send()
-                        .await;
-
-                    match create_resp {
-                        Ok(r) if r.status().is_success() || r.status() == 201 => {
-                            ctx.log_info(&format!("Created folder: {}", current_path), "onedrive").await;
-                        }
-                        Ok(r) => {
-                            let status = r.status();
-                            let body = r.text().await.unwrap_or_default();
-                            return Err(ProviderError::TransferError(format!(
-                                "Failed to create folder {}: {} - {}",
-                                current_path, status, body
-                            )));
-                        }
-                        Err(e) => {
-                            return Err(ProviderError::ConnectionError(format!(
-                                "Failed to create folder {}: {}",
-                                current_path, e
-                            )));
-                        }
-                    }
+                None if create => {
+                    ctx.log_info(&format!("Created folder: {}", segment), "onedrive").await;
+                    current = self.create_folder(ctx, base, &current, segment).await?;
                 }
-                Ok(resp) => {
-                    let status = resp.status();
-                    return Err(ProviderError::ConnectionError(format!(
-                        "Failed to check folder {}: HTTP {}",
-                        current_path, status
-                    )));
-                }
-                Err(e) => {
-                    return Err(ProviderError::ConnectionError(format!(
-                        "Failed to check folder {}: {}",
-                        current_path, e
-                    )));
-                }
+                None => return Ok(None),
             }
         }
-
-        Ok(())
+        Ok(Some(current))
     }
 
-    async fn sync_directory(
+    async fn find_child(
         &self,
-        base_path: &str,
-        source_dir: &str,
-        remote_dir: &str,
-        access_token: &str,
         ctx: &SyncContext,
-        result: &mut SyncResult,
-    ) -> Result<(), ProviderError> {
-        use tokio::fs;
+        base: &str,
+        parent_id: &str,
+        name: &str,
+    ) -> Result<Option<DriveItem>, ProviderError> {
+        let token = ctx.oauth_access_token().await?;
+        let url = format!("{}/items/{}:/{}", base, encode_segment(parent_id), encode_segment(name));
+        let resp = send_with_retry(Some(ctx), "Look up item", || {
+            self.client
+                .get(&url)
+                .query(&[("$select", "id,name,size,folder,lastModifiedDateTime")])
+                .bearer_auth(&token)
+        })
+        .await?;
+        match resp.status().as_u16() {
+            404 => Ok(None),
+            s if (200..300).contains(&s) => resp
+                .json::<DriveItem>()
+                .await
+                .map(Some)
+                .map_err(|e| ProviderError::ConnectionError(format!("Invalid response: {}", e))),
+            _ => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Err(http_error("Look up item", status, &body))
+            }
+        }
+    }
 
-        let mut entries = fs::read_dir(source_dir).await?;
+    async fn create_folder(&self, ctx: &SyncContext, base: &str, parent_id: &str, name: &str) -> Result<String, ProviderError> {
+        let body = serde_json::json!({
+            "name": name,
+            "folder": {},
+            // Never replace an existing folder (that would delete its contents)
+            "@microsoft.graph.conflictBehavior": "fail",
+        });
+        let token = ctx.oauth_access_token().await?;
+        let url = format!("{}/items/{}/children", base, encode_segment(parent_id));
+        let resp = send_with_retry(Some(ctx), "Create folder", || {
+            self.client.post(&url).bearer_auth(&token).json(&body)
+        })
+        .await?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        match resp.status().as_u16() {
+            s if (200..300).contains(&s) => resp
+                .json::<DriveItem>()
+                .await
+                .map(|i| i.id)
+                .map_err(|e| ProviderError::ConnectionError(format!("Invalid response: {}", e))),
+            // Created concurrently (or listing was stale): use the existing folder
+            409 => match self.find_child(ctx, base, parent_id, name).await? {
+                Some(item) if item.folder.is_some() => Ok(item.id),
+                _ => Err(ProviderError::TransferError(format!(
+                    "Cannot create folder '{}': a file with that name exists",
+                    name
+                ))),
+            },
+            _ => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Err(http_error(&format!("Create folder {}", name), status, &body))
+            }
+        }
+    }
+
+    /// List the children of a folder (all pages).
+    async fn list_children(&self, ctx: &SyncContext, base: &str, folder_id: &str) -> Result<Vec<DriveItem>, ProviderError> {
+        let mut out = Vec::new();
+        let mut next: Option<String> = None;
+        loop {
+            let token = ctx.oauth_access_token().await?;
+            let first_url = format!("{}/items/{}/children", base, encode_segment(folder_id));
+            let resp = send_with_retry(Some(ctx), "List folder", || match &next {
+                Some(link) => self.client.get(link).bearer_auth(&token),
+                None => self
+                    .client
+                    .get(&first_url)
+                    .query(&[("$select", "id,name,size,folder,lastModifiedDateTime"), ("$top", "999")])
+                    .bearer_auth(&token),
+            })
+            .await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(http_error("List folder", status, &body));
+            }
+            let page: ItemList = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::ConnectionError(format!("Invalid response: {}", e)))?;
+            out.extend(page.value);
+            match page.next_link {
+                Some(link) if !link.is_empty() => next = Some(link),
+                _ => break,
+            }
+        }
+        Ok(out)
+    }
+
+    async fn list_tree(&self, ctx: &SyncContext, base: &str, root_id: &str) -> Result<RemoteTree, ProviderError> {
+        let mut tree = RemoteTree::default();
+        tree.folders.insert(String::new(), root_id.to_string());
+        let mut queue = vec![(String::new(), root_id.to_string())];
+        while let Some((prefix, id)) = queue.pop() {
             if ctx.check_cancelled() {
                 return Err(ProviderError::Cancelled);
             }
-
-            let path = entry.path();
-            let file_name = entry.file_name().to_string_lossy().to_string();
-
-            // Check exclude patterns
-            if ctx
-                .options
-                .exclude_patterns
-                .iter()
-                .any(|p| glob::Pattern::new(p).map(|pat| pat.matches(&file_name)).unwrap_or(false))
-            {
-                continue;
-            }
-
-            // Check excluded directories
-            let full_path = path.to_string_lossy().to_string();
-            if path.is_dir() && ctx.options.exclude_dirs.iter().any(|ex| full_path == *ex || full_path.starts_with(&format!("{}/", ex))) {
-                ctx.log_info(&format!("Skipping excluded directory: {}", full_path), "onedrive").await;
-                continue;
-            }
-
-            let remote_path = format!("{}/{}", remote_dir, file_name);
-
-            if path.is_dir() {
-                // Create remote directory and recurse
-                if !ctx.options.dry_run {
-                    self.ensure_folder_exists(base_path, &remote_path, access_token, ctx).await?;
+            for child in self.list_children(ctx, base, &id).await? {
+                let rel = if prefix.is_empty() { child.name.clone() } else { format!("{}/{}", prefix, child.name) };
+                if child.folder.is_some() {
+                    tree.folders.insert(rel.clone(), child.id.clone());
+                    queue.push((rel, child.id));
+                } else {
+                    tree.files.insert(
+                        rel,
+                        RemoteFile {
+                            size: child.size.unwrap_or(0),
+                            mtime: child.last_modified_date_time.as_deref().and_then(parse_rfc3339).unwrap_or(0),
+                            id: Some(child.id),
+                        },
+                    );
                 }
-                let path_str = path.to_str().ok_or_else(|| {
-                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
-                })?;
-                Box::pin(self.sync_directory(
-                    base_path,
-                    path_str,
-                    &remote_path,
-                    access_token,
-                    ctx,
-                    result,
-                ))
-                .await?;
-            } else if path.is_file() {
-                if ctx.options.dry_run {
-                    ctx.log_info(&format!("[DRY RUN] Would upload: {}", remote_path), "onedrive").await;
+            }
+        }
+        Ok(tree)
+    }
+
+    async fn sync_source(
+        &self,
+        ctx: &SyncContext,
+        base: &str,
+        target_id: Option<&str>,
+        source_dir: &str,
+        dest_name: &str,
+        result: &mut SyncResult,
+    ) -> Result<(), ProviderError> {
+        let dry_run = ctx.options.dry_run;
+        let local = common::walk_source_async(source_dir, &ctx.options).await?;
+        for msg in &local.skipped {
+            ctx.log_warning(msg, "onedrive").await;
+        }
+
+        // Destination folder for this source
+        let root_id = match target_id {
+            Some(target) => match self.find_child(ctx, base, target, dest_name).await? {
+                Some(item) if item.folder.is_some() => Some(item.id),
+                Some(_) => {
+                    return Err(ProviderError::ConfigError(format!(
+                        "'{}' exists in the target folder but is not a folder",
+                        dest_name
+                    )))
+                }
+                None if dry_run => None,
+                None => {
+                    ctx.log_info(&format!("Created folder: {}", dest_name), "onedrive").await;
+                    Some(self.create_folder(ctx, base, target, dest_name).await?)
+                }
+            },
+            None => None,
+        };
+
+        let mut remote = match &root_id {
+            Some(id) => self.list_tree(ctx, base, id).await?,
+            None => RemoteTree::default(),
+        };
+
+        // Names OneDrive rejects are skipped (with everything below them)
+        let mut invalid_dirs: Vec<String> = Vec::new();
+        let is_under_invalid =
+            |rel: &str, invalid: &[String]| invalid.iter().any(|d| rel.starts_with(&format!("{}/", d)));
+
+        for dir in local.dirs() {
+            if ctx.check_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            if is_under_invalid(&dir.rel, &invalid_dirs) {
+                continue;
+            }
+            let (parent_rel, name) = split_rel(&dir.rel);
+            if let Some(reason) = invalid_name_reason(name) {
+                ctx.log_warning(&format!("Skipping folder '{}': name {}", dir.rel, reason), "onedrive").await;
+                invalid_dirs.push(dir.rel.clone());
+                continue;
+            }
+            if remote.folders.contains_key(&dir.rel) {
+                continue;
+            }
+            if dry_run {
+                ctx.log_info(&format!("[DRY RUN] Would create folder: {}/{}", dest_name, dir.rel), "onedrive").await;
+                continue;
+            }
+            let Some(parent) = remote.folders.get(parent_rel).cloned() else {
+                continue;
+            };
+            let id = self.create_folder(ctx, base, &parent, name).await?;
+            remote.folders.insert(dir.rel.clone(), id);
+        }
+
+        let mut skipped = 0u64;
+        for file in local.files() {
+            if ctx.check_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            if is_under_invalid(&file.rel, &invalid_dirs) {
+                continue;
+            }
+            let (parent_rel, name) = split_rel(&file.rel);
+            if let Some(reason) = invalid_name_reason(name) {
+                ctx.log_warning(&format!("Skipping file '{}': name {}", file.rel, reason), "onedrive").await;
+                continue;
+            }
+            let existing = remote.files.get(&file.rel);
+            if !needs_upload(file, existing) {
+                skipped += 1;
+                continue;
+            }
+            let label = format!("{}/{}", dest_name, file.rel);
+            if dry_run {
+                let verb = if existing.is_some() { "update" } else { "upload" };
+                ctx.log_info(&format!("[DRY RUN] Would {}: {}", verb, label), "onedrive").await;
+                result.files_transferred += 1;
+                result.bytes_transferred += file.size as i64;
+                continue;
+            }
+            let Some(parent) = remote.folders.get(parent_rel).cloned() else {
+                ctx.log_error(&format!("Missing remote folder for {}", label), "onedrive").await;
+                result.error_count += 1;
+                continue;
+            };
+            match self.upload_file(ctx, base, &parent, file).await {
+                Ok(()) => {
+                    ctx.log_info(&format!("Uploaded: {}", label), "onedrive").await;
                     result.files_transferred += 1;
+                    result.bytes_transferred += file.size as i64;
+                }
+                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
+                Err(e) => {
+                    ctx.log_error(&format!("Failed to upload {}: {}", label, e), "onedrive").await;
+                    result.error_count += 1;
+                }
+            }
+        }
+        if skipped > 0 {
+            ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "onedrive").await;
+        }
+
+        if ctx.options.delete_extraneous {
+            let local_paths = local.rel_paths();
+            let mut to_delete: Vec<(String, String, bool)> = remote
+                .files
+                .iter()
+                .filter_map(|(rel, f)| f.id.clone().map(|id| (rel.clone(), id, false)))
+                .chain(
+                    remote
+                        .folders
+                        .iter()
+                        .filter(|(rel, _)| !rel.is_empty())
+                        .map(|(rel, id)| (rel.clone(), id.clone(), true)),
+                )
+                .filter(|(rel, _, _)| !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options))
+                .collect();
+            to_delete.sort();
+
+            let mut deleted_dirs: HashSet<String> = HashSet::new();
+            for (rel, id, is_dir) in to_delete {
+                if ctx.check_cancelled() {
+                    return Err(ProviderError::Cancelled);
+                }
+                if deleted_dirs.iter().any(|d| rel.starts_with(&format!("{}/", d))) {
                     continue;
                 }
-
-                // Get file size
-                let metadata = fs::metadata(&path).await?;
-                let file_size = metadata.len() as i64;
-
-                // Upload file
-                match self
-                    .upload_file(base_path, &path, &remote_path, access_token, ctx)
-                    .await
-                {
-                    Ok(_) => {
-                        ctx.log_info(&format!("Uploaded: {}", remote_path), "onedrive").await;
-                        result.files_transferred += 1;
-                        result.bytes_transferred += file_size;
+                let label = format!("{}/{}", dest_name, rel);
+                if dry_run {
+                    ctx.log_info(&format!("[DRY RUN] Would delete: {}", label), "onedrive").await;
+                    result.files_deleted += 1;
+                    continue;
+                }
+                match self.delete_item(ctx, base, &id).await {
+                    Ok(()) => {
+                        ctx.log_info(&format!("Deleted (moved to recycle bin): {}", label), "onedrive").await;
+                        result.files_deleted += 1;
+                        if is_dir {
+                            deleted_dirs.insert(rel);
+                        }
                     }
                     Err(e) => {
-                        ctx.log_error(&format!("Failed to upload {}: {}", remote_path, e), "onedrive").await;
+                        ctx.log_error(&format!("Failed to delete {}: {}", label, e), "onedrive").await;
                         result.error_count += 1;
                     }
                 }
@@ -583,129 +754,202 @@ impl OneDriveProvider {
         Ok(())
     }
 
-    async fn upload_file(
-        &self,
-        base_path: &str,
-        local_path: &std::path::Path,
-        remote_path: &str,
-        access_token: &str,
-        ctx: &SyncContext,
-    ) -> Result<(), ProviderError> {
-        use tokio::fs;
-
-        let data = fs::read(local_path).await?;
-        let file_size = data.len();
-
-        // For files <= 4MB, use simple upload
-        // For larger files, use upload session
-        if file_size <= 4 * 1024 * 1024 {
-            // Simple upload
-            let upload_url = format!("{}/{}:/content", base_path, remote_path);
-
-            let response = self
-                .client
-                .put(&upload_url)
-                .bearer_auth(access_token)
-                .header("Content-Type", "application/octet-stream")
-                .body(data)
-                .send()
-                .await;
-
-            match response {
-                Ok(resp) if resp.status().is_success() || resp.status() == 201 => Ok(()),
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    Err(ProviderError::TransferError(format!(
-                        "Upload failed: {} - {}",
-                        status, body
-                    )))
-                }
-                Err(e) => Err(ProviderError::ConnectionError(format!("Upload failed: {}", e))),
-            }
+    async fn delete_item(&self, ctx: &SyncContext, base: &str, item_id: &str) -> Result<(), ProviderError> {
+        let token = ctx.oauth_access_token().await?;
+        let url = format!("{}/items/{}", base, encode_segment(item_id));
+        let resp = send_with_retry(Some(ctx), "Delete item", || self.client.delete(&url).bearer_auth(&token)).await?;
+        if resp.status().is_success() || resp.status().as_u16() == 404 {
+            Ok(())
         } else {
-            // Large file upload using upload session
-            self.upload_large_file(base_path, remote_path, &data, access_token, ctx).await
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(http_error("Delete item", status, &body))
         }
     }
 
-    async fn upload_large_file(
-        &self,
-        base_path: &str,
-        remote_path: &str,
-        data: &[u8],
-        access_token: &str,
-        ctx: &SyncContext,
-    ) -> Result<(), ProviderError> {
-        // Create upload session
-        let session_url = format!("{}/{}:/createUploadSession", base_path, remote_path);
+    async fn upload_file(&self, ctx: &SyncContext, base: &str, parent_id: &str, file: &LocalEntry) -> Result<(), ProviderError> {
+        let name = split_rel(&file.rel).1;
+        let item_path = format!("{}/items/{}:/{}:", base, encode_segment(parent_id), encode_segment(name));
 
-        let session_body = serde_json::json!({
-            "item": {
-                "@microsoft.graph.conflictBehavior": "replace"
-            }
-        });
-
-        let session_resp = self
-            .client
-            .post(&session_url)
-            .bearer_auth(access_token)
-            .json(&session_body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::ConnectionError(format!("Failed to create upload session: {}", e)))?;
-
-        if !session_resp.status().is_success() {
-            let status = session_resp.status();
-            let body = session_resp.text().await.unwrap_or_default();
-            return Err(ProviderError::TransferError(format!(
-                "Failed to create upload session: {} - {}",
-                status, body
-            )));
+        if file.size <= SIMPLE_UPLOAD_LIMIT {
+            let data = bytes::Bytes::from(tokio::fs::read(&file.abs).await?);
+            let token = ctx.oauth_access_token().await?;
+            let url = format!("{}/content", item_path);
+            let resp = send_with_retry(Some(ctx), "Upload", || {
+                self.client
+                    .put(&url)
+                    .query(&[("@microsoft.graph.conflictBehavior", "replace")])
+                    .bearer_auth(&token)
+                    .header("Content-Type", "application/octet-stream")
+                    .body(data.clone())
+            })
+            .await?;
+            return if resp.status().is_success() {
+                Ok(())
+            } else {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                Err(http_error("Upload", status, &body))
+            };
         }
 
-        let session: UploadSession = session_resp
+        self.upload_large_file(ctx, &item_path, file).await
+    }
+
+    async fn upload_large_file(&self, ctx: &SyncContext, item_path: &str, file: &LocalEntry) -> Result<(), ProviderError> {
+        let session_body = serde_json::json!({
+            "item": { "@microsoft.graph.conflictBehavior": "replace" }
+        });
+        let token = ctx.oauth_access_token().await?;
+        let url = format!("{}/createUploadSession", item_path);
+        let resp = send_with_retry(Some(ctx), "Create upload session", || {
+            self.client.post(&url).bearer_auth(&token).json(&session_body)
+        })
+        .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(http_error("Create upload session", status, &body));
+        }
+        let session: UploadSession = resp
             .json()
             .await
             .map_err(|e| ProviderError::TransferError(format!("Invalid upload session response: {}", e)))?;
 
-        // Upload in chunks (10MB chunks)
-        let chunk_size = 10 * 1024 * 1024;
-        let total_size = data.len();
-        let mut offset = 0;
+        let result = self.upload_chunks(ctx, &session.upload_url, file).await;
+        if result.is_err() {
+            // Cancel the session so the partial upload does not linger
+            let _ = self.client.delete(&session.upload_url).send().await;
+        }
+        result
+    }
 
-        while offset < total_size {
+    /// Send the file in chunks read from disk. The upload URL is pre-authenticated:
+    /// it must not get an Authorization header.
+    async fn upload_chunks(&self, ctx: &SyncContext, upload_url: &str, file: &LocalEntry) -> Result<(), ProviderError> {
+        let total = file.size;
+        let mut offset: u64 = 0;
+        let mut failures = 0u32;
+
+        while offset < total {
             if ctx.check_cancelled() {
                 return Err(ProviderError::Cancelled);
             }
-
-            let end = std::cmp::min(offset + chunk_size, total_size);
-            let chunk = &data[offset..end];
-
-            let content_range = format!("bytes {}-{}/{}", offset, end - 1, total_size);
-
-            let chunk_resp = self
+            let len = CHUNK_SIZE.min(total - offset);
+            let chunk = read_chunk(&file.abs, offset, len as usize).await?;
+            let sent = self
                 .client
-                .put(&session.upload_url)
-                .header("Content-Length", chunk.len())
-                .header("Content-Range", content_range)
-                .body(chunk.to_vec())
+                .put(upload_url)
+                .header("Content-Length", len)
+                .header("Content-Range", format!("bytes {}-{}/{}", offset, offset + len - 1, total))
+                .body(chunk)
                 .send()
-                .await
-                .map_err(|e| ProviderError::ConnectionError(format!("Chunk upload failed: {}", e)))?;
+                .await;
 
-            if !chunk_resp.status().is_success() && chunk_resp.status() != 202 {
-                let status = chunk_resp.status();
-                let body = chunk_resp.text().await.unwrap_or_default();
-                return Err(ProviderError::TransferError(format!(
-                    "Chunk upload failed: {} - {}",
-                    status, body
-                )));
+            match sent {
+                // 200/201: upload complete
+                Ok(resp) if resp.status().as_u16() == 200 || resp.status().as_u16() == 201 => return Ok(()),
+                // 202: chunk accepted; the server says which range comes next
+                Ok(resp) if resp.status().as_u16() == 202 => {
+                    let status: Option<UploadStatus> = resp.json().await.ok();
+                    offset = status
+                        .and_then(|s| next_expected_offset(&s.next_expected_ranges))
+                        .unwrap_or(offset + len);
+                    failures = 0;
+                }
+                Ok(resp) if resp.status().as_u16() == 404 => {
+                    return Err(ProviderError::TransferError("Upload session expired".to_string()));
+                }
+                Ok(resp) if !common::is_retryable_status(resp.status().as_u16()) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(http_error("Chunk upload", status, &body));
+                }
+                other => {
+                    failures += 1;
+                    if failures > MAX_CHUNK_RETRIES {
+                        let reason = match other {
+                            Ok(r) => format!("HTTP {}", r.status()),
+                            Err(e) => e.to_string(),
+                        };
+                        return Err(ProviderError::TransferError(format!("Chunk upload failed: {}", reason)));
+                    }
+                    let delay = match &other {
+                        Ok(r) => r
+                            .headers()
+                            .get(reqwest::header::RETRY_AFTER)
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .unwrap_or(1u64 << failures),
+                        Err(_) => 1u64 << failures,
+                    }
+                    .min(120);
+                    ctx.log_warning(&format!("Chunk upload failed, resuming in {}s", delay), "onedrive").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+
+                    // Ask the session which bytes it still needs
+                    if let Ok(resp) = self.client.get(upload_url).send().await {
+                        if resp.status().is_success() {
+                            if let Ok(s) = resp.json::<UploadStatus>().await {
+                                if let Some(next) = next_expected_offset(&s.next_expected_ranges) {
+                                    offset = next;
+                                }
+                            }
+                        } else if resp.status().as_u16() == 404 {
+                            return Err(ProviderError::TransferError("Upload session expired".to_string()));
+                        }
+                    }
+                }
             }
-
-            offset = end;
         }
-
         Ok(())
+    }
+}
+
+/// Start of the first range in `nextExpectedRanges` (e.g. `["12345-"]`).
+fn next_expected_offset(ranges: &[String]) -> Option<u64> {
+    ranges.first()?.split('-').next()?.trim().parse().ok()
+}
+
+/// Split a relative path into (parent, name).
+fn split_rel(rel: &str) -> (&str, &str) {
+    match rel.rfind('/') {
+        Some(i) => (&rel[..i], &rel[i + 1..]),
+        None => ("", rel),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn special_characters_are_percent_encoded() {
+        assert_eq!(encode_segment("my file#1 100%.txt"), "my%20file%231%20100%25.txt");
+        assert_eq!(encode_segment("Bilder ä"), "Bilder%20%C3%A4");
+    }
+
+    #[test]
+    fn invalid_names_are_detected() {
+        assert!(invalid_name_reason("ok name.txt").is_none());
+        assert!(invalid_name_reason("what?.txt").is_some());
+        assert!(invalid_name_reason("trailing.").is_some());
+        assert!(invalid_name_reason(" lead").is_some());
+        assert!(invalid_name_reason("CON").is_some());
+        assert!(invalid_name_reason("con.txt").is_none());
+        assert!(invalid_name_reason("desktop.ini").is_some());
+        assert!(invalid_name_reason("~$draft.docx").is_some());
+        assert!(invalid_name_reason("console.log").is_none());
+    }
+
+    // Graph limits: chunks must be a multiple of 320 KiB and below 60 MiB
+    #[allow(clippy::manual_is_multiple_of)]
+    const _: () = assert!(CHUNK_SIZE % (320 * 1024) == 0 && CHUNK_SIZE < 60 * 1024 * 1024);
+
+    #[test]
+    fn next_expected_range_parsed() {
+        assert_eq!(next_expected_offset(&["10485760-".to_string()]), Some(10_485_760));
+        assert_eq!(next_expected_offset(&["0-99".to_string(), "200-".to_string()]), Some(0));
+        assert_eq!(next_expected_offset(&[]), None);
     }
 }

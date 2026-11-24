@@ -191,9 +191,17 @@ export interface WebDavCredentialData {
 
 export interface OAuthCredentialData {
   type: 'oauth';
+  /** May be empty: the backend then fetches one with the refresh token */
   access_token: string;
   refresh_token: string;
+  /** Unix seconds; 0 = unknown, refreshed on first use */
   expires_at: number;
+  /** OAuth client of the user's own Google Cloud / Microsoft Entra app */
+  client_id?: string;
+  /** Required for Google, optional for Microsoft public clients */
+  client_secret?: string;
+  /** Microsoft tenant ("common", "consumers", "organizations" or an ID) */
+  tenant?: string;
 }
 
 export type CredentialData = S3CredentialData | SftpCredentialData | WebDavCredentialData | OAuthCredentialData;

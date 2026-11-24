@@ -64,10 +64,11 @@ fn is_mount_point_allowed(mount_point: &str, allowed_paths: &[String]) -> bool {
     }
 
     // Must be under /mnt/ or one of the allowed browse paths
-    let under_mnt = mount_point.starts_with("/mnt/") && mount_point.len() > 5;
+    // Component-wise prefix checks: "/data2/x" is not under "/data"
+    let under_mnt = path.starts_with("/mnt") && normalized != "/mnt";
     let under_allowed = allowed_paths.iter().any(|allowed| {
-        mount_point.starts_with(allowed.as_str())
-            && mount_point.len() > allowed.len()
+        let allowed = allowed.trim_end_matches('/');
+        path.starts_with(allowed) && normalized != allowed
     });
 
     under_mnt || under_allowed
@@ -108,15 +109,82 @@ fn is_path_allowed(path: &Path, allowed_paths: &[String]) -> bool {
     false
 }
 
-pub async fn list_drives(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.mount_service.list_usb_drives() {
+/// `Content-Disposition: attachment` with an ASCII fallback name and the
+/// real (UTF-8) name per RFC 6266 / RFC 5987, so non-ASCII names survive.
+fn content_disposition_attachment(filename: &str) -> String {
+    let ascii: String = filename
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect();
+    let encoded: String = filename
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect();
+    format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", ascii, encoded)
+}
+
+/// True if `path` (canonical) is one of the allowed base paths itself.
+fn is_allowed_root(path: &Path, allowed_paths: &[String]) -> bool {
+    allowed_paths.iter().any(|allowed| {
+        let allowed = Path::new(allowed);
+        path == allowed
+            || allowed
+                .canonicalize()
+                .map(|c| c == path)
+                .unwrap_or(false)
+    })
+}
+
+/// True if `path` is a mount point or has a mount point somewhere below it.
+fn contains_mount_point(path: &Path) -> bool {
+    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    mount_targets(&mounts).iter().any(|target| Path::new(target).starts_with(path))
+}
+
+/// Parse mount targets from /proc/self/mounts content (second field, with the
+/// kernel's octal escapes such as `\040` for spaces decoded).
+fn mount_targets(mounts: &str) -> Vec<String> {
+    mounts
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .map(|raw| {
+            let bytes = raw.as_bytes();
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 3 < bytes.len() {
+                    if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 4]).unwrap_or(""), 8) {
+                        out.push(v);
+                        i += 4;
+                        continue;
+                    }
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        })
+        .collect()
+}
+
+pub async fn list_drives(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    // lsblk/blkid/df are external commands: keep them off the async runtime
+    let drives = tokio::task::spawn_blocking(|| crate::services::MountService.list_usb_drives()).await;
+    match drives.unwrap_or_else(|e| Err(crate::services::MountError::IoError(std::io::Error::other(e.to_string())))) {
         Ok(drives) => Json(drives).into_response(),
         Err(_) => ApiError::new(ErrorCode::DrivesListFailed).into_response(),
     }
 }
 
-pub async fn list_mounts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.mount_service.list_mounts() {
+pub async fn list_mounts(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mounts = tokio::task::spawn_blocking(|| crate::services::MountService.list_mounts()).await;
+    match mounts.unwrap_or_else(|e| Err(crate::services::MountError::IoError(std::io::Error::other(e.to_string())))) {
         Ok(mounts) => Json(mounts).into_response(),
         Err(_) => ApiError::new(ErrorCode::MountsListFailed).into_response(),
     }
@@ -146,7 +214,9 @@ pub async fn mount_drive(
         return ApiError::new(ErrorCode::MountPointNotAllowed).into_response();
     }
 
-    match state.mount_service.mount_by_uuid(&req.uuid, &req.mount_point) {
+    let (uuid, mount_point) = (req.uuid.clone(), req.mount_point.clone());
+    let mounted = tokio::task::spawn_blocking(move || crate::services::MountService.mount_by_uuid(&uuid, &mount_point)).await;
+    match mounted.unwrap_or_else(|e| Err(crate::services::MountError::IoError(std::io::Error::other(e.to_string())))) {
         Ok(_) => Json(json!({"success": true})).into_response(),
         Err(_) => ApiError::new(ErrorCode::MountFailed).into_response(),
     }
@@ -170,7 +240,10 @@ pub async fn unmount_drive(
         return ApiError::new(ErrorCode::MountPointNotAllowed).into_response();
     }
 
-    match state.mount_service.unmount(&req.mount_point) {
+    // unmount runs `sync` first, which can take minutes on a slow USB drive
+    let mount_point = req.mount_point.clone();
+    let unmounted = tokio::task::spawn_blocking(move || crate::services::MountService.unmount(&mount_point)).await;
+    match unmounted.unwrap_or_else(|e| Err(crate::services::MountError::IoError(std::io::Error::other(e.to_string())))) {
         Ok(_) => Json(json!({"success": true})).into_response(),
         Err(_) => ApiError::new(ErrorCode::UnmountFailed).into_response(),
     }
@@ -217,7 +290,8 @@ pub async fn browse_path(
 
     let canonical_str = canonical.to_string_lossy().to_string();
 
-    match state.mount_service.browse_path(&canonical_str, false) {
+    let browsed = tokio::task::spawn_blocking(move || crate::services::MountService.browse_path(&canonical_str, false)).await;
+    match browsed.unwrap_or_else(|e| Err(crate::services::MountError::IoError(std::io::Error::other(e.to_string())))) {
         Ok(entries) => Json(json!({
             "path": canonical.to_string_lossy(),
             "entries": entries
@@ -553,17 +627,7 @@ pub async fn download_file(
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
-    // Sanitize filename: keep only safe characters
-    let safe_filename: String = filename
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    let content_disposition = content_disposition_attachment(filename);
 
     // 9. Detect MIME type
     let content_type = mime_guess::from_path(&canonical)
@@ -588,7 +652,7 @@ pub async fn download_file(
         .header(header::CONTENT_TYPE, content_type)
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", safe_filename),
+            content_disposition,
         )
         .header(header::CONTENT_LENGTH, metadata.len())
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
@@ -690,7 +754,7 @@ pub async fn verify_delete_access(
     };
 
     // Verify password
-    let password_valid = AuthService::verify_password(&req.password, &password_hash).unwrap_or(false);
+    let password_valid = AuthService::verify_password_async(&req.password, &password_hash).await;
     if !password_valid {
         state.rate_limit_service.record_failure(&ip);
         return ApiError::delete_verification_failed().into_response();
@@ -706,7 +770,7 @@ pub async fn verify_delete_access(
             }
         };
 
-        let totp_valid = TotpService::verify_code(&secret, totp_code).unwrap_or(false);
+        let totp_valid = TotpService::accept_code(&state.db, user_id, &secret, totp_code).await;
         if !totp_valid {
             state.rate_limit_service.record_failure(&ip);
             return ApiError::delete_verification_failed().into_response();
@@ -794,7 +858,35 @@ pub async fn delete_path(
         return ApiError::path_not_allowed().into_response();
     }
 
-    // 5. Canonicalize to resolve symlinks
+    // 5. A symlink is deleted itself, never the file or directory it points to.
+    //    (Canonicalizing first would resolve the link and delete its target.)
+    let link_meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return ApiError::file_not_found().into_response(),
+    };
+    if link_meta.file_type().is_symlink() {
+        let parent_ok = path
+            .parent()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .map(|p| is_path_allowed(&p, &state.config.allowed_browse_paths))
+            .unwrap_or(false);
+        if !parent_ok {
+            return ApiError::path_not_allowed().into_response();
+        }
+        return match std::fs::remove_file(path) {
+            Ok(_) => {
+                state.delete_verifications.write().await.insert(user_id, Instant::now());
+                tracing::info!("User {} deleted symlink '{}'", user_id, path_str);
+                Json(json!({ "success": true, "path": path_str, "is_dir": false })).into_response()
+            }
+            Err(e) => {
+                tracing::error!("Failed to delete symlink '{}': {}", path_str, e);
+                ApiError::delete_failed().into_response()
+            }
+        };
+    }
+
+    // 6. Canonicalize to resolve symlinks in parent components
     let canonical = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(e) => {
@@ -803,7 +895,7 @@ pub async fn delete_path(
         }
     };
 
-    // 6. Post-canonicalization check (prevents symlink attacks)
+    // 7. Post-canonicalization check (prevents symlink attacks)
     if !is_path_allowed(&canonical, &state.config.allowed_browse_paths) {
         tracing::debug!(
             "Delete denied for canonical path '{}' - not in allowed paths",
@@ -812,13 +904,24 @@ pub async fn delete_path(
         return ApiError::path_not_allowed().into_response();
     }
 
-    // 7. Get metadata to check if file or directory
+    // 8. Never delete an allowed root itself, or anything that is or contains a
+    //    mount point (remove_dir_all would wipe the mounted drive).
+    if is_allowed_root(&canonical, &state.config.allowed_browse_paths) {
+        tracing::warn!("Delete denied for '{}': allowed root directory", canonical.display());
+        return ApiError::path_not_allowed().into_response();
+    }
+    if contains_mount_point(&canonical) {
+        tracing::warn!("Delete denied for '{}': is or contains a mount point", canonical.display());
+        return ApiError::path_not_allowed().into_response();
+    }
+
+    // 9. Get metadata to check if file or directory
     let metadata = match std::fs::metadata(&canonical) {
         Ok(m) => m,
         Err(_) => return ApiError::file_not_found().into_response(),
     };
 
-    // 8. Perform deletion
+    // 10. Perform deletion
     let result = if metadata.is_dir() {
         std::fs::remove_dir_all(&canonical)
     } else {
@@ -979,6 +1082,36 @@ mod tests {
     fn path_not_allowed_outside() {
         let allowed = vec!["/mnt/data".to_string()];
         assert!(!is_path_allowed(Path::new("/other/place"), &allowed));
+    }
+
+    #[test]
+    fn content_disposition_keeps_unicode_name() {
+        assert_eq!(
+            content_disposition_attachment("Übersicht 2026.pdf"),
+            "attachment; filename=\"_bersicht_2026.pdf\"; filename*=UTF-8''%C3%9Cbersicht%202026.pdf"
+        );
+    }
+
+    #[test]
+    fn mount_point_prefix_is_component_wise() {
+        let allowed = vec!["/data".to_string()];
+        assert!(is_mount_point_allowed("/data/usb", &allowed));
+        assert!(!is_mount_point_allowed("/data2/usb", &allowed));
+        assert!(!is_mount_point_allowed("/mntx/usb", &[]));
+        assert!(!is_mount_point_allowed("/mnt", &[]));
+    }
+
+    #[test]
+    fn mount_targets_decode_escapes() {
+        let mounts = "/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /mnt/my\\040drive vfat rw 0 0\n";
+        assert_eq!(mount_targets(mounts), vec!["/".to_string(), "/mnt/my drive".to_string()]);
+    }
+
+    #[test]
+    fn allowed_root_detected() {
+        let allowed = vec!["/mnt/data".to_string()];
+        assert!(is_allowed_root(Path::new("/mnt/data"), &allowed));
+        assert!(!is_allowed_root(Path::new("/mnt/data/sub"), &allowed));
     }
 
     #[test]

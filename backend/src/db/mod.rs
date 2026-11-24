@@ -139,6 +139,23 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await;
 
+    // Last accepted TOTP time step (prevents replaying a code)
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN totp_last_step INTEGER DEFAULT NULL")
+        .execute(pool)
+        .await;
+
+    // Tokens revoked by logout (checked until they expire anyway)
+    let _ = sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti TEXT PRIMARY KEY,
+            expires_at DATETIME NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await;
+
     tracing::info!("Main database migrations completed");
     Ok(())
 }

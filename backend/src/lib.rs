@@ -70,7 +70,6 @@ pub fn build_api_router(state: Arc<AppState>) -> Router {
     let protected_routes = Router::new()
         .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/me", get(handlers::auth::me))
-        .route("/auth/token", get(handlers::auth::get_token))
         .route("/auth/change-password", post(handlers::auth::change_password))
         .route("/auth/totp/setup", post(handlers::totp::setup))
         .route("/auth/totp/enable", post(handlers::totp::enable))

@@ -56,6 +56,24 @@ impl AuthService {
             .is_ok())
     }
 
+    /// [`verify_password`](Self::verify_password) on a blocking thread, so the
+    /// Argon2 computation does not stall the async runtime. Errors count as
+    /// "not valid".
+    pub async fn verify_password_async(password: &str, hash: &str) -> bool {
+        let (password, hash) = (password.to_string(), hash.to_string());
+        tokio::task::spawn_blocking(move || Self::verify_password(&password, &hash).unwrap_or(false))
+            .await
+            .unwrap_or(false)
+    }
+
+    /// [`hash_password`](Self::hash_password) on a blocking thread.
+    pub async fn hash_password_async(password: &str) -> Result<String, AuthError> {
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || Self::hash_password(&password))
+            .await
+            .map_err(|e| AuthError::HashError(e.to_string()))?
+    }
+
     pub fn generate_token(&self, user_id: i64) -> Result<String, AuthError> {
         let now = Utc::now();
         let exp = now + Duration::hours(24);

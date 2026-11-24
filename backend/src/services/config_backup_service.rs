@@ -454,6 +454,7 @@ pub async fn apply_import(
     credential_service: &Arc<CredentialService>,
     backup: ConfigBackup,
     strategy: ImportStrategy,
+    timezone: chrono_tz::Tz,
 ) -> Result<ImportResult> {
     let mut warnings = validate_backup(&backup)?;
     let mut settings_imported = 0usize;
@@ -465,7 +466,7 @@ pub async fn apply_import(
 
     // Check for running jobs inside the transaction to avoid TOCTOU race
     let running: Option<(i64,)> = sqlx::query_as(
-        "SELECT jr.id FROM job_runs jr WHERE jr.status = 'running' LIMIT 1"
+        "SELECT jr.id FROM job_runs jr WHERE jr.status IN ('pending', 'running') LIMIT 1"
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -650,13 +651,28 @@ pub async fn apply_import(
 
         jobs_imported += 1;
 
-        // Import schedules for this job
+        // Import schedules for this job. next_run_at must be set, otherwise the
+        // scheduler would not pick them up until the next server restart.
         for schedule in &job.schedules {
+            let next_run_at = if schedule.enabled {
+                crate::models::parse_cron(&schedule.cron_expression)
+                    .ok()
+                    .and_then(|s| s.upcoming(timezone).next())
+                    .map(|dt| dt.with_timezone(&Utc))
+            } else {
+                None
+            };
+            if schedule.enabled && next_run_at.is_none() {
+                warnings.push(format!(
+                    "Job '{}': schedule '{}' has an invalid cron expression and will not run",
+                    job.name, schedule.cron_expression
+                ));
+            }
             sqlx::query(
                 r#"INSERT INTO schedules (
                     job_id, enabled, cron_expression, schedule_type, time_of_day,
-                    day_of_week, day_of_month, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+                    day_of_week, day_of_month, next_run_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
             )
             .bind(job_id)
             .bind(schedule.enabled)
@@ -665,6 +681,7 @@ pub async fn apply_import(
             .bind(&schedule.time_of_day)
             .bind(schedule.day_of_week)
             .bind(schedule.day_of_month)
+            .bind(next_run_at)
             .bind(now)
             .bind(now)
             .execute(&mut *tx)
@@ -683,7 +700,8 @@ pub async fn apply_import(
 
         if let Some((user_id,)) = user_exists {
             sqlx::query(
-                "UPDATE users SET username = ?, password_hash = ?, totp_enabled = ?, totp_secret = ?, updated_at = ? WHERE id = ?"
+                // password_changed_at invalidates all tokens issued before the import
+                "UPDATE users SET username = ?, password_hash = ?, totp_enabled = ?, totp_secret = ?, updated_at = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ?"
             )
             .bind(&backup.user.username)
             .bind(&backup.user.password_hash)

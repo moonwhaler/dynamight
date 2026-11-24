@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '../../lib/api';
-  import type { Credential, CredentialProviderType, CredentialData, DestinationConfig } from '../../lib/types';
+  import type { Credential, CredentialProviderType, CredentialData, DestinationConfig, OAuthCredentialData } from '../../lib/types';
   import { showToast } from '../ui/Toast.svelte';
   import TestConnection from '../jobs/TestConnection.svelte';
   import * as m from '$lib/paraglide/messages.js';
@@ -41,6 +41,29 @@
   // OAuth fields (OneDrive, Google Drive)
   let oauthAccessToken = $state('');
   let oauthRefreshToken = $state('');
+  let oauthClientId = $state('');
+  let oauthClientSecret = $state('');
+  let oauthTenant = $state('');
+
+  /** OAuth credential data from the form, or undefined if nothing usable was entered. */
+  function buildOAuthData(requireComplete: boolean): OAuthCredentialData | undefined {
+    const anyEntered = oauthAccessToken || oauthRefreshToken || oauthClientId || oauthClientSecret || oauthTenant;
+    if (!anyEntered) return undefined;
+    if (requireComplete) {
+      const needsSecret = providerType === 'google_drive';
+      if (!oauthRefreshToken || !oauthClientId || (needsSecret && !oauthClientSecret)) return undefined;
+    }
+    return {
+      type: 'oauth',
+      access_token: oauthAccessToken.trim(),
+      refresh_token: oauthRefreshToken.trim(),
+      // Unknown lifetime of a pasted token: 0 lets the backend refresh it on first use
+      expires_at: oauthAccessToken ? Math.floor(Date.now() / 1000) + 50 * 60 : 0,
+      client_id: oauthClientId.trim() || undefined,
+      client_secret: oauthClientSecret.trim() || undefined,
+      tenant: providerType === 'onedrive' ? oauthTenant.trim() || undefined : undefined,
+    };
+  }
 
   // Test connection fields (provider-specific destination config)
   let testBucket = $state('');
@@ -64,6 +87,9 @@
     webdavPassword = '';
     oauthAccessToken = '';
     oauthRefreshToken = '';
+    oauthClientId = '';
+    oauthClientSecret = '';
+    oauthTenant = '';
     testBucket = '';
     testRegion = 'us-east-1';
     testHost = '';
@@ -87,6 +113,9 @@
       webdavPassword = '';
       oauthAccessToken = '';
       oauthRefreshToken = '';
+      oauthClientId = '';
+      oauthClientSecret = '';
+      oauthTenant = '';
     } else if (open && mode === 'create') {
       resetForm();
     }
@@ -202,19 +231,12 @@
 
         case 'onedrive':
         case 'google_drive':
-          if (!isEdit || (oauthAccessToken && oauthRefreshToken)) {
-            if ((!oauthAccessToken || !oauthRefreshToken) && !isEdit) {
-              showToast({ message: m.credentials_error_oauth_incomplete(), variant: 'error' });
-              saving = false;
-              return;
-            } else if (oauthAccessToken && oauthRefreshToken) {
-              data = {
-                type: 'oauth',
-                access_token: oauthAccessToken,
-                refresh_token: oauthRefreshToken,
-                expires_at: Math.floor(Date.now() / 1000) + 3600,
-              };
-            }
+          // On edit, empty fields keep their stored values (merged by the backend)
+          data = buildOAuthData(!isEdit);
+          if (!isEdit && !data) {
+            showToast({ message: m.credentials_error_oauth_incomplete(), variant: 'error' });
+            saving = false;
+            return;
           }
           break;
       }
@@ -332,13 +354,7 @@
         };
       case 'onedrive':
       case 'google_drive':
-        if (!oauthAccessToken || !oauthRefreshToken) return undefined;
-        return {
-          type: 'oauth',
-          access_token: oauthAccessToken,
-          refresh_token: oauthRefreshToken,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-        };
+        return buildOAuthData(true);
       default:
         return undefined;
     }
@@ -508,16 +524,51 @@
               {/if}
             </p>
           </div>
+          {#if mode === 'edit'}
+            <p class="text-xs text-gray-500 dark:text-gray-400">{m.credentials_oauth_edit_hint()}</p>
+          {/if}
           <div>
-            <label for="access-token" class="label">{m.credentials_access_token()}</label>
-            <textarea
-              id="access-token"
-              bind:value={oauthAccessToken}
-              placeholder={mode === 'edit' ? '••••••••••••' : 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIs...'}
-              rows="3"
+            <label for="oauth-client-id" class="label">{m.credentials_client_id()}</label>
+            <input
+              id="oauth-client-id"
+              type="text"
+              bind:value={oauthClientId}
+              placeholder={mode === 'edit' ? '••••••••••••' : providerType === 'google_drive' ? '1234567890-abc.apps.googleusercontent.com' : '00000000-0000-0000-0000-000000000000'}
               class="input font-mono text-xs"
-            ></textarea>
+              autocomplete="off"
+            />
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {providerType === 'google_drive' ? m.credentials_client_id_help_google() : m.credentials_client_id_help_onedrive()}
+            </p>
           </div>
+          <div>
+            <label for="oauth-client-secret" class="label">{m.credentials_client_secret()}</label>
+            <input
+              id="oauth-client-secret"
+              type="password"
+              bind:value={oauthClientSecret}
+              placeholder={mode === 'edit' ? '••••••••••••' : ''}
+              class="input font-mono text-xs"
+              autocomplete="new-password"
+            />
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {providerType === 'google_drive' ? m.credentials_client_secret_help_google() : m.credentials_client_secret_help_onedrive()}
+            </p>
+          </div>
+          {#if providerType === 'onedrive'}
+            <div>
+              <label for="oauth-tenant" class="label">{m.credentials_tenant()}</label>
+              <input
+                id="oauth-tenant"
+                type="text"
+                bind:value={oauthTenant}
+                placeholder="common"
+                class="input font-mono text-xs"
+                autocomplete="off"
+              />
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{m.credentials_tenant_help()}</p>
+            </div>
+          {/if}
           <div>
             <label for="refresh-token" class="label">{m.credentials_refresh_token()}</label>
             <textarea
@@ -530,6 +581,17 @@
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
               {m.credentials_refresh_token_help()}
             </p>
+          </div>
+          <div>
+            <label for="access-token" class="label">{m.credentials_access_token_optional()}</label>
+            <textarea
+              id="access-token"
+              bind:value={oauthAccessToken}
+              placeholder={mode === 'edit' ? '••••••••••••' : 'ya29... / eyJ0eXAi...'}
+              rows="2"
+              class="input font-mono text-xs"
+            ></textarea>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{m.credentials_access_token_optional_help()}</p>
           </div>
         {/if}
 

@@ -82,7 +82,9 @@ russh-sftp = "2"
 russh-keys = "0.46"
 
 # HTTP client (for WebDAV)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+bytes = "1"
+quick-xml = "0.37"
 
 # Unix process signals
 [target.'cfg(unix)'.dependencies]

@@ -193,6 +193,33 @@ async fn logout_clears_cookie() {
     assert!(logout_cookie.contains("Max-Age=0"));
 }
 
+#[tokio::test]
+async fn logout_revokes_the_token() {
+    let app = TestApp::new().await;
+    let set_cookie = app.setup_and_login().await;
+    let cookie = TestApp::cookie_value(&set_cookie);
+    let header = axum::http::HeaderValue::from_str(&cookie).unwrap();
+
+    app.server
+        .get("/auth/me")
+        .add_header(axum::http::header::COOKIE, header.clone())
+        .await
+        .assert_status_ok();
+
+    app.server
+        .post("/auth/logout")
+        .add_header(axum::http::header::COOKIE, header.clone())
+        .await
+        .assert_status_ok();
+
+    // A copy of the token must stop working after logout
+    app.server
+        .get("/auth/me")
+        .add_header(axum::http::header::COOKIE, header)
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+}
+
 // ── Me ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]

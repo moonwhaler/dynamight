@@ -28,7 +28,7 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 
 - **Directory Compression**
   - Archive source directories (tar.gz or zip) before uploading
-  - Optional archive encryption (AES-256-CBC for tar, built-in for zip)
+  - Optional archive encryption (AES-256-CBC via openssl, `.enc` files)
   - Timestamped versioning with configurable per-directory retention
   - Custom archive name prefixes
   - Store-only mode (archive without compression)
@@ -93,8 +93,8 @@ A self-hosted backup management system with a web UI, supporting multiple destin
 |----------|-------------|----------------|
 | Local/USB | Rsync to local or mounted drives | None |
 | AWS S3 | S3 and S3-compatible storage | Access Key + Secret |
-| Google Drive | Google Drive folders and shared drives | OAuth2 |
-| OneDrive | Microsoft OneDrive personal/business | OAuth2 |
+| Google Drive | Google Drive folders and shared drives | OAuth2 (own client ID + secret, refresh token) |
+| OneDrive | Microsoft OneDrive personal/business | OAuth2 (own client ID, refresh token) |
 | SFTP | SSH/SFTP servers | Password or SSH Key |
 | WebDAV | Nextcloud, ownCloud, generic WebDAV | Username + Password |
 
@@ -208,7 +208,7 @@ Any setting can be overridden via environment variables using SCREAMING_SNAKE_CA
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `security.jwt_secret` | **required** | Secret for JWT signing and credential encryption |
+| `security.jwt_secret` | **required** | Secret for JWT signing and credential encryption. Changing it logs everyone out and makes stored credentials unreadable (re-enter them, or restore a configuration backup after the change) |
 | `server.host` | `0.0.0.0` | Network interface to bind |
 | `server.port` | `8080` | Port to listen on |
 | `database.url` | `sqlite:data/dynamight.db` | SQLite database location |
@@ -275,6 +275,8 @@ cargo test --lib --tests
 cd frontend
 npm test
 ```
+
+The remote providers (S3, SFTP, WebDAV) also have live tests that run against real servers. They are ignored by default; `backend/tests/providers_live.rs` explains how to start local test servers with rclone and run them with `cargo test --test providers_live -- --ignored`.
 
 ## Building for Production
 
@@ -368,11 +370,11 @@ sudo ./scripts/install.sh uninstall
    - Set staging path (temporary directory for archives)
    - Choose format (tar.gz or zip) and optionally store-only (no compression)
    - Enable timestamp versioning and set max archives to retain
-   - Optionally set an archive password
+   - Optionally set an archive password. Archives are then encrypted with AES-256-CBC and get a `.enc` suffix (`.tar.gz.enc`, `.tar.enc` or `.zip.enc`). Decrypt one with `openssl enc -d -aes-256-cbc -pbkdf2 -in photos_1.tar.gz.enc -out photos_1.tar.gz`
 8. **Sync Options**:
    - Delete extraneous files
    - Exclude patterns and directories
-   - Bandwidth limit (rsync/SFTP)
+   - Bandwidth limit (local/USB only)
    - Dry run mode
 9. Click **"Create Job"**
 
@@ -384,6 +386,39 @@ Credentials for cloud providers are stored encrypted. Manage them in Settings:
 2. Go to **Credentials** tab
 3. Add, edit, or delete credentials
 4. View which jobs use each credential
+
+When editing an OAuth credential, fields left empty keep their stored values.
+
+### How Cloud Sync Works
+
+All remote providers (S3, SFTP, WebDAV, Google Drive, OneDrive) sync incrementally. Each run lists the destination first and only uploads files that are new, changed in size, or modified locally after the copy on the destination. Files are streamed from disk, so large files do not have to fit into memory. S3 uses multipart upload for files above 64 MiB, and Google Drive and OneDrive use resumable chunked uploads.
+
+With **Delete extraneous files** enabled, files that no longer exist in the source are removed from the destination. Google Drive moves them to the trash, and OneDrive moves them to the recycle bin. Files that match an exclude pattern are never deleted. Throttled requests (HTTP 429) and temporary server errors are retried, honoring `Retry-After`.
+
+Notes per provider:
+
+- **S3-compatible services**: with a custom endpoint, path-style addressing is used and the SDK only sends checksums where an operation requires them, because not every S3-compatible service accepts the newer checksum headers.
+- **OneDrive**: names OneDrive does not allow (for example ones containing `" * : < > ? \ |`, or `desktop.ini`) are skipped with a warning.
+- **SFTP**: the host key fingerprint is shown in OpenSSH format (`ssh-keygen -lf`), so you can compare it directly.
+
+### Setting Up Google Drive and OneDrive
+
+Dynamight uses your own OAuth app registration and renews access tokens itself with the refresh token, so scheduled backups keep working after the access token expires (about one hour).
+
+**Google Drive**
+
+1. In the Google Cloud Console, create a project, enable the **Google Drive API** and configure the OAuth consent screen.
+2. Set the consent screen's publishing status to **In production**. While it is in "Testing", Google expires refresh tokens after 7 days.
+3. Create an **OAuth client ID** and note the client ID and client secret.
+4. Run the OAuth authorization-code flow once with offline access (`access_type=offline`) to get a refresh token, for example with the OAuth 2.0 Playground configured to use your own client.
+5. Scope: with `https://www.googleapis.com/auth/drive.file`, Dynamight can only see files and folders it created itself. Leave the folder ID empty (or use a folder Dynamight created) in that case. To back up into an existing folder, use the `https://www.googleapis.com/auth/drive` scope, which Google classifies as restricted.
+6. In Dynamight, add a Google Drive credential with the client ID, client secret and refresh token. The access token is optional.
+
+**OneDrive**
+
+1. Register an app in the Microsoft Entra admin center and add the delegated Microsoft Graph permissions `Files.ReadWrite.All` and `offline_access`.
+2. Run the authorization-code flow once to get a refresh token.
+3. In Dynamight, add a OneDrive credential with the application (client) ID and the refresh token. The client secret is only needed for confidential (web) app registrations. Set the tenant to `consumers` for personal Microsoft accounts if `common` does not work for your registration.
 
 ### Scheduling Backups
 

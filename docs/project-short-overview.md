@@ -107,12 +107,12 @@ add_timestamp:        bool             // enables versioned archives
 custom_name:          Option<String>   // ^[a-zA-Z0-9_-]{1,64}$
 max_archives_per_dir: Option<u32>      // only meaningful when add_timestamp = true; >= 1
 staging_path:         String           // flat dir; job ID embedded in every filename
-password:             Option<String>   // tar: openssl AES-256-CBC via stdin; zip: built-in -P
+password:             Option<String>   // openssl AES-256-CBC via stdin (tar and zip)
 ```
 
 Archive naming: `[<YYYY-MM-DDTHH-MM-SS>_][<custom_name>_]<sanitised_dir_name>_<job_id>.<ext>`
 
-Encryption extensions: `.tar.gz.enc` / `.tar.enc` for tar+password; `.zip` unchanged (zip handles it internally).
+Encryption extensions: `.tar.gz.enc` / `.tar.enc` / `.zip.enc` (archive encrypted with openssl after creation).
 
 ### `Job` (`models/job.rs`)
 
@@ -268,7 +268,7 @@ Two SQLite databases (WAL mode):
 - **GNU tar required on Alpine** — BusyBox tar lacks `--numeric-owner`; Dockerfile installs the `tar` package explicitly
 - **New error codes need three edits** in `errors.rs` (enum + constructor + IntoResponse match) — missing the match arm silently returns 500
 - **`SyncOptions` additions**: add `#[serde(default)]` to the field, update the manual `Default` impl, and any `Self { ... }` constructors
-- **Zip vs. tar encryption differ**: tar uses `openssl enc -aes-256-cbc -pbkdf2` (password via stdin, stronger); zip uses built-in `-P` flag (weaker)
+- **Encryption is the same for tar and zip**: the archive is created first, then encrypted with `openssl enc -aes-256-cbc -pbkdf2` (password via stdin). Zip's built-in encryption is not used: it is weak and needs the password on the command line.
 - **Compression staging path** must not overlap with any source_dir — validated bidirectionally in both the handler and at runtime in `compress_service`
 - **Dry-run + compression**: logs planned archives but skips actual archiving
 - **RunLogModal** is imported in **both** `Jobs.svelte` and `JobDetail.svelte` (not lifted out of one, used in both)

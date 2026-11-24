@@ -41,8 +41,25 @@ pub async fn require_auth(
         )
     })?;
 
-    // Check if the token was issued before the user's last password change.
-    // This invalidates all sessions when the password is changed.
+    if let Err(code) = check_session(&state, &claims).await {
+        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "code": code }))));
+    }
+
+    Ok(next.run(request).await)
+}
+
+/// Reject tokens that were revoked by logout, or issued before the user's
+/// last password change (which invalidates all sessions).
+pub async fn check_session(state: &AppState, claims: &crate::services::Claims) -> Result<(), &'static str> {
+    let revoked: Option<(String,)> = sqlx::query_as("SELECT jti FROM revoked_tokens WHERE jti = ?")
+        .bind(&claims.jti)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+    if revoked.is_some() {
+        return Err("SESSION_EXPIRED");
+    }
+
     let password_changed_at: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
         sqlx::query_as("SELECT password_changed_at FROM users WHERE id = ?")
             .bind(claims.sub)
@@ -51,14 +68,9 @@ pub async fn require_auth(
             .unwrap_or(None);
 
     if let Some((Some(changed_at),)) = password_changed_at {
-        let token_issued_at = claims.iat as i64;
-        if token_issued_at < changed_at.timestamp() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"code": "SESSION_EXPIRED"})),
-            ));
+        if (claims.iat as i64) < changed_at.timestamp() {
+            return Err("SESSION_EXPIRED");
         }
     }
-
-    Ok(next.run(request).await)
+    Ok(())
 }

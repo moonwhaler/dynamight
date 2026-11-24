@@ -299,6 +299,14 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&credential_service),
     ));
 
+    // No run can be active yet: anything still marked pending/running was
+    // interrupted by a crash or restart.
+    match backup_service.mark_interrupted_runs().await {
+        Ok(0) => {}
+        Ok(n) => tracing::warn!("Marked {} interrupted job run(s) as failed", n),
+        Err(e) => tracing::error!("Failed to mark interrupted job runs: {}", e),
+    }
+
     // Initialize rate limiting service
     let rate_limit_config = RateLimitConfig {
         max_attempts: config.rate_limit_max_attempts,
@@ -334,6 +342,10 @@ async fn main() -> anyhow::Result<()> {
             let _ = sqlx::query("DELETE FROM pending_totp_sessions WHERE expires_at < datetime('now')")
                 .execute(&cleanup_db)
                 .await;
+            let _ = sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < ?")
+                .bind(chrono::Utc::now())
+                .execute(&cleanup_db)
+                .await;
         }
     });
 
@@ -361,7 +373,6 @@ async fn main() -> anyhow::Result<()> {
         // Auth routes (protected)
         .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/me", get(handlers::auth::me))
-        .route("/auth/token", get(handlers::auth::get_token))
         .route("/auth/change-password", post(handlers::auth::change_password))
         // TOTP / 2FA routes (protected)
         .route("/auth/totp/setup", post(handlers::totp::setup))

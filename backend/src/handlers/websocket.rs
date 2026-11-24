@@ -1,73 +1,46 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        Path, State,
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Response,
     Json,
 };
 use futures::{SinkExt, StreamExt};
-use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::extractors::extract_token_from_headers;
+use crate::middleware::check_session;
 use crate::AppState;
 
-#[derive(Deserialize)]
-pub struct WsAuthQuery {
-    token: Option<String>,
+type WsReject = (StatusCode, Json<serde_json::Value>);
+
+fn unauthorized(msg: &str) -> WsReject {
+    (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg })))
 }
 
-/// Validate a WebSocket token and check session validity (including password change invalidation).
-async fn validate_ws_token(
-    token: &str,
-    state: &AppState,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let claims = state.auth_service.validate_token(token).map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid or expired token"})),
-        )
-    })?;
-
-    // Check if token was issued before password change (session invalidation)
-    let password_changed_at: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
-        sqlx::query_as("SELECT password_changed_at FROM users WHERE id = ?")
-            .bind(claims.sub)
-            .fetch_optional(&state.db)
-            .await
-            .unwrap_or(None);
-
-    if let Some((Some(changed_at),)) = password_changed_at {
-        let token_issued_at = claims.iat as i64;
-        if token_issued_at < changed_at.timestamp() {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Session expired"})),
-            ));
-        }
-    }
-
-    Ok(())
+/// Authenticate a WebSocket handshake with the session cookie, so the token
+/// never has to be exposed to JavaScript or put into a URL. The cookie is
+/// `SameSite=Strict`, so browsers do not send it on cross-site handshakes
+/// (no cross-site WebSocket hijacking).
+async fn authenticate_ws(headers: &HeaderMap, state: &AppState) -> Result<(), WsReject> {
+    let token = extract_token_from_headers(headers).ok_or_else(|| unauthorized("Not authenticated"))?;
+    let claims = state
+        .auth_service
+        .validate_token(&token)
+        .map_err(|_| unauthorized("Invalid or expired token"))?;
+    check_session(state, &claims).await.map_err(|_| unauthorized("Session expired"))
 }
 
 pub async fn ws_logs_handler(
     ws: WebSocketUpgrade,
     Path(run_id): Path<i64>,
-    Query(query): Query<WsAuthQuery>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Validate token from query parameter
-    let token = query.token.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Missing token parameter"})),
-        )
-    })?;
-
-    validate_ws_token(&token, &state).await?;
-
+) -> Result<Response, WsReject> {
+    authenticate_ws(&headers, &state).await?;
     Ok(ws.on_upgrade(move |socket| handle_logs_socket(socket, run_id, state)))
 }
 
@@ -113,19 +86,10 @@ async fn handle_logs_socket(socket: WebSocket, run_id: i64, state: Arc<AppState>
 
 pub async fn ws_status_handler(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsAuthQuery>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Validate token from query parameter
-    let token = query.token.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Missing token parameter"})),
-        )
-    })?;
-
-    validate_ws_token(&token, &state).await?;
-
+) -> Result<Response, WsReject> {
+    authenticate_ws(&headers, &state).await?;
     Ok(ws.on_upgrade(move |socket| handle_status_socket(socket, state)))
 }
 
@@ -182,3 +146,4 @@ async fn handle_status_socket(socket: WebSocket, state: Arc<AppState>) {
         _ = recv_task => {},
     }
 }
+

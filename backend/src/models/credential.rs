@@ -75,11 +75,31 @@ impl From<Credential> for CredentialResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CredentialData {
     /// OAuth2 credentials (Google Drive, OneDrive)
+    ///
+    /// Access tokens expire after about an hour. With `client_id` (and, for
+    /// Google, `client_secret`) set, the backend renews `access_token` from
+    /// `refresh_token` before it expires and stores the new tokens.
     #[serde(rename = "oauth")]
     OAuth {
+        /// May be empty: a token is then fetched with the refresh token on first use
+        #[serde(default)]
         access_token: String,
         refresh_token: String,
+        /// Unix timestamp (seconds) when `access_token` expires; 0 = unknown/expired
+        #[serde(default)]
         expires_at: i64,
+        /// OAuth client ID of the user's own Google Cloud / Azure app registration
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
+        /// OAuth client secret (required by Google, optional for Microsoft public clients)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_secret: Option<String>,
+        /// Microsoft tenant: "common" (default), "consumers", "organizations" or a tenant ID
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant: Option<String>,
+        /// Scopes for the Microsoft refresh request (default "offline_access Files.ReadWrite.All")
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
     },
 
     /// S3/AWS credentials
@@ -154,11 +174,25 @@ pub enum CredentialDataRequest {
     },
 
     /// OAuth credentials (OneDrive, Google Drive)
+    ///
+    /// On update, an empty `refresh_token` keeps the stored tokens and only
+    /// changes the client settings.
     #[serde(rename = "oauth")]
     OAuth {
+        #[serde(default)]
         access_token: String,
+        #[serde(default)]
         refresh_token: String,
+        #[serde(default)]
         expires_at: i64,
+        #[serde(default)]
+        client_id: Option<String>,
+        #[serde(default)]
+        client_secret: Option<String>,
+        #[serde(default)]
+        tenant: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
     },
 }
 
@@ -174,11 +208,29 @@ impl From<CredentialDataRequest> for CredentialData {
             CredentialDataRequest::WebDav { username, password } => {
                 Self::WebDav { username, password }
             }
-            CredentialDataRequest::OAuth { access_token, refresh_token, expires_at } => {
-                Self::OAuth { access_token, refresh_token, expires_at }
-            }
+            CredentialDataRequest::OAuth {
+                access_token,
+                refresh_token,
+                expires_at,
+                client_id,
+                client_secret,
+                tenant,
+                scope,
+            } => Self::OAuth {
+                access_token,
+                refresh_token,
+                expires_at,
+                client_id: non_empty(client_id),
+                client_secret: non_empty(client_secret),
+                tenant: non_empty(tenant),
+                scope: non_empty(scope),
+            },
         }
     }
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 /// Request to update a credential

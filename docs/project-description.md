@@ -352,7 +352,7 @@ Handles per-directory archiving before provider sync:
   - `zip`: ZIP archive (`.zip`)
 - **Encryption**:
   - `tar_gz` + password: two-step process — create tar, then pipe through `openssl enc -aes-256-cbc -pbkdf2`; output has `.enc` suffix (e.g. `.tar.gz.enc`). Password is passed via stdin, not on the command line.
-  - `zip` + password: built-in zip `-P` flag; no additional suffix. Note: zip encryption is weaker than AES-256-CBC.
+  - `zip` + password: same two-step process as tar (zip, then openssl); output has `.zip.enc` suffix. Zip's built-in encryption is not used (weak ZipCrypto, password visible in the process list).
 - **Excluded directories**: `archive_relative_excludes()` converts absolute `exclude_dirs` to archive-relative paths so they are honoured during compression, not just during provider sync
 - **GNU tar required**: Alpine's default BusyBox tar lacks `--numeric-owner`; the Dockerfile installs the GNU `tar` package
 
@@ -917,9 +917,9 @@ The job ID embedded in every filename ensures multiple jobs can share the same s
 | tar.gz | Yes | No | `.tar` |
 | tar.gz | Yes | Yes | `.tar.enc` |
 | zip | — | No | `.zip` |
-| zip | — | Yes | `.zip` (built-in zip `-P` flag) |
+| zip | — | Yes | `.zip.enc` (openssl AES-256-CBC, password via stdin) |
 
-Note: tar encryption uses `openssl enc -aes-256-cbc -pbkdf2`; the password is passed via stdin (not command-line) to avoid exposure in the process list. Zip uses built-in encryption which is weaker than AES-256-CBC.
+Note: tar encryption uses `openssl enc -aes-256-cbc -pbkdf2`; the password is passed via stdin (not command-line) to avoid exposure in the process list. Zip archives are encrypted the same way (`.zip.enc`).
 
 ---
 

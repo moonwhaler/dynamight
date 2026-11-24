@@ -4,6 +4,7 @@ pub mod compress_service;
 pub mod config_backup_service;
 mod credential_service;
 mod mount_service;
+pub mod oauth_service;
 pub mod providers;
 mod rate_limit_service;
 mod scheduler_service;

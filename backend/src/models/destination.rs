@@ -225,6 +225,13 @@ pub struct SyncOptions {
     /// When set and enabled, each source directory is compressed before transfer.
     #[serde(default)]
     pub compress_dirs: Option<CompressDirsOptions>,
+
+    /// Runtime only (never stored): when set, providers transfer only files
+    /// whose name matches this glob, and never delete non-matching files on
+    /// the destination. Used in compress mode, where the staging directory
+    /// may also hold other jobs' archives.
+    #[serde(skip)]
+    pub include_only: Option<String>,
 }
 
 impl Default for SyncOptions {
@@ -239,6 +246,7 @@ impl Default for SyncOptions {
             provider_options: None,
             space_check: "warn".to_string(),
             compress_dirs: None,
+            include_only: None,
         }
     }
 }
@@ -270,6 +278,7 @@ impl SyncOptions {
             provider_options: Some(provider_options),
             space_check: "warn".to_string(),
             compress_dirs: None,
+            include_only: None,
         }
     }
 

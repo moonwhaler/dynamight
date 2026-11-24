@@ -163,14 +163,23 @@ pub async fn import_config(
     let backup = config_backup_service::from_yaml(&yaml)
         .map_err(map_backup_error)?;
 
+    let strategy = fields.strategy;
     let result = config_backup_service::apply_import(
         &state.db,
         &state.credential_service,
         backup,
-        fields.strategy,
+        strategy,
+        state.config.timezone,
     )
     .await
     .map_err(map_backup_error)?;
+
+    // Replace removed all job runs; their log entries live in the logs database
+    if strategy == config_backup_service::ImportStrategy::Replace {
+        if let Err(e) = state.backup_service.delete_all_logs().await {
+            tracing::warn!("Failed to delete logs after config import: {}", e);
+        }
+    }
 
     Ok(Json(result))
 }

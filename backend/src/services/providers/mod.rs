@@ -3,6 +3,7 @@
 //! This module provides a trait-based abstraction for different sync backends
 //! (rsync, S3, SFTP, WebDAV, Google Drive, OneDrive).
 
+mod common;
 mod googledrive;
 mod onedrive;
 mod rsync;
@@ -94,6 +95,8 @@ pub struct SyncContext {
     pub logs_db: SqlitePool,
     /// Callback to check if the run has been cancelled
     pub is_cancelled: CancellationChecker,
+    /// Renews OAuth access tokens during long runs (Google Drive, OneDrive)
+    pub oauth: Option<Arc<crate::services::OAuthTokenSource>>,
 }
 
 impl SyncContext {
@@ -139,6 +142,25 @@ impl SyncContext {
     /// Check if the current run has been cancelled
     pub fn check_cancelled(&self) -> bool {
         (self.is_cancelled)(self.run_id)
+    }
+
+    /// Current OAuth access token, renewed when it is about to expire.
+    ///
+    /// Call this before each API request instead of keeping one token for the
+    /// whole run: access tokens only live about an hour.
+    pub async fn oauth_access_token(&self) -> Result<String, ProviderError> {
+        if let Some(source) = &self.oauth {
+            return source
+                .access_token()
+                .await
+                .map_err(|e| ProviderError::CredentialError(format!("{:#}", e)));
+        }
+        match &self.credential {
+            Some(CredentialData::OAuth { access_token, .. }) if !access_token.is_empty() => {
+                Ok(access_token.clone())
+            }
+            _ => Err(ProviderError::CredentialError("OAuth access token required".to_string())),
+        }
     }
 }
 

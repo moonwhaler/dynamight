@@ -2,6 +2,7 @@
 
 use crate::models::{CredentialData, CredentialDataRequest, DestinationConfig};
 use crate::services::providers::{self, create_provider, TestConnectionResult};
+use crate::services::oauth_service::{self, OAuthProvider};
 use crate::AppState;
 use axum::{
     extract::{Path, State},
@@ -114,11 +115,25 @@ pub async fn test_connection(
     // Get credential - either from ID or from provided data
     let credential: Option<CredentialData> = if let Some(credential_id) = request.credential_id {
         // Use existing saved credential
-        match state
-            .credential_service
-            .get_decrypted_with_db(&state.db, credential_id)
-            .await
-        {
+        // get_fresh renews an expired OAuth access token first
+        let loaded = match state.credential_service.get_fresh(credential_id).await {
+            Ok(cred) => Ok(Some(cred)),
+            Err(e) if e.to_string().starts_with("Credential not found") => Ok(None),
+            Err(e) if e.to_string().starts_with("Token refresh") => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(TestConnectionResponse {
+                        success: false,
+                        message: e.to_string(),
+                        details: None,
+                        host_key_fingerprint: None,
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => Err(e),
+        };
+        match loaded {
             Ok(Some(cred)) => Some(cred),
             Ok(None) => {
                 return (
@@ -148,7 +163,34 @@ pub async fn test_connection(
         }
     } else {
         // Use provided credential data directly (for testing before saving)
-        request.credential_data.map(|data| data.into())
+        let mut data: Option<CredentialData> = request.credential_data.map(|data| data.into());
+
+        // Unsaved OAuth credential: get an access token from the refresh token
+        // if none (or an expired one) was entered.
+        let oauth_provider = match &request.destination {
+            DestinationConfig::GoogleDrive { .. } => Some(OAuthProvider::Google),
+            DestinationConfig::OneDrive { .. } => Some(OAuthProvider::Microsoft),
+            _ => None,
+        };
+        if let (Some(provider), Some(cred)) = (oauth_provider, data.as_mut()) {
+            if oauth_service::needs_refresh(cred, chrono::Utc::now().timestamp())
+                && oauth_service::can_refresh(provider, cred)
+            {
+                if let Err(e) = state.credential_service.refresh_unsaved(provider, cred).await {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(TestConnectionResponse {
+                            success: false,
+                            message: e.to_string(),
+                            details: None,
+                            host_key_fingerprint: None,
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        data
     };
 
     // Create provider and test connection

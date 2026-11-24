@@ -1,9 +1,11 @@
 //! SFTP sync provider for remote SSH servers
 
+use super::common::{self, needs_upload, rel_excluded, LocalEntry, RemoteFile};
 use super::{ProviderCapabilities, ProviderError, SyncContext, SyncProvider, SyncResult, TestConnectionResult};
 use crate::models::{CredentialData, DestinationConfig};
 use async_trait::async_trait;
 use russh_keys::PublicKeyBase64;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,9 +32,9 @@ impl SyncProvider for SftpProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             supports_delete: true,
-            supports_compression: true,
+            supports_compression: false,
             supports_checksum: false,
-            supports_bandwidth_limit: true,
+            supports_bandwidth_limit: false,
             supports_exclude_patterns: true,
             supports_incremental: true,
             supports_dry_run: true,
@@ -252,7 +254,7 @@ impl SyncProvider for SftpProvider {
                     // Likely a host key mismatch - get the current fingerprint to report
                     if let Ok(current_fp) = self.get_host_fingerprint(&host, port).await {
                         if let Some(ref expected) = expected_fingerprint {
-                            if expected != &current_fp {
+                            if !fingerprints_match(expected, &current_fp) {
                                 ctx.log_error(
                                     &format!(
                                         "HOST KEY MISMATCH! Expected: {}, Got: {}. This could indicate a Man-in-the-Middle attack!",
@@ -332,8 +334,20 @@ impl SyncProvider for SftpProvider {
 
         ctx.log_info("SFTP session established", "sftp").await;
 
+        // Make sure the base remote path exists
+        if !ctx.options.dry_run {
+            if let Err(e) = create_dir_all(&sftp, remote_path.trim_end_matches('/')).await {
+                ctx.log_error(&format!("Cannot create remote path {}: {}", remote_path, e), "sftp").await;
+                return Err(e);
+            }
+        }
+
         // Sync each source directory
         for source_dir in &ctx.source_dirs {
+            if ctx.check_cancelled() {
+                ctx.log_warning("Sync cancelled by user", "sftp").await;
+                return Err(ProviderError::Cancelled);
+            }
             if !Path::new(source_dir).exists() {
                 ctx.log_warning(&format!("Source directory does not exist: {}", source_dir), "sftp").await;
                 result.error_count += 1;
@@ -349,14 +363,9 @@ impl SyncProvider for SftpProvider {
 
             ctx.log_info(&format!("Syncing {} -> {}", source_dir, dest_path), "sftp").await;
 
-            // Create remote directory
-            if !ctx.options.dry_run {
-                let _ = sftp.create_dir(&dest_path).await;
-            }
-
-            // Sync directory contents
-            match self.sync_directory(&sftp, source_dir, &dest_path, &ctx, &mut result).await {
+            match self.sync_source(&sftp, source_dir, &dest_path, &ctx, &mut result).await {
                 Ok(_) => {}
+                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
                 Err(e) => {
                     ctx.log_error(&format!("Failed to sync {}: {}", source_dir, e), "sftp").await;
                     result.error_count += 1;
@@ -367,8 +376,8 @@ impl SyncProvider for SftpProvider {
         result.success = result.error_count == 0;
         ctx.log_info(
             &format!(
-                "SFTP sync complete. Files: {}, Bytes: {}, Errors: {}",
-                result.files_transferred, result.bytes_transferred, result.error_count
+                "SFTP sync complete. Files: {}, Bytes: {}, Deleted: {}, Errors: {}",
+                result.files_transferred, result.bytes_transferred, result.files_deleted, result.error_count
             ),
             "sftp",
         ).await;
@@ -380,7 +389,7 @@ impl SyncProvider for SftpProvider {
 impl SftpProvider {
     /// Get the host key fingerprint for a server without full authentication
     async fn get_host_fingerprint(&self, host: &str, port: u16) -> Result<String, ProviderError> {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
         use sha2::{Sha256, Digest};
 
         // We need a custom minimal handler just to capture the fingerprint
@@ -400,7 +409,7 @@ impl SftpProvider {
                 let mut hasher = Sha256::new();
                 hasher.update(&key_bytes);
                 let hash = hasher.finalize();
-                let fingerprint = format!("SHA256:{}", STANDARD.encode(hash));
+                let fingerprint = format!("SHA256:{}", STANDARD_NO_PAD.encode(hash));
                 *self.fingerprint.lock().await = Some(fingerprint);
                 // Accept the key for fingerprint capture
                 Ok(true)
@@ -422,90 +431,221 @@ impl SftpProvider {
         result.ok_or_else(|| ProviderError::ConnectionError("Failed to capture host key".to_string()))
     }
 
-    async fn sync_directory(
+    /// Sync one source directory to `dest_path` incrementally.
+    async fn sync_source(
         &self,
         sftp: &russh_sftp::client::SftpSession,
         source_dir: &str,
-        remote_dir: &str,
+        dest_path: &str,
         ctx: &SyncContext,
         result: &mut SyncResult,
     ) -> Result<(), ProviderError> {
-        use tokio::fs;
+        let dry_run = ctx.options.dry_run;
+        let local = common::walk_source_async(source_dir, &ctx.options).await?;
+        for msg in &local.skipped {
+            ctx.log_warning(msg, "sftp").await;
+        }
 
-        let mut entries = fs::read_dir(source_dir).await?;
+        let (remote_files, remote_dirs) = list_remote_tree(sftp, dest_path, ctx).await?;
 
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            let file_name = entry.file_name().to_string_lossy().to_string();
+        if !dry_run {
+            create_dir_all(sftp, dest_path).await?;
+        }
 
-            // Check exclude patterns
-            if ctx.options.exclude_patterns.iter().any(|p| {
-                glob::Pattern::new(p).map(|pat| pat.matches(&file_name)).unwrap_or(false)
-            }) {
+        for dir in local.dirs() {
+            if ctx.check_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            if remote_dirs.contains(&dir.rel) {
                 continue;
             }
-
-            // Check excluded directories
-            let full_path = path.to_string_lossy().to_string();
-            if path.is_dir() && ctx.options.exclude_dirs.iter().any(|ex| full_path == *ex || full_path.starts_with(&format!("{}/", ex))) {
-                ctx.log_info(&format!("Skipping excluded directory: {}", full_path), "sftp").await;
+            let path = format!("{}/{}", dest_path, dir.rel);
+            if dry_run {
+                ctx.log_info(&format!("[DRY RUN] Would create directory: {}", path), "sftp").await;
                 continue;
             }
-
-            let remote_path = format!("{}/{}", remote_dir, file_name);
-
-            if path.is_dir() {
-                // Create remote directory and recurse
-                if !ctx.options.dry_run {
-                    let _ = sftp.create_dir(&remote_path).await;
+            if let Err(e) = sftp.create_dir(path.clone()).await {
+                if !matches!(sftp.try_exists(path.clone()).await, Ok(true)) {
+                    ctx.log_error(&format!("Failed to create directory {}: {}", path, e), "sftp").await;
+                    result.error_count += 1;
                 }
-                let path_str = path.to_str().ok_or_else(|| {
-                    ProviderError::TransferError(format!("Invalid UTF-8 in path: {}", path.display()))
-                })?;
-                Box::pin(self.sync_directory(sftp, path_str, &remote_path, ctx, result)).await?;
-            } else if path.is_file() {
-                if ctx.options.dry_run {
-                    ctx.log_info(&format!("[DRY RUN] Would upload: {}", remote_path), "sftp").await;
+            }
+        }
+
+        let mut skipped = 0u64;
+        for file in local.files() {
+            if ctx.check_cancelled() {
+                return Err(ProviderError::Cancelled);
+            }
+            if !needs_upload(file, remote_files.get(&file.rel)) {
+                skipped += 1;
+                continue;
+            }
+            let path = format!("{}/{}", dest_path, file.rel);
+            if dry_run {
+                ctx.log_info(&format!("[DRY RUN] Would upload: {}", path), "sftp").await;
+                result.files_transferred += 1;
+                result.bytes_transferred += file.size as i64;
+                continue;
+            }
+            match upload_file(sftp, file, &path).await {
+                Ok(()) => {
+                    ctx.log_info(&format!("Uploaded: {}", path), "sftp").await;
                     result.files_transferred += 1;
+                    result.bytes_transferred += file.size as i64;
+                }
+                Err(e) => {
+                    ctx.log_error(&format!("Failed to upload {}: {}", path, e), "sftp").await;
+                    result.error_count += 1;
+                }
+            }
+        }
+        if skipped > 0 {
+            ctx.log_info(&format!("{} unchanged file(s) skipped", skipped), "sftp").await;
+        }
+
+        if ctx.options.delete_extraneous {
+            let local_paths = local.rel_paths();
+            let is_stale = |rel: &String| !local_paths.contains(rel) && !rel_excluded(source_dir, rel, &ctx.options);
+
+            let mut files: Vec<&String> = remote_files.keys().filter(|r| is_stale(r)).collect();
+            files.sort();
+            // Deepest directories first, so they are empty when removed
+            let mut dirs: Vec<&String> = remote_dirs.iter().filter(|r| is_stale(r)).collect();
+            dirs.sort_by(|a, b| b.matches('/').count().cmp(&a.matches('/').count()).then(b.cmp(a)));
+
+            for rel in files {
+                let path = format!("{}/{}", dest_path, rel);
+                if dry_run {
+                    ctx.log_info(&format!("[DRY RUN] Would delete: {}", path), "sftp").await;
+                    result.files_deleted += 1;
                     continue;
                 }
-
-                // Read and upload file
-                match fs::read(&path).await {
-                    Ok(data) => {
-                        let file_size = data.len() as i64;
-
-                        match sftp.create(&remote_path).await {
-                            Ok(mut file) => {
-                                use tokio::io::AsyncWriteExt;
-                                match file.write_all(&data).await {
-                                    Ok(_) => {
-                                        ctx.log_info(&format!("Uploaded: {}", remote_path), "sftp").await;
-                                        result.files_transferred += 1;
-                                        result.bytes_transferred += file_size;
-                                    }
-                                    Err(e) => {
-                                        ctx.log_error(&format!("Failed to write {}: {}", remote_path, e), "sftp").await;
-                                        result.error_count += 1;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                ctx.log_error(&format!("Failed to create {}: {}", remote_path, e), "sftp").await;
-                                result.error_count += 1;
-                            }
-                        }
+                match sftp.remove_file(path.clone()).await {
+                    Ok(()) => {
+                        ctx.log_info(&format!("Deleted: {}", path), "sftp").await;
+                        result.files_deleted += 1;
                     }
                     Err(e) => {
-                        ctx.log_error(&format!("Failed to read {}: {}", path.display(), e), "sftp").await;
+                        ctx.log_error(&format!("Failed to delete {}: {}", path, e), "sftp").await;
                         result.error_count += 1;
                     }
+                }
+            }
+            for rel in dirs {
+                let path = format!("{}/{}", dest_path, rel);
+                if dry_run {
+                    ctx.log_info(&format!("[DRY RUN] Would delete directory: {}", path), "sftp").await;
+                    continue;
+                }
+                if let Err(e) = sftp.remove_dir(path.clone()).await {
+                    ctx.log_warning(&format!("Could not remove directory {}: {}", path, e), "sftp").await;
                 }
             }
         }
 
         Ok(())
     }
+}
+
+/// `mkdir -p` over SFTP.
+async fn create_dir_all(sftp: &russh_sftp::client::SftpSession, path: &str) -> Result<(), ProviderError> {
+    let absolute = path.starts_with('/');
+    let mut current = String::new();
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        if current.is_empty() && !absolute {
+            current = segment.to_string();
+        } else {
+            current = format!("{}/{}", current, segment);
+        }
+        if matches!(sftp.try_exists(current.clone()).await, Ok(true)) {
+            continue;
+        }
+        sftp.create_dir(current.clone())
+            .await
+            .map_err(|e| ProviderError::TransferError(format!("Cannot create directory {}: {}", current, e)))?;
+    }
+    Ok(())
+}
+
+/// List files and directories below `root` (relative paths). A missing root
+/// gives empty results.
+async fn list_remote_tree(
+    sftp: &russh_sftp::client::SftpSession,
+    root: &str,
+    ctx: &SyncContext,
+) -> Result<(HashMap<String, RemoteFile>, HashSet<String>), ProviderError> {
+    let mut files = HashMap::new();
+    let mut dirs = HashSet::new();
+    if !matches!(sftp.try_exists(root.to_string()).await, Ok(true)) {
+        return Ok((files, dirs));
+    }
+
+    let mut queue = vec![String::new()];
+    while let Some(prefix) = queue.pop() {
+        if ctx.check_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
+        let dir_path = if prefix.is_empty() { root.to_string() } else { format!("{}/{}", root, prefix) };
+        let entries = sftp
+            .read_dir(dir_path.clone())
+            .await
+            .map_err(|e| ProviderError::ConnectionError(format!("Cannot list {}: {}", dir_path, e)))?;
+        for entry in entries {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let rel = if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) };
+            let ft = entry.file_type();
+            if ft.is_dir() {
+                dirs.insert(rel.clone());
+                queue.push(rel);
+            } else if ft.is_file() {
+                let meta = entry.metadata();
+                files.insert(
+                    rel,
+                    RemoteFile {
+                        size: meta.size.unwrap_or(0),
+                        mtime: meta.mtime.map(i64::from).unwrap_or(0),
+                        id: None,
+                    },
+                );
+            }
+        }
+    }
+    Ok((files, dirs))
+}
+
+/// Stream a local file to the server and copy its modification time, so the
+/// next run can skip it.
+async fn upload_file(
+    sftp: &russh_sftp::client::SftpSession,
+    file: &LocalEntry,
+    remote: &str,
+) -> Result<(), ProviderError> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut local = tokio::fs::File::open(&file.abs).await?;
+    let mut remote_file = sftp
+        .create(remote.to_string())
+        .await
+        .map_err(|e| ProviderError::TransferError(format!("Cannot create {}: {}", remote, e)))?;
+    tokio::io::copy(&mut local, &mut remote_file)
+        .await
+        .map_err(|e| ProviderError::TransferError(format!("Write failed: {}", e)))?;
+    remote_file
+        .shutdown()
+        .await
+        .map_err(|e| ProviderError::TransferError(format!("Close failed: {}", e)))?;
+    drop(remote_file);
+
+    let mut attrs = russh_sftp::protocol::FileAttributes::empty();
+    attrs.mtime = Some(file.mtime.clamp(0, u32::MAX as i64) as u32);
+    attrs.atime = attrs.mtime;
+    // Not every server allows setting times; the file is uploaded either way
+    let _ = sftp.set_metadata(remote.to_string(), attrs).await;
+    Ok(())
 }
 
 /// Result of host key verification
@@ -561,21 +701,21 @@ impl russh::client::Handler for SftpClientHandler {
         server_public_key: &russh_keys::key::PublicKey,
     ) -> Result<bool, Self::Error> {
         // Compute SHA256 fingerprint of the server's public key
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
         use sha2::{Sha256, Digest};
 
         let key_bytes = server_public_key.public_key_bytes();
         let mut hasher = Sha256::new();
         hasher.update(&key_bytes);
         let hash = hasher.finalize();
-        let fingerprint = format!("SHA256:{}", STANDARD.encode(hash));
+        let fingerprint = format!("SHA256:{}", STANDARD_NO_PAD.encode(hash));
 
         // Store the captured fingerprint
         *self.captured_fingerprint.lock().await = Some(fingerprint.clone());
 
         // Verify against expected fingerprint
         if let Some(ref expected) = self.expected_fingerprint {
-            if expected == &fingerprint {
+            if fingerprints_match(expected, &fingerprint) {
                 // Key matches - connection is verified
                 tracing::info!("SFTP host key verified: {}", fingerprint);
                 *self.verification_result.lock().await = Some(HostKeyVerification::Verified);
@@ -601,5 +741,27 @@ impl russh::client::Handler for SftpClientHandler {
             *self.verification_result.lock().await = Some(HostKeyVerification::FirstConnection(fingerprint));
             Ok(true)
         }
+    }
+}
+
+/// Compare SSH host key fingerprints, ignoring base64 padding and surrounding
+/// whitespace. OpenSSH prints `SHA256:` fingerprints without `=` padding;
+/// older versions of this app stored them with padding.
+fn fingerprints_match(a: &str, b: &str) -> bool {
+    fn normalize(s: &str) -> &str {
+        s.trim().trim_end_matches('=')
+    }
+    normalize(a) == normalize(b)
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::fingerprints_match;
+
+    #[test]
+    fn padded_and_unpadded_fingerprints_match() {
+        assert!(fingerprints_match("SHA256:abc+def/12=", "SHA256:abc+def/12"));
+        assert!(fingerprints_match(" SHA256:abc ", "SHA256:abc"));
+        assert!(!fingerprints_match("SHA256:abc", "SHA256:abd"));
     }
 }

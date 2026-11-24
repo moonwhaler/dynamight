@@ -115,7 +115,7 @@ Sets `token` cookie on success (if no 2FA).
 
 ### Logout
 
-End the current session.
+End the current session. The token is revoked on the server, so copies of it stop working too.
 
 ```
 POST /auth/logout
@@ -150,25 +150,6 @@ GET /auth/me
   "id": 1,
   "username": "admin",
   "totp_enabled": true
-}
-```
-
----
-
-### Get Token
-
-Get the current JWT token (for WebSocket authentication).
-
-```
-GET /auth/token
-```
-
-**Authentication:** Required
-
-**Response:**
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
 
@@ -1005,12 +986,28 @@ POST /credentials
   "provider_type": "google_drive",
   "data": {
     "type": "oauth",
-    "access_token": "ya29.a0AfH6...",
+    "client_id": "1234567890-abc.apps.googleusercontent.com",
+    "client_secret": "GOCSPX-...",
     "refresh_token": "1//0eXx...",
-    "expires_at": 1704499200
+    "access_token": "",
+    "expires_at": 0
   }
 }
 ```
+
+OAuth fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `refresh_token` | yes | Used to renew access tokens before they expire |
+| `client_id` | yes, for renewal | Client ID of your own Google Cloud / Microsoft Entra app |
+| `client_secret` | Google: yes; Microsoft: only for confidential clients | Client secret |
+| `tenant` | no (Microsoft only) | `common` (default), `consumers`, `organizations` or a tenant ID |
+| `scope` | no (Microsoft only) | Scopes for the refresh request, default `offline_access Files.ReadWrite.All` |
+| `access_token` | no | May be empty; one is fetched with the refresh token on first use |
+| `expires_at` | no | Unix time the access token expires; `0` = refresh on first use |
+
+Renewed tokens (including rotated Microsoft refresh tokens) are stored automatically. On update, OAuth fields that are empty or missing keep their stored values.
 
 **Response:**
 ```json
@@ -1538,10 +1535,10 @@ PUT /settings
 Stream real-time logs for a running job.
 
 ```
-WebSocket /ws/logs/:run_id?token=<jwt>
+WebSocket /ws/logs/:run_id
 ```
 
-**Authentication:** JWT token as query parameter
+**Authentication:** Session cookie (`token`), sent by the browser with the handshake
 
 **Server Messages:**
 ```json
@@ -1571,10 +1568,10 @@ WebSocket /ws/logs/:run_id?token=<jwt>
 Stream status updates for all jobs.
 
 ```
-WebSocket /ws/status?token=<jwt>
+WebSocket /ws/status
 ```
 
-**Authentication:** JWT token as query parameter
+**Authentication:** Session cookie (`token`), sent by the browser with the handshake
 
 **Server Messages:**
 ```json

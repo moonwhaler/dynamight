@@ -116,6 +116,13 @@ impl RsyncProvider {
             args.push(format!("--exclude={}", exclude));
         }
 
+        // Compress mode: transfer only this job's archives. Everything else is
+        // excluded, which also protects it from --delete on the destination.
+        if let Some(pattern) = &ctx.options.include_only {
+            args.push(format!("--include={}", pattern));
+            args.push("--exclude=*".to_string());
+        }
+
         args
     }
 
@@ -140,7 +147,9 @@ impl RsyncProvider {
     }
 
     /// Mount a USB drive by UUID
-    async fn mount_usb(&self, ctx: &SyncContext, uuid: &str, mount_point: &str) -> Result<(), ProviderError> {
+    /// Mount a USB drive by UUID. Returns `true` if this call mounted it,
+    /// `false` if it was already mounted.
+    async fn mount_usb(&self, ctx: &SyncContext, uuid: &str, mount_point: &str) -> Result<bool, ProviderError> {
         ctx.log_info(&format!("Mounting UUID {} to {}", uuid, mount_point), "mount").await;
 
         // Create mount point if needed
@@ -156,13 +165,13 @@ impl RsyncProvider {
         match mount_result {
             Ok(output) if output.status.success() => {
                 ctx.log_info("Mount successful", "mount").await;
-                Ok(())
+                Ok(true)
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if stderr.contains("already mounted") {
                     ctx.log_info("Drive already mounted", "mount").await;
-                    Ok(())
+                    Ok(false)
                 } else {
                     ctx.log_error(&format!("Mount failed: {}", stderr), "mount").await;
                     Err(ProviderError::ConfigError(format!("Mount failed: {}", stderr)))
@@ -342,6 +351,17 @@ impl RsyncProvider {
         } else {
             false
         };
+
+        // For USB destinations, refuse to measure (and create directories in)
+        // the empty mount-point directory when the drive is not mounted there.
+        if let Some(uuid) = &usb_uuid {
+            if let Err(msg) = verify_drive_mounted(uuid, &mount_point).await {
+                if did_mount && auto_unmount {
+                    self.unmount_standalone(&mount_point).await;
+                }
+                return Err(ProviderError::ConfigError(msg));
+            }
+        }
 
         // Detect filesystem type
         let fstype = self.detect_filesystem(&mount_point).await;
@@ -613,232 +633,44 @@ impl SyncProvider for RsyncProvider {
         ctx.log_info("Starting sync", "system").await;
 
         // Mount if needed
+        let mut we_mounted = false;
         if auto_mount {
             if let Some(uuid) = &usb_uuid {
-                self.mount_usb(&ctx, uuid, &mount_point).await?;
+                we_mounted = self.mount_usb(&ctx, uuid, &mount_point).await?;
             }
         }
 
-        // Detect filesystem type
-        let fstype = self.detect_filesystem(&mount_point).await;
-        ctx.log_info(&format!("Filesystem type: {}", fstype), "system").await;
-
-        // Build rsync args
-        let rsync_args = self.build_rsync_args(&ctx, &fstype);
-        ctx.log(LogLevel::Debug, &format!("Rsync args: {:?}", rsync_args), "rsync").await;
-
-        // Execute rsync for each source directory
-        for source_dir in &ctx.source_dirs {
-            if !Path::new(source_dir).exists() {
-                ctx.log_warning(&format!("Source directory does not exist: {}", source_dir), "rsync").await;
-                result.error_count += 1;
-                continue;
-            }
-
-            let dest_name = Path::new(source_dir)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "backup".to_string());
-
-            let dest = format!("{}/{}/{}", mount_point, backup_subdir, dest_name);
-
-            ctx.log_info(&format!("Syncing {} -> {}", source_dir, dest), "rsync").await;
-
-            // Create destination directory
-            if let Err(e) = tokio::fs::create_dir_all(&dest).await {
-                ctx.log_warning(&format!("Could not create destination: {}", e), "rsync").await;
-            }
-
-            // Check for cancellation
-            if ctx.check_cancelled() {
-                ctx.log_warning("Job cancelled, skipping remaining sources", "system").await;
-                return Err(ProviderError::Cancelled);
-            }
-
-            // Build exclude args for directories specific to this source
-            let mut source_exclude_args: Vec<String> = Vec::new();
-            for exclude_dir in &ctx.options.exclude_dirs {
-                let exclude_path = std::path::Path::new(exclude_dir);
-                let source_path = std::path::Path::new(source_dir);
-                if let Ok(relative) = exclude_path.strip_prefix(source_path) {
-                    let rel_str = relative.to_string_lossy();
-                    // Exclude the directory and its contents
-                    source_exclude_args.push(format!("--exclude=/{}", rel_str));
-                    source_exclude_args.push(format!("--exclude=/{}/**", rel_str));
+        // For USB destinations, make sure the expected drive really is mounted at
+        // the mount point. Otherwise rsync would write into the empty mount-point
+        // directory on the system disk (drive unplugged, or "already mounted"
+        // somewhere else by a desktop automounter).
+        if let Some(uuid) = &usb_uuid {
+            if let Err(msg) = verify_drive_mounted(uuid, &mount_point).await {
+                ctx.log_error(&msg, "mount").await;
+                if we_mounted && auto_unmount {
+                    self.unmount(&ctx, &mount_point).await;
                 }
-            }
-
-            // Run rsync
-            let mut cmd = Command::new("rsync");
-            cmd.args(&rsync_args)
-                .args(&source_exclude_args)
-                .arg(format!("{}/", source_dir))
-                .arg(format!("{}/", dest))
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .process_group(0);
-
-            let mut child = match cmd.spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    ctx.log_error(&format!("Failed to spawn rsync: {}", e), "rsync").await;
-                    result.error_count += 1;
-                    continue;
-                }
-            };
-
-            let pid = child.id().unwrap_or(0);
-            ctx.log_info(&format!("Spawned rsync with PID {}", pid), "rsync").await;
-
-            let stdout = child.stdout.take();
-            let stderr = child.stderr.take();
-
-            // Track if we need to kill the process
-            let mut cancelled = false;
-
-            // Stream stdout
-            if let Some(stdout) = stdout {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-
-                loop {
-                    let line = tokio::select! {
-                        line_result = lines.next_line() => {
-                            match line_result {
-                                Ok(Some(line)) => line,
-                                Ok(None) => break,
-                                Err(_) => break,
-                            }
-                        }
-                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                            if ctx.check_cancelled() {
-                                cancelled = true;
-                                break;
-                            }
-                            continue;
-                        }
-                    };
-
-                    if ctx.check_cancelled() {
-                        cancelled = true;
-                        break;
-                    }
-
-                    // Parse rsync output for stats
-                    // Handle both "Number of files transferred" (old rsync) and
-                    // "Number of regular files transferred" (rsync 3.1+)
-                    if line.contains("files transferred") {
-                        if let Some(num) = line.split(':').nth(1) {
-                            // Handle both comma (US) and dot (EU) thousand separators
-                            let cleaned = num.trim().replace([',', '.'], "");
-                            if let Ok(n) = cleaned.parse::<i64>() {
-                                result.files_transferred += n;
-                            }
-                        }
-                    } else if line.contains("Total transferred file size") {
-                        if let Some(size_str) = line.split(':').nth(1) {
-                            if let Some(bytes) = size_str.split_whitespace().next() {
-                                let cleaned = bytes.replace([',', '.'], "");
-                                if let Ok(b) = cleaned.parse::<i64>() {
-                                    result.bytes_transferred += b;
-                                }
-                            }
-                        }
-                    } else if line.starts_with("sent ") && line.contains(" bytes") && result.bytes_transferred == 0 {
-                        // Fallback: parse "sent X bytes  received Y bytes" line
-                        // This always appears and serves as backup if detailed stats are missing
-                        if let Some(bytes_str) = line.strip_prefix("sent ") {
-                            if let Some(bytes) = bytes_str.split_whitespace().next() {
-                                let cleaned = bytes.replace([',', '.'], "");
-                                if let Ok(b) = cleaned.parse::<i64>() {
-                                    result.bytes_transferred = b;
-                                }
-                            }
-                        }
-                    }
-
-                    ctx.log_info(&line, "rsync").await;
-                }
-            }
-
-            // Stream stderr (only if not cancelled)
-            if !cancelled && !ctx.check_cancelled() {
-                if let Some(stderr) = stderr {
-                    let reader = BufReader::new(stderr);
-                    let mut lines = reader.lines();
-
-                    loop {
-                        let line = tokio::select! {
-                            line_result = lines.next_line() => {
-                                match line_result {
-                                    Ok(Some(line)) => line,
-                                    Ok(None) => break,
-                                    Err(_) => break,
-                                }
-                            }
-                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                                if ctx.check_cancelled() {
-                                    cancelled = true;
-                                    break;
-                                }
-                                continue;
-                            }
-                        };
-
-                        if ctx.check_cancelled() {
-                            cancelled = true;
-                            break;
-                        }
-
-                        ctx.log_warning(&line, "rsync").await;
-                    }
-                }
-            } else {
-                cancelled = true;
-            }
-
-            // Kill the process if cancelled
-            if cancelled || ctx.check_cancelled() {
-                ctx.log_warning(&format!("Killing rsync process (PID {})", pid), "system").await;
-                // Kill the entire process group (negative PID sends to group)
-                #[cfg(unix)]
-                if pid > 0 {
-                    let _ = signal::killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
-                }
-                // Also try to kill via tokio
-                let _ = child.kill().await;
-            }
-
-            // Wait for process
-            let status = child.wait().await.ok();
-
-            if let Some(status) = status {
-                if !status.success() && !ctx.check_cancelled() {
-                    ctx.log_error(
-                        &format!("rsync failed with exit code: {:?}", status.code()),
-                        "rsync",
-                    ).await;
-                    result.error_count += 1;
-                }
-            }
-
-            if ctx.check_cancelled() {
-                return Err(ProviderError::Cancelled);
+                return Err(ProviderError::ConfigError(msg));
             }
         }
+
+        let sync_outcome = self.run_sources(&ctx, &mount_point, &backup_subdir, &mut result).await;
 
         // Capture storage info BEFORE unmounting (so we get the USB drive's space, not the underlying filesystem)
-        if let Ok(info) = self.get_storage_info(&ctx.destination, None).await {
-            if info.supported {
-                result.storage_info = Some(info);
+        if sync_outcome.is_ok() {
+            if let Ok(info) = self.get_storage_info(&ctx.destination, None).await {
+                if info.supported {
+                    result.storage_info = Some(info);
+                }
             }
         }
 
-        // Unmount if needed
+        // Unmount if needed - also after cancellation or errors
         if auto_unmount && usb_uuid.is_some() {
             self.unmount(&ctx, &mount_point).await;
         }
 
+        sync_outcome?;
         result.success = result.error_count == 0;
         ctx.log_info(
             &format!(
@@ -913,5 +745,263 @@ impl SyncProvider for RsyncProvider {
             }
             _ => Ok(StorageInfo::default()),
         }
+    }
+}
+
+impl RsyncProvider {
+    /// Run rsync once per source directory, streaming its output to the run log.
+    ///
+    /// Returns `Err(ProviderError::Cancelled)` when the run was cancelled, so the
+    /// caller can still unmount before propagating it.
+    async fn run_sources(
+        &self,
+        ctx: &SyncContext,
+        mount_point: &str,
+        backup_subdir: &str,
+        result: &mut SyncResult,
+    ) -> Result<(), ProviderError> {
+        // Detect filesystem type
+        let fstype = self.detect_filesystem(mount_point).await;
+        ctx.log_info(&format!("Filesystem type: {}", fstype), "system").await;
+
+        // Build rsync args
+        let rsync_args = self.build_rsync_args(ctx, &fstype);
+        ctx.log(LogLevel::Debug, &format!("Rsync args: {:?}", rsync_args), "rsync").await;
+
+        for source_dir in &ctx.source_dirs {
+            if ctx.check_cancelled() {
+                ctx.log_warning("Job cancelled, skipping remaining sources", "system").await;
+                return Err(ProviderError::Cancelled);
+            }
+
+            if !Path::new(source_dir).exists() {
+                ctx.log_warning(&format!("Source directory does not exist: {}", source_dir), "rsync").await;
+                result.error_count += 1;
+                continue;
+            }
+
+            let dest_name = Path::new(source_dir)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "backup".to_string());
+
+            let dest = format!("{}/{}/{}", mount_point, backup_subdir, dest_name);
+
+            ctx.log_info(&format!("Syncing {} -> {}", source_dir, dest), "rsync").await;
+
+            // Create destination directory
+            if let Err(e) = tokio::fs::create_dir_all(&dest).await {
+                ctx.log_warning(&format!("Could not create destination: {}", e), "rsync").await;
+            }
+
+            // Build exclude args for directories specific to this source
+            let mut source_exclude_args: Vec<String> = Vec::new();
+            for exclude_dir in &ctx.options.exclude_dirs {
+                let exclude_path = Path::new(exclude_dir);
+                let source_path = Path::new(source_dir);
+                if let Ok(relative) = exclude_path.strip_prefix(source_path) {
+                    let rel_str = relative.to_string_lossy();
+                    // Exclude the directory and its contents
+                    source_exclude_args.push(format!("--exclude=/{}", rel_str));
+                    source_exclude_args.push(format!("--exclude=/{}/**", rel_str));
+                }
+            }
+
+            // Run rsync
+            let mut cmd = Command::new("rsync");
+            cmd.args(&rsync_args)
+                .args(&source_exclude_args)
+                .arg(format!("{}/", source_dir))
+                .arg(format!("{}/", dest))
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0);
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    ctx.log_error(&format!("Failed to spawn rsync: {}", e), "rsync").await;
+                    result.error_count += 1;
+                    continue;
+                }
+            };
+
+            let pid = child.id().unwrap_or(0);
+            ctx.log_info(&format!("Spawned rsync with PID {}", pid), "rsync").await;
+
+            // Read stdout and stderr concurrently. Reading one to the end before
+            // the other deadlocks once rsync fills the other pipe's buffer
+            // (for example with many "Permission denied" warnings).
+            let mut out_lines = child.stdout.take().map(|s| BufReader::new(s).lines());
+            let mut err_lines = child.stderr.take().map(|s| BufReader::new(s).lines());
+            let mut out_done = out_lines.is_none();
+            let mut err_done = err_lines.is_none();
+            let mut cancelled = false;
+            let mut tick = tokio::time::interval(tokio::time::Duration::from_millis(200));
+
+            while !(out_done && err_done) {
+                tokio::select! {
+                    line = async { out_lines.as_mut().expect("guarded by out_done").next_line().await }, if !out_done => {
+                        match line {
+                            Ok(Some(line)) => {
+                                parse_stats_line(&line, result);
+                                ctx.log_info(&line, "rsync").await;
+                            }
+                            _ => out_done = true,
+                        }
+                    }
+                    line = async { err_lines.as_mut().expect("guarded by err_done").next_line().await }, if !err_done => {
+                        match line {
+                            Ok(Some(line)) => ctx.log_warning(&line, "rsync").await,
+                            _ => err_done = true,
+                        }
+                    }
+                    _ = tick.tick() => {
+                        if ctx.check_cancelled() {
+                            cancelled = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Kill the process if cancelled
+            if cancelled || ctx.check_cancelled() {
+                ctx.log_warning(&format!("Killing rsync process (PID {})", pid), "system").await;
+                // Kill the entire process group (negative PID sends to group)
+                #[cfg(unix)]
+                if pid > 0 {
+                    let _ = signal::killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                }
+                // Also try to kill via tokio
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err(ProviderError::Cancelled);
+            }
+
+            // Wait for process
+            if let Ok(status) = child.wait().await {
+                match status.code() {
+                    Some(0) => {}
+                    // 24 = "some files vanished before they could be transferred":
+                    // normal when backing up live data, not a failed backup.
+                    Some(24) => {
+                        ctx.log_warning(
+                            "rsync: some source files vanished during the transfer (exit code 24)",
+                            "rsync",
+                        ).await;
+                    }
+                    code => {
+                        ctx.log_error(&format!("rsync failed with exit code: {:?}", code), "rsync").await;
+                        result.error_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Parse rsync `--stats` output lines into the sync result.
+fn parse_stats_line(line: &str, result: &mut SyncResult) {
+    // Handle both "Number of files transferred" (old rsync) and
+    // "Number of regular files transferred" (rsync 3.1+)
+    if line.contains("files transferred") {
+        if let Some(num) = line.split(':').nth(1) {
+            // Handle both comma (US) and dot (EU) thousand separators
+            let cleaned = num.trim().replace([',', '.'], "");
+            if let Ok(n) = cleaned.parse::<i64>() {
+                result.files_transferred += n;
+            }
+        }
+    } else if line.contains("Total transferred file size") {
+        if let Some(size_str) = line.split(':').nth(1) {
+            if let Some(bytes) = size_str.split_whitespace().next() {
+                let cleaned = bytes.replace([',', '.'], "");
+                if let Ok(b) = cleaned.parse::<i64>() {
+                    result.bytes_transferred += b;
+                }
+            }
+        }
+    } else if line.starts_with("sent ") && line.contains(" bytes") && result.bytes_transferred == 0 {
+        // Fallback: parse "sent X bytes  received Y bytes" line
+        if let Some(bytes_str) = line.strip_prefix("sent ") {
+            if let Some(bytes) = bytes_str.split_whitespace().next() {
+                let cleaned = bytes.replace([',', '.'], "");
+                if let Ok(b) = cleaned.parse::<i64>() {
+                    result.bytes_transferred = b;
+                }
+            }
+        }
+    }
+}
+
+/// Check that the filesystem mounted exactly at `mount_point` is the drive
+/// with `uuid`. Returns a user-facing error message otherwise.
+pub(crate) async fn verify_drive_mounted(uuid: &str, mount_point: &str) -> Result<(), String> {
+    let target = match mount_point.trim_end_matches('/') {
+        "" => "/",
+        t => t,
+    };
+
+    let output = Command::new("findmnt")
+        .args(["-n", "-o", "UUID", "--mountpoint", target])
+        .output()
+        .await
+        .map_err(|e| format!("Could not check mount point {}: {}", target, e))?;
+
+    let mounted_uuid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    mounted_uuid_matches(uuid, target, output.status.success(), &mounted_uuid)
+}
+
+fn mounted_uuid_matches(uuid: &str, target: &str, found: bool, mounted_uuid: &str) -> Result<(), String> {
+    if !found {
+        return Err(format!(
+            "Drive {} is not mounted at {}. Refusing to back up into the empty mount-point directory. \
+             Connect the drive, or check that it is not mounted somewhere else.",
+            uuid, target
+        ));
+    }
+    if !mounted_uuid.eq_ignore_ascii_case(uuid.trim()) {
+        return Err(format!(
+            "A different device (UUID {}) is mounted at {}, expected drive {}.",
+            if mounted_uuid.is_empty() { "unknown" } else { mounted_uuid },
+            target,
+            uuid
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rsync_stats() {
+        let mut r = SyncResult::default();
+        parse_stats_line("Number of regular files transferred: 1,234", &mut r);
+        parse_stats_line("Total transferred file size: 5.678.901 bytes", &mut r);
+        assert_eq!(r.files_transferred, 1234);
+        assert_eq!(r.bytes_transferred, 5_678_901);
+    }
+
+    #[test]
+    fn sent_line_is_fallback_only() {
+        let mut r = SyncResult::default();
+        parse_stats_line("sent 2,048 bytes  received 35 bytes", &mut r);
+        assert_eq!(r.bytes_transferred, 2048);
+        parse_stats_line("sent 9,999 bytes  received 35 bytes", &mut r);
+        assert_eq!(r.bytes_transferred, 2048);
+    }
+
+    #[test]
+    fn mount_check_rejects_unmounted_or_wrong_drive() {
+        let uuid = "1234-ABCD";
+        assert!(mounted_uuid_matches(uuid, "/mnt/usb", true, "1234-abcd").is_ok());
+        assert!(mounted_uuid_matches(uuid, "/mnt/usb", false, "").is_err());
+        assert!(mounted_uuid_matches(uuid, "/mnt/usb", true, "9999-0000").is_err());
+        assert!(mounted_uuid_matches(uuid, "/mnt/usb", true, "").is_err());
     }
 }

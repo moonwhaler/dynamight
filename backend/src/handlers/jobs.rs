@@ -595,6 +595,17 @@ pub async fn delete_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
+    // A running job would keep writing to runs that no longer exist
+    if state.backup_service.is_job_running(id).await {
+        return ApiError::job_already_running().into_response();
+    }
+
+    // Log entries live in the separate logs database (no cascade), so delete
+    // them while the run IDs are still known.
+    if let Err(e) = state.backup_service.delete_logs_for_job(id).await {
+        tracing::warn!("Failed to delete logs of job {}: {}", id, e);
+    }
+
     let result = sqlx::query("DELETE FROM jobs WHERE id = ?")
         .bind(id)
         .execute(&state.db)
@@ -627,8 +638,8 @@ pub async fn run_job(
         }
     };
 
-    // Check if already running
-    if state.backup_service.is_job_running(id).await {
+    // Atomically reserve the job so concurrent triggers cannot start it twice
+    if !state.backup_service.try_reserve_job(id).await {
         return ApiError::job_already_running().into_response();
     }
 
@@ -642,6 +653,7 @@ pub async fn run_job(
     let run_id = match result {
         Ok(r) => r.last_insert_rowid(),
         Err(_) => {
+            state.backup_service.release_job(id).await;
             return ApiError::new(ErrorCode::RunCreateFailed).into_response();
         }
     };
@@ -650,7 +662,7 @@ pub async fn run_job(
     let db = state.db.clone();
 
     tokio::spawn(async move {
-        let _ = sqlx::query("UPDATE job_runs SET status = ?, started_at = ? WHERE id = ?")
+        let _ = sqlx::query("UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'")
             .bind(JobRunStatus::Running.as_str())
             .bind(Utc::now())
             .bind(run_id)
@@ -672,7 +684,7 @@ pub async fn cancel_job(
 
     // Find running job run (check for both 'running' and 'cancelled' status - may still have process running)
     let run: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM job_runs WHERE job_id = ? AND status IN ('running', 'cancelled') ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM job_runs WHERE job_id = ? AND status IN ('pending', 'running', 'cancelled') ORDER BY id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&state.db)

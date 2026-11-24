@@ -89,26 +89,16 @@ impl SchedulerService {
                 schedule.schedule_id
             );
 
-            // Check if job is already running
-            if self.backup_service.is_job_running(schedule.job_id).await {
-                tracing::warn!(
-                    "Job {} is already running, skipping scheduled run",
-                    schedule.job_name
-                );
-                continue;
-            }
-
-            // Create job run record
-            let run_id = match self
-                .create_job_run(schedule.job_id, Some(schedule.schedule_id))
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::error!("Failed to create job run: {}", e);
-                    continue;
-                }
-            };
+            // Advance the schedule first, so a skipped or failed start does not
+            // make the same schedule fire again on every tick.
+            let _ = sqlx::query(
+                "UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?",
+            )
+            .bind(now)
+            .bind(calculate_next_run(&schedule.cron_expression, self.timezone).ok())
+            .bind(schedule.schedule_id)
+            .execute(&self.db)
+            .await;
 
             // Get full job details
             let job = match sqlx::query_as::<_, crate::models::Job>(
@@ -125,15 +115,27 @@ impl SchedulerService {
                 }
             };
 
-            // Update schedule timestamps
-            let _ = sqlx::query(
-                "UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?",
-            )
-            .bind(now)
-            .bind(calculate_next_run(&schedule.cron_expression, self.timezone).ok())
-            .bind(schedule.schedule_id)
-            .execute(&self.db)
-            .await;
+            // Atomically reserve the job (skips if a manual or other scheduled run is active)
+            if !self.backup_service.try_reserve_job(schedule.job_id).await {
+                tracing::warn!(
+                    "Job {} is already running, skipping scheduled run",
+                    schedule.job_name
+                );
+                continue;
+            }
+
+            // Create job run record
+            let run_id = match self
+                .create_job_run(schedule.job_id, Some(schedule.schedule_id))
+                .await
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::error!("Failed to create job run: {}", e);
+                    self.backup_service.release_job(schedule.job_id).await;
+                    continue;
+                }
+            };
 
             // Spawn job execution
             let backup_service = self.backup_service.clone();
@@ -143,7 +145,7 @@ impl SchedulerService {
 
             tokio::spawn(async move {
                 let _ = sqlx::query(
-                    "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ?",
+                    "UPDATE job_runs SET status = ?, started_at = ? WHERE id = ? AND status = 'pending'",
                 )
                 .bind(JobRunStatus::Running.as_str())
                 .bind(Utc::now())

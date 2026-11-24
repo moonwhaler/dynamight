@@ -128,12 +128,7 @@ pub async fn enable(
     };
 
     // Verify the TOTP code against the server-stored secret
-    let valid = match TotpService::verify_code(&secret, &req.code) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::totp_invalid_code().into_response();
-        }
-    };
+    let valid = TotpService::accept_code(&state.db, user.id, &secret, &req.code).await;
 
     if !valid {
         return ApiError::totp_invalid_code().into_response();
@@ -215,7 +210,7 @@ pub async fn disable(
     };
 
     // Verify password
-    let valid = AuthService::verify_password(&req.password, &user.password_hash).unwrap_or(false);
+    let valid = AuthService::verify_password_async(&req.password, &user.password_hash).await;
 
     if !valid {
         return ApiError::password_incorrect().into_response();
@@ -229,12 +224,7 @@ pub async fn disable(
         }
     };
 
-    let code_valid = match TotpService::verify_code(secret, &req.code) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::totp_invalid_code().into_response();
-        }
-    };
+    let code_valid = TotpService::accept_code(&state.db, user.id, secret, &req.code).await;
 
     if !code_valid {
         return ApiError::totp_invalid_code().into_response();
@@ -355,12 +345,7 @@ pub async fn validate(
         }
     };
 
-    let valid = match TotpService::verify_code(secret, &req.code) {
-        Ok(v) => v,
-        Err(_) => {
-            return ApiError::totp_invalid_code().into_response();
-        }
-    };
+    let valid = TotpService::accept_code(&state.db, user.id, secret, &req.code).await;
 
     if !valid {
         state.rate_limit_service.record_failure(&client_ip);
@@ -465,13 +450,17 @@ pub async fn recovery(
             .unwrap_or_default();
 
     // Check each recovery code
-    let mut matched_code_id: Option<i64> = None;
-    for code in &recovery_codes {
-        if TotpService::verify_recovery_code(&req.recovery_code, &code.code_hash).unwrap_or(false) {
-            matched_code_id = Some(code.id);
-            break;
-        }
-    }
+    // Argon2 checks run on a blocking thread, not on the async runtime
+    let candidates: Vec<(i64, String)> = recovery_codes.iter().map(|c| (c.id, c.code_hash.clone())).collect();
+    let entered = req.recovery_code.clone();
+    let matched_code_id: Option<i64> = tokio::task::spawn_blocking(move || {
+        candidates
+            .into_iter()
+            .find(|(_, hash)| TotpService::verify_recovery_code(&entered, hash).unwrap_or(false))
+            .map(|(id, _)| id)
+    })
+    .await
+    .unwrap_or(None);
 
     let code_id = match matched_code_id {
         Some(id) => id,

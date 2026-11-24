@@ -27,45 +27,26 @@ use chrono::Utc;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::sync::Arc;
+
+use super::oauth_service::{self, OAuthProvider};
 
 const NONCE_SIZE: usize = 12;
 const SALT_SIZE: usize = 16;
 /// Magic bytes to identify v1 encrypted format: "DM1\0"
 const ENCRYPTION_MAGIC: [u8; 4] = [0x44, 0x4D, 0x31, 0x00];
 
-pub struct CredentialService {
+/// Key material for credential encryption. Cheap to clone, so encryption can
+/// run on a blocking thread.
+#[derive(Clone)]
+struct CredentialCrypto {
     /// JWT secret used for key derivation
     jwt_secret: String,
     /// Legacy encryption key (SHA-256 derived) for backward compatibility
     legacy_encryption_key: [u8; 32],
-    db: SqlitePool,
 }
 
-impl CredentialService {
-    /// Create a new CredentialService
-    pub fn new(jwt_secret: &str, db: SqlitePool) -> Self {
-        // Pre-compute legacy key for backward compatibility with existing credentials
-        let legacy_key = Self::derive_legacy_key(jwt_secret);
-
-        Self {
-            jwt_secret: jwt_secret.to_string(),
-            legacy_encryption_key: legacy_key,
-            db,
-        }
-    }
-
-    /// Derive encryption key using legacy SHA-256 method (for backward compatibility)
-    fn derive_legacy_key(jwt_secret: &str) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(jwt_secret.as_bytes());
-        hasher.update(b"credential_encryption_salt");
-        let result = hasher.finalize();
-
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&result);
-        key
-    }
-
+impl CredentialCrypto {
     /// Derive encryption key using Argon2id with per-credential salt
     fn derive_key_argon2(&self, salt: &[u8]) -> Result<[u8; 32]> {
         // Use Argon2id with secure parameters:
@@ -87,17 +68,6 @@ impl CredentialService {
             .map_err(|e| anyhow!("Argon2 key derivation failed: {}", e))?;
 
         Ok(key)
-    }
-
-    /// Get the database pool reference
-    pub fn db(&self) -> &SqlitePool {
-        &self.db
-    }
-
-    /// Check if encrypted data uses the v1 format (has magic prefix)
-    fn is_v1_format(encrypted: &[u8]) -> bool {
-        encrypted.len() >= ENCRYPTION_MAGIC.len()
-            && encrypted[..ENCRYPTION_MAGIC.len()] == ENCRYPTION_MAGIC
     }
 
     /// Encrypt credential data using v1 format (Argon2id key derivation)
@@ -137,7 +107,7 @@ impl CredentialService {
 
     /// Decrypt credential data (supports both v1 and legacy formats)
     pub fn decrypt(&self, encrypted: &[u8]) -> Result<CredentialData> {
-        if Self::is_v1_format(encrypted) {
+        if CredentialService::is_v1_format(encrypted) {
             self.decrypt_v1(encrypted)
         } else {
             self.decrypt_legacy(encrypted)
@@ -178,7 +148,7 @@ impl CredentialService {
     }
 
     /// Decrypt legacy format: nonce + ciphertext (SHA-256 derived key)
-    fn decrypt_legacy(&self, encrypted: &[u8]) -> Result<CredentialData> {
+    pub(crate) fn decrypt_legacy(&self, encrypted: &[u8]) -> Result<CredentialData> {
         if encrypted.len() < NONCE_SIZE {
             return Err(anyhow!("Invalid legacy encrypted data: too short"));
         }
@@ -200,6 +170,92 @@ impl CredentialService {
         Ok(data)
     }
 
+}
+
+pub struct CredentialService {
+    crypto: CredentialCrypto,
+    db: SqlitePool,
+    /// HTTP client for OAuth token refresh requests
+    http: reqwest::Client,
+    /// Serializes OAuth token refreshes, so concurrent runs using the same
+    /// credential do not race (Microsoft rotates refresh tokens).
+    refresh_lock: tokio::sync::Mutex<()>,
+}
+
+impl CredentialService {
+    /// Create a new CredentialService
+    pub fn new(jwt_secret: &str, db: SqlitePool) -> Self {
+        // Pre-compute legacy key for backward compatibility with existing credentials
+        let legacy_key = Self::derive_legacy_key(jwt_secret);
+
+        Self {
+            crypto: CredentialCrypto {
+                jwt_secret: jwt_secret.to_string(),
+                legacy_encryption_key: legacy_key,
+            },
+            db,
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            refresh_lock: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    /// Derive encryption key using legacy SHA-256 method (for backward compatibility)
+    fn derive_legacy_key(jwt_secret: &str) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(jwt_secret.as_bytes());
+        hasher.update(b"credential_encryption_salt");
+        let result = hasher.finalize();
+
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
+    }
+
+    /// Get the database pool reference
+    pub fn db(&self) -> &SqlitePool {
+        &self.db
+    }
+
+    /// Check if encrypted data uses the v1 format (has magic prefix)
+    fn is_v1_format(encrypted: &[u8]) -> bool {
+        encrypted.len() >= ENCRYPTION_MAGIC.len()
+            && encrypted[..ENCRYPTION_MAGIC.len()] == ENCRYPTION_MAGIC
+    }
+
+    fn encrypt(&self, data: &CredentialData) -> Result<Vec<u8>> {
+        self.crypto.encrypt(data)
+    }
+
+    /// Decrypt credential data (supports both v1 and legacy formats)
+    pub fn decrypt(&self, encrypted: &[u8]) -> Result<CredentialData> {
+        self.crypto.decrypt(encrypted)
+    }
+
+    fn decrypt_legacy(&self, encrypted: &[u8]) -> Result<CredentialData> {
+        self.crypto.decrypt_legacy(encrypted)
+    }
+
+    /// Encrypt on a blocking thread: the Argon2id key derivation (64 MiB)
+    /// must not stall the async runtime.
+    async fn encrypt_async(&self, data: &CredentialData) -> Result<Vec<u8>> {
+        let crypto = self.crypto.clone();
+        let data = data.clone();
+        tokio::task::spawn_blocking(move || crypto.encrypt(&data))
+            .await
+            .map_err(|e| anyhow!("Encryption task failed: {}", e))?
+    }
+
+    /// Decrypt on a blocking thread (see `encrypt_async`).
+    async fn decrypt_async(&self, encrypted: Vec<u8>) -> Result<CredentialData> {
+        let crypto = self.crypto.clone();
+        tokio::task::spawn_blocking(move || crypto.decrypt(&encrypted))
+            .await
+            .map_err(|e| anyhow!("Decryption task failed: {}", e))?
+    }
+
     /// Create a new credential
     pub async fn create(
         &self,
@@ -207,7 +263,7 @@ impl CredentialService {
         request: CreateCredentialRequest,
     ) -> Result<CredentialResponse> {
         let data: CredentialData = request.data.into();
-        let encrypted = self.encrypt(&data)?;
+        let encrypted = self.encrypt_async(&data).await?;
 
         let now = Utc::now();
 
@@ -283,7 +339,7 @@ impl CredentialService {
                 .await?;
 
         match row {
-            Some((encrypted,)) => Ok(Some(self.decrypt(&encrypted)?)),
+            Some((encrypted,)) => Ok(Some(self.decrypt_async(encrypted).await?)),
             None => Ok(None),
         }
     }
@@ -297,9 +353,69 @@ impl CredentialService {
                 .await?;
 
         match row {
-            Some((encrypted,)) => self.decrypt(&encrypted),
+            Some((encrypted,)) => self.decrypt_async(encrypted).await,
             None => Err(anyhow!("Credential not found: {}", id)),
         }
+    }
+
+    /// Get decrypted credential data, renewing an OAuth access token that is
+    /// missing or about to expire (and storing the renewed tokens).
+    ///
+    /// Credentials without refresh settings (no client ID) are returned as they
+    /// are; the provider then reports the expired token.
+    pub async fn get_fresh(&self, id: i64) -> Result<CredentialData> {
+        let (data, provider_type) = self.load_with_type(id).await?;
+        let Some(provider) = OAuthProvider::from_provider_type(&provider_type) else {
+            return Ok(data);
+        };
+        let now = Utc::now().timestamp();
+        if !oauth_service::needs_refresh(&data, now) {
+            return Ok(data);
+        }
+        if !oauth_service::can_refresh(provider, &data) {
+            tracing::warn!(
+                "OAuth credential {} has an expired access token but no client ID/secret to refresh it",
+                id
+            );
+            return Ok(data);
+        }
+
+        let _guard = self.refresh_lock.lock().await;
+
+        // Another task may have refreshed it while we waited for the lock
+        let (mut data, _) = self.load_with_type(id).await?;
+        if !oauth_service::needs_refresh(&data, Utc::now().timestamp()) {
+            return Ok(data);
+        }
+
+        oauth_service::refresh_access_token(&self.http, provider, &mut data).await?;
+
+        let encrypted = self.encrypt_async(&data).await?;
+        sqlx::query("UPDATE credentials SET encrypted_data = ?, updated_at = ? WHERE id = ?")
+            .bind(&encrypted)
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&self.db)
+            .await?;
+        tracing::info!("Refreshed OAuth access token for credential {}", id);
+
+        Ok(data)
+    }
+
+    /// Renew the access token of credential data that is not saved yet
+    /// (used by "Test connection" in the credential editor).
+    pub async fn refresh_unsaved(&self, provider: OAuthProvider, data: &mut CredentialData) -> Result<()> {
+        oauth_service::refresh_access_token(&self.http, provider, data).await
+    }
+
+    async fn load_with_type(&self, id: i64) -> Result<(CredentialData, String)> {
+        let row: Option<(Vec<u8>, String)> =
+            sqlx::query_as("SELECT encrypted_data, provider_type FROM credentials WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?;
+        let (encrypted, provider_type) = row.ok_or_else(|| anyhow!("Credential not found: {}", id))?;
+        Ok((self.decrypt_async(encrypted).await?, provider_type))
     }
 
     /// Update a credential
@@ -325,8 +441,57 @@ impl CredentialService {
 
         // Update encrypted data if provided
         if let Some(data_request) = request.data {
-            let data: CredentialData = data_request.into();
-            let encrypted = self.encrypt(&data)?;
+            let mut data: CredentialData = data_request.into();
+
+            // OAuth update: fields left empty keep their stored values, so the
+            // client settings can be changed without re-entering tokens (and
+            // the other way round).
+            if let CredentialData::OAuth {
+                refresh_token,
+                access_token,
+                expires_at,
+                client_id,
+                client_secret,
+                tenant,
+                scope,
+            } = &mut data
+            {
+                match self.get_decrypted_with_db(db, id).await? {
+                    Some(CredentialData::OAuth {
+                        refresh_token: old_refresh,
+                        access_token: old_access,
+                        expires_at: old_expires,
+                        client_id: old_client_id,
+                        client_secret: old_secret,
+                        tenant: old_tenant,
+                        scope: old_scope,
+                    }) => {
+                        if refresh_token.is_empty() {
+                            *refresh_token = old_refresh;
+                            if access_token.is_empty() {
+                                *access_token = old_access;
+                                *expires_at = old_expires;
+                            }
+                        }
+                        if client_id.is_none() {
+                            *client_id = old_client_id;
+                        }
+                        if client_secret.is_none() {
+                            *client_secret = old_secret;
+                        }
+                        if tenant.is_none() {
+                            *tenant = old_tenant;
+                        }
+                        if scope.is_none() {
+                            *scope = old_scope;
+                        }
+                    }
+                    _ if refresh_token.is_empty() => return Err(anyhow!("A refresh token is required")),
+                    _ => {}
+                }
+            }
+
+            let encrypted = self.encrypt_async(&data).await?;
 
             sqlx::query("UPDATE credentials SET name = ?, encrypted_data = ?, updated_at = ? WHERE id = ?")
                 .bind(&name)
@@ -507,6 +672,55 @@ pub struct CredentialUsage {
     pub count: usize,
 }
 
+/// Supplies a valid OAuth access token during a sync run.
+///
+/// Runs can take longer than an access token lives (about an hour), so the
+/// providers ask for the token before each request. The token is cached in
+/// memory and only renewed (via [`CredentialService::get_fresh`]) when it is
+/// about to expire.
+pub struct OAuthTokenSource {
+    service: Arc<CredentialService>,
+    credential_id: i64,
+    cached: tokio::sync::Mutex<(String, i64)>,
+}
+
+impl OAuthTokenSource {
+    /// Create a token source for an OAuth credential, seeded with already
+    /// loaded credential data. Returns `None` for non-OAuth credentials.
+    pub fn new(service: Arc<CredentialService>, credential_id: i64, data: &CredentialData) -> Option<Self> {
+        match data {
+            CredentialData::OAuth { access_token, expires_at, .. } => Some(Self {
+                service,
+                credential_id,
+                cached: tokio::sync::Mutex::new((access_token.clone(), *expires_at)),
+            }),
+            _ => None,
+        }
+    }
+
+    pub async fn access_token(&self) -> Result<String> {
+        let mut cached = self.cached.lock().await;
+        let now = Utc::now().timestamp();
+        if !cached.0.is_empty() && cached.1 - now >= oauth_service::REFRESH_MARGIN_SECS {
+            return Ok(cached.0.clone());
+        }
+
+        let data = self.service.get_fresh(self.credential_id).await?;
+        let CredentialData::OAuth { access_token, expires_at, .. } = &data else {
+            return Err(anyhow!("Credential {} is not an OAuth credential", self.credential_id));
+        };
+        // If the token could not be renewed (no refresh settings), do not retry
+        // the (expensive) decrypt on every request; the provider reports the 401.
+        let expires = if oauth_service::needs_refresh(&data, Utc::now().timestamp()) {
+            i64::MAX
+        } else {
+            *expires_at
+        };
+        *cached = (access_token.clone(), expires);
+        Ok(access_token.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +749,10 @@ mod tests {
             access_token: "ya29.a0AfH6SMA".to_string(),
             refresh_token: "1//0eXyz789".to_string(),
             expires_at: 1700000000,
+            client_id: Some("client.apps.googleusercontent.com".to_string()),
+            client_secret: Some("secret".to_string()),
+            tenant: None,
+            scope: None,
         }
     }
 
@@ -578,7 +796,8 @@ mod tests {
         let decrypted = service.decrypt(&encrypted).unwrap();
 
         match decrypted {
-            CredentialData::OAuth { access_token, refresh_token, expires_at } => {
+            CredentialData::OAuth { access_token, refresh_token, expires_at, client_id, .. } => {
+                assert_eq!(client_id.as_deref(), Some("client.apps.googleusercontent.com"));
                 assert_eq!(access_token, "ya29.a0AfH6SMA");
                 assert_eq!(refresh_token, "1//0eXyz789");
                 assert_eq!(expires_at, 1700000000);

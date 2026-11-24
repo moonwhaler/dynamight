@@ -61,20 +61,11 @@
     }
   });
 
-  async function connectWebSocket() {
-    // Get token for WebSocket authentication
-    let token: string;
-    try {
-      const response = await api.auth.getToken();
-      token = response.token;
-    } catch {
-      console.error('Failed to get token for WebSocket');
-      return;
-    }
-
+  function connectWebSocket() {
+    // Authenticated by the session cookie, which the browser sends with the handshake
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}?token=${encodeURIComponent(token)}`);
+    ws = new WebSocket(`${protocol}//${host}/api/ws/logs/${runId}`);
 
     ws.onmessage = (event) => {
       try {

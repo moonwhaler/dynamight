@@ -242,8 +242,6 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ pending_session_id: pendingSessionId, recovery_code: recoveryCode }),
       }),
-    // Get current JWT token for WebSocket authentication
-    getToken: () => request<{ token: string }>('/auth/token'),
     // Setup from backup (initial setup only, no auth required)
     setupFromBackup: async (file: File, password: string): Promise<{ success: boolean; username: string }> => {
       const formData = new FormData();

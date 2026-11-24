@@ -136,6 +136,54 @@ impl BackupService {
         self.running_jobs.read().await.contains(&job_id)
     }
 
+    /// Mark runs left in 'pending' or 'running' by a crash or restart as failed.
+    ///
+    /// Must be called on startup before the scheduler or HTTP server start any
+    /// run: at that point no run can really be active. Without this, stale runs
+    /// show as running forever and block config import (BACKUP_JOBS_RUNNING).
+    pub async fn mark_interrupted_runs(&self) -> anyhow::Result<u64> {
+        let stale: Vec<(i64,)> =
+            sqlx::query_as("SELECT id FROM job_runs WHERE status IN ('pending', 'running')")
+                .fetch_all(&self.db)
+                .await?;
+
+        if stale.is_empty() {
+            return Ok(0);
+        }
+
+        sqlx::query(
+            "UPDATE job_runs SET status = ?, completed_at = ?, error_count = COALESCE(error_count, 0) + 1, \
+             summary = 'Interrupted by server restart' WHERE status IN ('pending', 'running')",
+        )
+        .bind(JobRunStatus::Failed.as_str())
+        .bind(Utc::now())
+        .execute(&self.db)
+        .await?;
+
+        for (run_id,) in &stale {
+            self.log(*run_id, LogLevel::Error, "Run was interrupted by a server restart", "system").await;
+        }
+
+        Ok(stale.len() as u64)
+    }
+
+    /// Atomically mark a job as running. Returns `false` if it already is.
+    ///
+    /// Callers must reserve the job *before* creating the run record and
+    /// spawning the task, so two triggers (double click, manual + scheduled)
+    /// cannot both start the same job. [`execute_job`](Self::execute_job)
+    /// releases the reservation when it finishes; call
+    /// [`release_job`](Self::release_job) if the run is never started.
+    pub async fn try_reserve_job(&self, job_id: i64) -> bool {
+        self.running_jobs.write().await.insert(job_id)
+    }
+
+    /// Release a reservation made with [`try_reserve_job`](Self::try_reserve_job)
+    /// for a run that was never handed to `execute_job`.
+    pub async fn release_job(&self, job_id: i64) {
+        self.running_jobs.write().await.remove(&job_id);
+    }
+
     /// Cancel a running job by marking it as cancelled.
     /// The provider will check this flag and stop execution.
     pub async fn cancel_job(&self, run_id: i64) -> anyhow::Result<bool> {
@@ -145,7 +193,7 @@ impl BackupService {
         self.cancelled_runs.lock().await.insert(run_id);
 
         // Mark as cancelled in database
-        sqlx::query("UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status = 'running'")
+        sqlx::query("UPDATE job_runs SET status = ?, completed_at = ? WHERE id = ? AND status IN ('pending', 'running')")
             .bind(JobRunStatus::Cancelled.as_str())
             .bind(Utc::now())
             .bind(run_id)
@@ -173,10 +221,30 @@ impl BackupService {
         run_id: i64,
         schedule_id: Option<i64>,
     ) -> anyhow::Result<JobResult> {
-        // Mark job as running
+        use futures::FutureExt;
+
+        // The job was reserved by the caller (see try_reserve_job). Make sure the
+        // reservation is set even for callers that did not reserve.
         self.running_jobs.write().await.insert(job.id);
 
-        let result = self.do_execute(job, run_id, schedule_id).await;
+        // Catch panics so a provider bug cannot leave the job marked as running
+        // forever or the run stuck in the 'running' state.
+        let result = match std::panic::AssertUnwindSafe(self.do_execute(job, run_id, schedule_id))
+            .catch_unwind()
+            .await
+        {
+            Ok(r) => r,
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                tracing::error!("Job {} run {} panicked: {}", job.id, run_id, msg);
+                self.log(run_id, LogLevel::Error, &format!("Internal error: {}", msg), "system").await;
+                Err(anyhow::anyhow!("Job execution panicked: {}", msg))
+            }
+        };
 
         // Remove from running jobs
         self.running_jobs.write().await.remove(&job.id);
@@ -195,12 +263,13 @@ impl BackupService {
     ) -> anyhow::Result<JobResult> {
         // Get destination config and sync options from job
         let destination = job.get_destination_config();
-        let sync_options = job.get_sync_options();
+        let mut sync_options = job.get_sync_options();
         let source_dirs = job.source_dirs_vec();
 
         // Load credentials if needed
         let credential = if let Some(cred_id) = job.credential_id {
-            match self.credential_service.get_decrypted(cred_id).await {
+            // get_fresh renews an expired OAuth access token up front
+            match self.credential_service.get_fresh(cred_id).await {
                 Ok(cred) => Some(cred),
                 Err(e) => {
                     self.log(run_id, LogLevel::Error, &format!("Failed to load credentials: {}", e), "system").await;
@@ -231,6 +300,7 @@ impl BackupService {
         }
 
         // --- Compression phase (runs before provider) ---
+        let mut include_only: Option<String> = None;
         let effective_source_dirs = if sync_options.compress_dirs_enabled() {
             let compress_opts = sync_options.compress_dirs.as_ref().unwrap();
             let staging_dir = PathBuf::from(&compress_opts.staging_path);
@@ -313,13 +383,30 @@ impl BackupService {
                     };
 
                     let log_tx = self.log_tx.clone();
+                    let logs_db = self.logs_db.clone();
                     let log_fn = move |msg: String| {
+                        let timestamp = Utc::now();
+                        // Persist as well, so compression output shows up in History
+                        let db = logs_db.clone();
+                        let persisted = msg.clone();
+                        tokio::spawn(async move {
+                            let _ = sqlx::query(
+                                "INSERT INTO log_entries (job_run_id, level, message, source, timestamp) VALUES (?, ?, ?, ?, ?)",
+                            )
+                            .bind(run_id)
+                            .bind(LogLevel::Info.as_str())
+                            .bind(persisted)
+                            .bind("compress")
+                            .bind(timestamp)
+                            .execute(&db)
+                            .await;
+                        });
                         let _ = log_tx.send(LogMessage {
                             run_id,
                             level: LogLevel::Info,
                             message: msg,
                             source: "compress".to_string(),
-                            timestamp: Utc::now(),
+                            timestamp,
                         });
                     };
 
@@ -332,12 +419,23 @@ impl BackupService {
                         log_fn,
                         is_cancelled_fn,
                     )
-                    .await
-                    .map_err(|e| {
-                        let msg = format!("Compression failed for '{}': {}", source_dir, e);
-                        tracing::error!("{}", msg);
-                        anyhow::anyhow!(msg)
-                    })?;
+                    .await;
+
+                    let archive_path = match archive_path {
+                        Ok(p) => p,
+                        Err(e) => {
+                            if self.is_cancelled(run_id).await {
+                                return Ok(JobResult {
+                                    exit_code: 130,
+                                    ..Default::default()
+                                });
+                            }
+                            let msg = format!("Compression failed for '{}': {:#}", source_dir, e);
+                            tracing::error!("{}", msg);
+                            self.log(run_id, LogLevel::Error, &msg, "compress").await;
+                            return Err(anyhow::anyhow!(msg));
+                        }
+                    };
 
                     let archive_size = archive_path.metadata().map(|m| m.len()).unwrap_or(0);
                     self.log(
@@ -401,7 +499,10 @@ impl BackupService {
                     }
                 }
 
-                // The staging dir is now the source for the provider
+                // The staging dir is now the source for the provider. It may hold
+                // other jobs' archives too, so only transfer (and mirror) this
+                // job's archives; archive names end in `_<job id>.<ext>`.
+                include_only = Some(format!("*_{}.*", job.id));
                 vec![staging_dir.to_string_lossy().to_string()]
             }
         } else {
@@ -463,6 +564,20 @@ impl BackupService {
             cancelled_runs.try_lock().map(|guard| guard.contains(&rid)).unwrap_or(false)
         });
 
+        let oauth = match (job.credential_id, credential.as_ref()) {
+            (Some(cred_id), Some(data)) => {
+                crate::services::OAuthTokenSource::new(Arc::clone(&self.credential_service), cred_id, data)
+                    .map(Arc::new)
+            }
+            _ => None,
+        };
+
+        if include_only.is_some() {
+            sync_options.include_only = include_only;
+            // Temporary files of archives still being written (other jobs)
+            sync_options.exclude_patterns.push("*.tmp".to_string());
+        }
+
         // Build sync context (uses effective_source_dirs: staging dir when compress is enabled)
         let ctx = Arc::new(SyncContext {
             run_id,
@@ -473,6 +588,7 @@ impl BackupService {
             log_sender: self.log_tx.clone(),
             logs_db: self.logs_db.clone(),
             is_cancelled,
+            oauth,
         });
 
         // Execute sync via provider
@@ -657,7 +773,7 @@ impl BackupService {
 
             // Load credentials if needed
             let credential = if let Some(cred_id) = job.credential_id {
-                self.credential_service.get_decrypted(cred_id).await.ok()
+                self.credential_service.get_fresh(cred_id).await.ok()
             } else {
                 None
             };
